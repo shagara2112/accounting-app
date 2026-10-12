@@ -1,0 +1,76 @@
+version: "2"
+
+# Pemetaan tipe yang sama untuk semua modul: UUID google, waktu Go, DATE sebagai
+# civil.Date (tanpa jam), dan NUMERIC sebagai money.Amount (tanpa floating point).
+overrides:
+  go:
+    overrides:
+      - db_type: uuid
+        go_type: github.com/google/uuid.UUID
+      - db_type: uuid
+        nullable: true
+        go_type:
+          import: github.com/google/uuid
+          type: UUID
+          pointer: true
+      - db_type: timestamptz
+        go_type: time.Time
+      - db_type: timestamptz
+        nullable: true
+        go_type:
+          import: time
+          type: Time
+          pointer: true
+      - db_type: date
+        go_type: lajur/internal/platform/civil.Date
+      - db_type: date
+        nullable: true
+        go_type:
+          import: lajur/internal/platform/civil
+          type: Date
+          pointer: true
+      - db_type: pg_catalog.numeric
+        go_type: lajur/internal/platform/money.Amount
+      - db_type: pg_catalog.numeric
+        nullable: true
+        go_type:
+          import: lajur/internal/platform/money
+          type: Amount
+          pointer: true
+      - db_type: numeric
+        go_type: lajur/internal/platform/money.Amount
+      - db_type: numeric
+        nullable: true
+        go_type:
+          import: lajur/internal/platform/money
+          type: Amount
+          pointer: true
+
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: internal/platform/queries
+    gen:
+      go:
+        package: store
+        out: internal/platform/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/modules/core/queries
+    gen:
+      go:
+        package: store
+        out: internal/modules/core/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/ledger/queries
+    gen:
+      go:
+        package: store
+        out: internal/ledger/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true

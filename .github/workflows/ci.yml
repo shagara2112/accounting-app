@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lajur
+          POSTGRES_PASSWORD: lajur-ci
+          POSTGRES_DB: lajur
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lajur"
+          --health-interval 2s
+          --health-retries 30
+    env:
+      LAJUR_TEST_DATABASE_URL: postgres://lajur:lajur-ci@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend
+        run: cd web && npm ci && npm run build
+      - name: Vet
+        run: go vet ./...
+      - name: Tes Go (unit dan integrasi)
+        run: go test ./...
+      - name: Build rilis
+        run: go build -tags release -o /dev/null ./cmd/lajur
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
