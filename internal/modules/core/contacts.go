@@ -1,0 +1,254 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"net/mail"
+	"regexp"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"lajur/internal/modules/core/internal/store"
+	"lajur/internal/platform/audit"
+	"lajur/internal/platform/db"
+	"lajur/internal/platform/httpx"
+)
+
+// Contact adalah pelanggan, pemasok, atau keduanya (AR-01, AP-01).
+type Contact struct {
+	ID               uuid.UUID `json:"id"`
+	Name             string    `json:"name"`
+	IsCustomer       bool      `json:"isCustomer"`
+	IsSupplier       bool      `json:"isSupplier"`
+	NPWP             string    `json:"npwp"`
+	NIK              string    `json:"nik"`
+	NITKU            string    `json:"nitku"`
+	PKP              bool      `json:"pkp"`
+	Address          string    `json:"address"`
+	Email            string    `json:"email"`
+	Phone            string    `json:"phone"`
+	PaymentTermsDays int       `json:"paymentTermsDays"`
+	BankName         string    `json:"bankName"`
+	BankAccount      string    `json:"bankAccount"`
+	Active           bool      `json:"active"`
+	Version          int       `json:"version"`
+}
+
+type ContactInput struct {
+	Name             string `json:"name"`
+	IsCustomer       bool   `json:"isCustomer"`
+	IsSupplier       bool   `json:"isSupplier"`
+	NPWP             string `json:"npwp"`
+	NIK              string `json:"nik"`
+	NITKU            string `json:"nitku"`
+	PKP              bool   `json:"pkp"`
+	Address          string `json:"address"`
+	Email            string `json:"email"`
+	Phone            string `json:"phone"`
+	PaymentTermsDays int    `json:"paymentTermsDays"`
+	BankName         string `json:"bankName"`
+	BankAccount      string `json:"bankAccount"`
+	Active           bool   `json:"active"`
+	Version          int    `json:"version"` // hanya untuk perubahan
+}
+
+type ContactFilter struct {
+	Role            string // "customer", "supplier", atau kosong
+	Search          string
+	IncludeInactive bool
+}
+
+var nonDigit = regexp.MustCompile(`[\s.\-]`)
+
+// digits membuang spasi, titik, dan tanda hubung yang biasa dipakai saat menulis NPWP.
+func digits(s string) string { return nonDigit.ReplaceAllString(strings.TrimSpace(s), "") }
+
+var allDigits = regexp.MustCompile(`^[0-9]*$`)
+
+// validate merapikan dan memeriksa isian kontak (TAX-05: NPWP 16 digit atau NIK, NITKU).
+func (in *ContactInput) validate() error {
+	in.Name = strings.TrimSpace(in.Name)
+	in.NPWP, in.NIK, in.NITKU = digits(in.NPWP), digits(in.NIK), digits(in.NITKU)
+	in.Email, in.Phone = strings.TrimSpace(in.Email), strings.TrimSpace(in.Phone)
+	in.Address, in.BankName, in.BankAccount = strings.TrimSpace(in.Address), strings.TrimSpace(in.BankName), strings.TrimSpace(in.BankAccount)
+
+	f := map[string]string{}
+	if n := utf8.RuneCountInString(in.Name); n < 1 || n > 200 {
+		f["name"] = "Nama wajib diisi (maksimal 200 karakter)."
+	}
+	if !in.IsCustomer && !in.IsSupplier {
+		f["role"] = "Pilih pelanggan, pemasok, atau keduanya."
+	}
+	if in.NPWP != "" && (len(in.NPWP) != 16 || !allDigits.MatchString(in.NPWP)) {
+		f["npwp"] = "NPWP harus 16 digit angka."
+	}
+	if in.NIK != "" && (len(in.NIK) != 16 || !allDigits.MatchString(in.NIK)) {
+		f["nik"] = "NIK harus 16 digit angka."
+	}
+	if in.NITKU != "" {
+		switch {
+		case len(in.NITKU) != 22 || !allDigits.MatchString(in.NITKU):
+			f["nitku"] = "NITKU harus 22 digit angka (NPWP diikuti 6 digit)."
+		case in.NPWP != "" && !strings.HasPrefix(in.NITKU, in.NPWP):
+			f["nitku"] = "NITKU harus diawali NPWP kontak ini."
+		}
+	}
+	if in.PKP && in.NPWP == "" {
+		f["npwp"] = "Kontak PKP wajib punya NPWP."
+	}
+	if in.Email != "" {
+		if _, err := mail.ParseAddress(in.Email); err != nil {
+			f["email"] = "Format email tidak valid."
+		}
+	}
+	if in.PaymentTermsDays < 0 || in.PaymentTermsDays > 365 {
+		f["paymentTermsDays"] = "Termin 0–365 hari."
+	}
+	if len(f) > 0 {
+		return httpx.Unprocessable("contact.invalid", firstOf(f)).WithFields(f)
+	}
+	return nil
+}
+
+func firstOf(f map[string]string) string {
+	for _, k := range []string{"name", "role", "npwp", "nik", "nitku", "email", "paymentTermsDays"} {
+		if m, ok := f[k]; ok {
+			return m
+		}
+	}
+	return "Periksa kembali isian kontak."
+}
+
+func nullable(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func toContact(r store.CoreContact) Contact {
+	return Contact{
+		ID: r.ID, Name: r.Name, IsCustomer: r.IsCustomer, IsSupplier: r.IsSupplier,
+		NPWP: deref(r.Npwp), NIK: deref(r.Nik), NITKU: deref(r.Nitku), PKP: r.Pkp,
+		Address: r.Address, Email: r.Email, Phone: r.Phone, PaymentTermsDays: int(r.PaymentTermsDays),
+		BankName: r.BankName, BankAccount: r.BankAccount, Active: r.Active, Version: int(r.Version),
+	}
+}
+
+func (s *service) Contacts(ctx context.Context, companyID uuid.UUID, f ContactFilter) ([]Contact, error) {
+	p := store.ListContactsParams{
+		CompanyID: companyID, CustomersOnly: f.Role == "customer", SuppliersOnly: f.Role == "supplier",
+		IncludeInactive: f.IncludeInactive,
+	}
+	if q := strings.TrimSpace(f.Search); q != "" {
+		q = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
+		p.Search = &q
+	}
+	rows, err := s.q(ctx).ListContacts(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Contact, len(rows))
+	for i, r := range rows {
+		out[i] = toContact(r)
+	}
+	return out, nil
+}
+
+func (s *service) Contact(ctx context.Context, companyID, id uuid.UUID) (Contact, error) {
+	r, err := s.q(ctx).GetContact(ctx, store.GetContactParams{CompanyID: companyID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Contact{}, httpx.NotFound("contact.not_found", "Kontak tidak ditemukan di PT ini.")
+	}
+	if err != nil {
+		return Contact{}, err
+	}
+	return toContact(r), nil
+}
+
+func (s *service) ContactNames(ctx context.Context, companyID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(ids))
+	for _, id := range ids {
+		if _, ok := out[id]; ok {
+			continue
+		}
+		c, err := s.Contact(ctx, companyID, id)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = c.Name
+	}
+	return out, nil
+}
+
+func (s *service) CreateContact(ctx context.Context, companyID uuid.UUID, in ContactInput, actor audit.Actor) (Contact, error) {
+	if err := in.validate(); err != nil {
+		return Contact{}, err
+	}
+	var out Contact
+	err := db.Run(ctx, s.pool, func(ctx context.Context) error {
+		r, err := s.q(ctx).InsertContact(ctx, store.InsertContactParams{
+			ID: uuid.Must(uuid.NewV7()), CompanyID: companyID, Name: in.Name, IsCustomer: in.IsCustomer,
+			IsSupplier: in.IsSupplier, Npwp: nullable(in.NPWP), Nik: nullable(in.NIK), Nitku: nullable(in.NITKU),
+			Pkp: in.PKP, Address: in.Address, Email: in.Email, Phone: in.Phone,
+			PaymentTermsDays: int32(in.PaymentTermsDays), BankName: in.BankName, BankAccount: in.BankAccount,
+			CreatedBy: actor.UserRef(),
+		})
+		if err != nil {
+			return err
+		}
+		out = toContact(r)
+		_, err = audit.Write(ctx, db.Conn(ctx, s.pool), audit.Entry{
+			UserID: actor.UserRef(), CompanyID: &companyID, Action: "core.contact.create",
+			ObjectType: "contact", ObjectID: r.ID.String(), IP: actor.IP,
+			After: map[string]any{"name": r.Name, "customer": r.IsCustomer, "supplier": r.IsSupplier},
+		})
+		return err
+	})
+	return out, err
+}
+
+func (s *service) UpdateContact(ctx context.Context, companyID, id uuid.UUID, in ContactInput, actor audit.Actor) (Contact, error) {
+	if err := in.validate(); err != nil {
+		return Contact{}, err
+	}
+	var out Contact
+	err := db.Run(ctx, s.pool, func(ctx context.Context) error {
+		before, err := s.Contact(ctx, companyID, id)
+		if err != nil {
+			return err
+		}
+		r, err := s.q(ctx).UpdateContact(ctx, store.UpdateContactParams{
+			CompanyID: companyID, ID: id, Version: int32(in.Version), Name: in.Name, IsCustomer: in.IsCustomer,
+			IsSupplier: in.IsSupplier, Npwp: nullable(in.NPWP), Nik: nullable(in.NIK), Nitku: nullable(in.NITKU),
+			Pkp: in.PKP, Address: in.Address, Email: in.Email, Phone: in.Phone,
+			PaymentTermsDays: int32(in.PaymentTermsDays), BankName: in.BankName, BankAccount: in.BankAccount,
+			Active: in.Active,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.Conflict("conflict.version", "Kontak ini baru saja diubah orang lain. Muat ulang lalu coba lagi.")
+		}
+		if err != nil {
+			return err
+		}
+		out = toContact(r)
+		_, err = audit.Write(ctx, db.Conn(ctx, s.pool), audit.Entry{
+			UserID: actor.UserRef(), CompanyID: &companyID, Action: "core.contact.update",
+			ObjectType: "contact", ObjectID: id.String(), IP: actor.IP,
+			Before: map[string]any{"name": before.Name, "npwp": before.NPWP, "active": before.Active},
+			After:  map[string]any{"name": out.Name, "npwp": out.NPWP, "active": out.Active},
+		})
+		return err
+	})
+	return out, err
+}

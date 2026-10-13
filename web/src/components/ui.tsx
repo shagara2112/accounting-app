@@ -400,3 +400,28 @@ export function TableShell({ children, minWidth = 720 }: { children: ReactNode; 
 
 export const th = 'px-4 py-3 text-[12.5px] font-semibold text-muted'
 export const td = 'px-4 py-2.5'
+
+/** Tab halaman dengan garis bawah yang bergeser (Motion layoutId). */
+export function Tabs<T extends string>({ label, value, onChange, tabs }: { label: string; value: T; onChange: (v: T) => void; tabs: { value: T; label: string }[] }) {
+  const id = useId()
+  return (
+    <div role="tablist" aria-label={label} className="flex gap-1 border-b border-line">
+      {tabs.map((t) => {
+        const active = t.value === value
+        return (
+          <button
+            key={t.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(t.value)}
+            className={`relative min-h-11 cursor-pointer px-3.5 text-sm font-semibold transition-colors duration-150 ${active ? 'text-accent' : 'text-muted hover:text-ink'}`}
+          >
+            {t.label}
+            {active && <motion.span layoutId={`tab-${id}`} className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent" transition={{ duration: 0.2, ease }} />}
+          </button>
+        )
+      })}
+    </div>
+  )
+}

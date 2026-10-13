@@ -8,7 +8,7 @@ import { Badge, Button, ease } from './ui'
 import { Logo } from './Logo'
 
 // Modul yang dijadwalkan di rencana implementasi TDD; ditampilkan agar arah produk terlihat.
-const upcoming = ['Penjualan', 'Pembelian', 'Kas dan bank', 'Pajak', 'Proyek', 'Persediaan', 'Laporan', 'Konsolidasi']
+const upcoming = ['Proyek', 'Persediaan', 'Laporan keuangan', 'Konsolidasi']
 
 const icons = {
   home: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z',
@@ -18,6 +18,11 @@ const icons = {
   accounts: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
   periods: 'M8 2v4M16 2v4M3 8h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 15l2 2 4-4',
   audit: 'M12 3l8 4v5c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V7zM9 12l2 2 4-4',
+  sales: 'M3 17l6-6 4 4 8-8M14 7h7v7',
+  purchase: 'M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0',
+  cash: 'M2 7h20v12H2zM2 11h20M6 15h4',
+  contacts: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8',
+  tax: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M9 15l6-6M9.5 9.5h.01M14.5 14.5h.01',
 }
 
 export function Shell({ me }: { me: Me }) {
@@ -26,6 +31,13 @@ export function Shell({ me }: { me: Me }) {
   const company = activeCompany(me)
   const canAudit = can(me, 'platform.audit.view')
   const canLedger = can(me, 'ledger.view')
+  const trade = [
+    can(me, 'sales.view') && { to: '/penjualan', label: 'Penjualan', icon: icons.sales },
+    can(me, 'purchase.view') && { to: '/pembelian', label: 'Pembelian', icon: icons.purchase },
+    can(me, 'cash.view') && { to: '/kas', label: 'Kas dan bank', icon: icons.cash },
+    can(me, 'tax.view') && { to: '/pajak', label: 'Pajak', icon: icons.tax },
+    can(me, 'core.contact.view') && { to: '/kontak', label: 'Kontak', icon: icons.contacts },
+  ].filter((x) => x !== false)
   const logout = useLogout()
 
   return (
@@ -36,6 +48,14 @@ export function Shell({ me }: { me: Me }) {
           <span className="text-lg font-bold tracking-tight">Lajur</span>
         </div>
         <NavItem to="/" label="Beranda" icon={icons.home} end />
+        {trade.length > 0 && (
+          <>
+            <NavHeading>Transaksi</NavHeading>
+            {trade.map((n) => (
+              <NavItem key={n.to} to={n.to} label={n.label} icon={n.icon} />
+            ))}
+          </>
+        )}
         {canLedger && (
           <>
             <NavHeading>Akuntansi</NavHeading>

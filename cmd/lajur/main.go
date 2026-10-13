@@ -12,8 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"lajur/internal/ledger"
-	"lajur/internal/modules/core"
 	"lajur/internal/platform/audit"
 	"lajur/internal/platform/auth"
 	"lajur/internal/platform/config"
@@ -84,9 +82,8 @@ func open(ctx context.Context, cfg config.Config) (*server.Deps, func(), error) 
 		pool.Close()
 		return nil, nil, fmt.Errorf("menyamakan peran bawaan: %w", err)
 	}
-	return &server.Deps{
-		Pool: pool, Sessions: auth.NewSessions(pool, cfg.SecureCookies), Core: core.New(pool), Ledger: ledger.New(pool),
-	}, pool.Close, nil
+	d := server.Deps{Pool: pool, Sessions: auth.NewSessions(pool, cfg.SecureCookies)}.WithModules()
+	return &d, pool.Close, nil
 }
 
 func serve(ctx context.Context, log *slog.Logger) error {

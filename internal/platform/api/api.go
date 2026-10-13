@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lajur/internal/platform/auth"
+	"lajur/internal/platform/civil"
 	"lajur/internal/platform/db"
 	"lajur/internal/platform/httpx"
 	"lajur/internal/platform/license"
@@ -226,4 +227,51 @@ func sameOrigin(r *http.Request) bool {
 	}
 	u, err := url.Parse(origin)
 	return err == nil && u.Host == r.Host
+}
+
+// CompanyID adalah PT aktif request ini, yang sudah diperiksa terhadap hak akses sesi.
+func CompanyID(r *http.Request) uuid.UUID {
+	s, _ := rbac.ScopeFrom(r.Context())
+	return s.CompanyID
+}
+
+// Can memeriksa izin tambahan di dalam handler, mis. menghapus draf milik orang lain.
+func Can(r *http.Request, perm string) bool {
+	s, ok := rbac.ScopeFrom(r.Context())
+	return ok && s.Role.Perms.Has(perm)
+}
+
+// PathID membaca parameter UUID dari path; nilai yang tidak valid dijawab 404.
+func PathID(r *http.Request, name string) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, name))
+	if err != nil {
+		return uuid.Nil, httpx.NotFound("not_found", "Data tidak ditemukan.")
+	}
+	return id, nil
+}
+
+// DateQuery membaca parameter query yyyy-mm-dd; kosong menghasilkan def.
+func DateQuery(r *http.Request, name string, def civil.Date) (civil.Date, error) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return def, nil
+	}
+	d, err := civil.Parse(v)
+	if err != nil {
+		return civil.Date{}, httpx.BadRequest("request.query", err.Error())
+	}
+	return d, nil
+}
+
+// UUIDQuery membaca parameter query UUID opsional.
+func UUIDQuery(r *http.Request, name string) (*uuid.UUID, error) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(v)
+	if err != nil {
+		return nil, httpx.BadRequest("request.query", "Parameter "+name+" tidak valid.")
+	}
+	return &id, nil
 }

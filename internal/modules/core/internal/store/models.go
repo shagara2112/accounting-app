@@ -12,6 +12,46 @@ import (
 	"lajur/internal/platform/money"
 )
 
+type CashAccount struct {
+	CompanyID     uuid.UUID
+	AccountID     uuid.UUID
+	Kind          string
+	BankName      string
+	AccountNumber string
+	Active        bool
+	CreatedAt     time.Time
+}
+
+type CashTransaction struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	Kind           string
+	TrxDate        civil.Date
+	CashAccountID  uuid.UUID
+	ToAccountID    *uuid.UUID
+	Amount         money.Amount
+	Memo           string
+	Reference      string
+	Status         string
+	JournalEntryID uuid.UUID
+	CreatedAt      time.Time
+	CreatedBy      *uuid.UUID
+	VoidedAt       *time.Time
+	VoidedBy       *uuid.UUID
+	VoidReason     *string
+}
+
+type CashTransactionLine struct {
+	ID            uuid.UUID
+	CompanyID     uuid.UUID
+	TransactionID uuid.UUID
+	LineNo        int16
+	AccountID     uuid.UUID
+	Amount        money.Amount
+	Memo          string
+}
+
 type CoreCompany struct {
 	ID        uuid.UUID
 	Name      string
@@ -23,6 +63,30 @@ type CoreCompany struct {
 	Active    bool
 	CreatedAt time.Time
 	Version   int32
+	Pkp       bool
+	Address   string
+}
+
+type CoreContact struct {
+	ID               uuid.UUID
+	CompanyID        uuid.UUID
+	Name             string
+	IsCustomer       bool
+	IsSupplier       bool
+	Npwp             *string
+	Nik              *string
+	Nitku            *string
+	Pkp              bool
+	Address          string
+	Email            string
+	Phone            string
+	PaymentTermsDays int32
+	BankName         string
+	BankAccount      string
+	Active           bool
+	CreatedAt        time.Time
+	CreatedBy        *uuid.UUID
+	Version          int32
 }
 
 type CoreUserCompanyRole struct {
@@ -165,4 +229,195 @@ type PlatformUser struct {
 	LockedUntil  *time.Time
 	CreatedAt    time.Time
 	Version      int32
+}
+
+type PurchaseBill struct {
+	ID                uuid.UUID
+	CompanyID         uuid.UUID
+	Number            *string
+	Status            string
+	SupplierID        uuid.UUID
+	SupplierInvoiceNo string
+	BillDate          civil.Date
+	DueDate           civil.Date
+	Memo              string
+	Subtotal          money.Amount
+	Discount          money.Amount
+	Dpp               money.Amount
+	OtherDpp          money.Amount
+	Vat               money.Amount
+	WithholdingCode   *string
+	Withholding       money.Amount
+	Total             money.Amount
+	Payable           money.Amount
+	JournalEntryID    *uuid.UUID
+	CreatedAt         time.Time
+	CreatedBy         *uuid.UUID
+	PostedAt          *time.Time
+	PostedBy          *uuid.UUID
+	VoidedAt          *time.Time
+	VoidedBy          *uuid.UUID
+	VoidReason        *string
+	Version           int32
+}
+
+type PurchaseBillLine struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	BillID      uuid.UUID
+	LineNo      int16
+	Description string
+	AccountID   uuid.UUID
+	Qty         money.Amount
+	UnitPrice   money.Amount
+	DiscountPct money.Amount
+	Discount    money.Amount
+	Net         money.Amount
+	TaxCode     string
+	OtherDpp    money.Amount
+	Vat         money.Amount
+}
+
+type PurchasePayment struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	SupplierID     uuid.UUID
+	PaymentDate    civil.Date
+	CashAccountID  uuid.UUID
+	Amount         money.Amount
+	Memo           string
+	Status         string
+	JournalEntryID uuid.UUID
+	CreatedAt      time.Time
+	CreatedBy      *uuid.UUID
+	VoidedAt       *time.Time
+	VoidedBy       *uuid.UUID
+	VoidReason     *string
+}
+
+type PurchasePaymentAllocation struct {
+	ID        uuid.UUID
+	CompanyID uuid.UUID
+	PaymentID uuid.UUID
+	BillID    uuid.UUID
+	Amount    money.Amount
+}
+
+type SalesInvoice struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         *string
+	Status         string
+	CustomerID     uuid.UUID
+	InvoiceDate    civil.Date
+	DueDate        civil.Date
+	Memo           string
+	Subtotal       money.Amount
+	Discount       money.Amount
+	Dpp            money.Amount
+	OtherDpp       money.Amount
+	Vat            money.Amount
+	Total          money.Amount
+	JournalEntryID *uuid.UUID
+	CreatedAt      time.Time
+	CreatedBy      *uuid.UUID
+	PostedAt       *time.Time
+	PostedBy       *uuid.UUID
+	VoidedAt       *time.Time
+	VoidedBy       *uuid.UUID
+	VoidReason     *string
+	Version        int32
+}
+
+type SalesInvoiceLine struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	InvoiceID   uuid.UUID
+	LineNo      int16
+	Description string
+	AccountID   uuid.UUID
+	Qty         money.Amount
+	UnitPrice   money.Amount
+	DiscountPct money.Amount
+	Discount    money.Amount
+	Net         money.Amount
+	TaxCode     string
+	OtherDpp    money.Amount
+	Vat         money.Amount
+}
+
+type SalesReceipt struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	CustomerID     uuid.UUID
+	ReceiptDate    civil.Date
+	CashAccountID  uuid.UUID
+	Amount         money.Amount
+	Memo           string
+	Status         string
+	JournalEntryID uuid.UUID
+	CreatedAt      time.Time
+	CreatedBy      *uuid.UUID
+	VoidedAt       *time.Time
+	VoidedBy       *uuid.UUID
+	VoidReason     *string
+}
+
+type SalesReceiptAllocation struct {
+	ID              uuid.UUID
+	CompanyID       uuid.UUID
+	ReceiptID       uuid.UUID
+	InvoiceID       uuid.UUID
+	Amount          money.Amount
+	WithholdingCode *string
+	Withholding     money.Amount
+}
+
+type TaxExportBatch struct {
+	ID           uuid.UUID
+	CompanyID    uuid.UUID
+	Period       civil.Date
+	Format       string
+	InvoiceCount int32
+	FileName     string
+	Content      []byte
+	CreatedAt    time.Time
+	CreatedBy    *uuid.UUID
+}
+
+type TaxOutputInvoice struct {
+	InvoiceID        uuid.UUID
+	CompanyID        uuid.UUID
+	TrxCode          string
+	Status           string
+	TaxInvoiceNumber *string
+	ApprovedDate     *civil.Date
+	LastBatchID      *uuid.UUID
+	ReplacedBy       *uuid.UUID
+	Note             string
+	UpdatedAt        time.Time
+	UpdatedBy        *uuid.UUID
+}
+
+type TaxSetting struct {
+	CompanyID uuid.UUID
+	GoodsOpt  string
+	GoodsCode string
+	UnitCode  string
+	UpdatedAt time.Time
+	UpdatedBy *uuid.UUID
+}
+
+type TaxTaxCode struct {
+	Code      string
+	Kind      string
+	Name      string
+	RateBp    int32
+	DppNum    int32
+	DppDen    int32
+	Article   *string
+	ValidFrom civil.Date
+	ValidTo   *civil.Date
 }

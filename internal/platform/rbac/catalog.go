@@ -4,9 +4,13 @@ package rbac
 // hanya bisa memakai izin dari katalog ini. Mengubah baris jurnal yang sudah diposting
 // sengaja tidak ada di katalog, sehingga tidak bisa diberikan ke siapa pun.
 const (
-	CompanyView = "core.company.view"
-	ReportView  = "report.view"
-	DataExport  = "data.export"
+	CompanyView   = "core.company.view"
+	CompanyEdit   = "core.company.edit" // profil pajak PT: NPWP, NITKU, status PKP
+	ContactView   = "core.contact.view"
+	ContactCreate = "core.contact.create"
+	ContactEdit   = "core.contact.edit" // ubah dan nonaktifkan kontak
+	ReportView    = "report.view"
+	DataExport    = "data.export"
 
 	LedgerView       = "ledger.view"
 	AccountCreate    = "ledger.account.create"
@@ -52,7 +56,7 @@ const (
 
 // All berisi seluruh izin di katalog.
 var All = []string{
-	CompanyView, ReportView, DataExport,
+	CompanyView, CompanyEdit, ContactView, ContactCreate, ContactEdit, ReportView, DataExport,
 	LedgerView, AccountCreate, AccountEdit, JournalCreate, JournalVoid, AdjustmentCreate, AdjustmentPost, PeriodManage,
 	SalesView, SalesCreate, SalesVoid,
 	PurchaseView, PurchaseCreate, PurchaseVoid,
@@ -66,17 +70,17 @@ var All = []string{
 
 var (
 	viewAll = []string{
-		CompanyView, ReportView, LedgerView, SalesView, PurchaseView, CashView,
+		CompanyView, ContactView, ReportView, LedgerView, SalesView, PurchaseView, CashView,
 		InventoryView, ProjectView, TaxView, ConsolView,
 	}
 	createAll = []string{
-		AccountCreate, JournalCreate, AdjustmentCreate, AdjustmentPost, SalesCreate, PurchaseCreate,
+		ContactCreate, AccountCreate, JournalCreate, AdjustmentCreate, AdjustmentPost, SalesCreate, PurchaseCreate,
 		CashCreate, InventoryCreate, ProjectCreate, TaxCreate, ConsolRun,
 	}
 	// changeAll = "ubah, hapus, atau void transaksi" di matriks: hanya Pemilik dan Manager.
-	changeAll = []string{AccountEdit, JournalVoid, SalesVoid, PurchaseVoid, CashVoid, InventoryVoid, ProjectVoid}
-	control = []string{ApprovalManage, PeriodManage, AuditView}
-	admin   = []string{UserManage, SystemManage}
+	changeAll = []string{CompanyEdit, ContactEdit, AccountEdit, JournalVoid, SalesVoid, PurchaseVoid, CashVoid, InventoryVoid, ProjectVoid}
+	control   = []string{ApprovalManage, PeriodManage, AuditView}
+	admin     = []string{UserManage, SystemManage}
 )
 
 // BuiltinRole adalah peran bawaan sesuai enam persona di PRD.
@@ -91,7 +95,7 @@ var Builtin = []BuiltinRole{
 	{Key: "pemilik", Name: "Pemilik", Permissions: join(viewAll, createAll, changeAll, control, admin, []string{TaxExport, DataExport})},
 	{Key: "manager", Name: "Manager", Permissions: join(viewAll, createAll, changeAll, control, admin, []string{TaxExport, DataExport})},
 	{Key: "staf_akuntansi", Name: "Staf akuntansi", Permissions: join(viewAll, createAll, []string{DataExport})},
-	{Key: "staf_pajak", Name: "Staf pajak", Permissions: []string{CompanyView, TaxView, TaxCreate, TaxExport, DataExport}},
+	{Key: "staf_pajak", Name: "Staf pajak", Permissions: []string{CompanyView, ContactView, TaxView, TaxCreate, TaxExport, DataExport}},
 	{Key: "auditor", Name: "Auditor", Permissions: join(viewAll, []string{AuditView, DataExport})},
 	{Key: "admin", Name: "Admin pelanggan", Permissions: join([]string{CompanyView}, admin)},
 }

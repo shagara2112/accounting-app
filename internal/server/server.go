@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -11,10 +12,16 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lajur/internal/ledger"
+	"lajur/internal/modules/cash"
 	"lajur/internal/modules/core"
+	"lajur/internal/modules/purchase"
+	"lajur/internal/modules/sales"
+	"lajur/internal/modules/tax"
+	"lajur/internal/modules/tax/coretax"
 	"lajur/internal/platform/api"
 	"lajur/internal/platform/audit"
 	"lajur/internal/platform/auth"
@@ -27,10 +34,44 @@ type Deps struct {
 	Pool     *pgxpool.Pool
 	Log      *slog.Logger
 	Sessions *auth.Sessions
+	Services
+	License license.Provider
+	Web     fs.FS // hasil build frontend
+}
+
+// Services adalah semua service modul yang dirangkai di atas pool yang sama.
+type Services struct {
 	Core     core.Service
 	Ledger   ledger.Service
-	License  license.Provider
-	Web      fs.FS // hasil build frontend
+	Tax      tax.Service
+	Cash     cash.Service
+	Sales    sales.Service
+	Purchase purchase.Service
+	Coretax  coretax.Service
+}
+
+// Modules merangkai semua modul. Modul pajak (coretax) membaca penjualan, sedangkan
+// penjualan perlu bertanya ke modul pajak sebelum void; pengunci void diisi belakangan
+// supaya tidak ada dependensi melingkar.
+func Modules(pool *pgxpool.Pool) Services {
+	var m Services
+	m.Core, m.Ledger, m.Tax = core.New(pool), ledger.New(pool), tax.New(pool)
+	m.Cash = cash.New(pool, m.Ledger)
+	m.Sales = sales.New(sales.Deps{
+		Pool: pool, Ledger: m.Ledger, Core: m.Core, Tax: m.Tax, Cash: m.Cash,
+		VoidGuard: func(ctx context.Context, companyID, invoiceID uuid.UUID) error {
+			return m.Coretax.CanVoidInvoice(ctx, companyID, invoiceID)
+		},
+	})
+	m.Purchase = purchase.New(purchase.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Tax: m.Tax, Cash: m.Cash})
+	m.Coretax = coretax.New(coretax.Deps{Pool: pool, Core: m.Core, Tax: m.Tax, Sales: m.Sales, Purchase: m.Purchase})
+	return m
+}
+
+// WithModules mengisi semua service modul di Deps.
+func (d Deps) WithModules() Deps {
+	d.Services = Modules(d.Pool)
+	return d
 }
 
 // New mengembalikan handler HTTP lengkap dan registry route-nya.
@@ -48,8 +89,13 @@ func New(d Deps) (http.Handler, *api.API) {
 	for _, rt := range core.Routes(d.Core, d.Sessions) {
 		a.Add(rt)
 	}
-	for _, rt := range ledger.Routes(d.Ledger) {
-		a.Add(rt)
+	for _, group := range [][]api.Route{
+		ledger.Routes(d.Ledger), tax.Routes(d.Tax), cash.Routes(d.Cash), sales.Routes(d.Sales), purchase.Routes(d.Purchase),
+		coretax.Routes(d.Coretax),
+	} {
+		for _, rt := range group {
+			a.Add(rt)
+		}
 	}
 
 	a.Add(api.Route{Method: http.MethodGet, Path: "/api/v1/system/license", Access: api.Authenticated, License: license.ModeStatus, Handle: licenseStatus(d.License)})

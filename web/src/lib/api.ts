@@ -59,6 +59,7 @@ export type CompanyAccess = {
   shortName: string
   kind: 'pt' | 'consolidation'
   industry?: 'jasa' | 'konstruksi' | 'retail'
+  pkp: boolean
   roleKey: string
   roleName: string
   permissions: string[]
@@ -128,6 +129,7 @@ export type EntrySummary = {
   date: string
   memo: string
   sourceType: string
+  sourceId?: string
   total: string
   status: 'posted' | 'void'
   reversalOf?: string
@@ -231,3 +233,247 @@ export type Period = {
 export type FiscalYear = { year: number; startMonth: number; periods: Period[] }
 
 export type LedgerSettings = { fiscalYearStartMonth: number; hasEntries: boolean }
+
+// Kontak, pajak, penjualan, pembelian, kas ------------------------------------------------
+
+export type Contact = {
+  id: string
+  name: string
+  isCustomer: boolean
+  isSupplier: boolean
+  npwp: string
+  nik: string
+  nitku: string
+  pkp: boolean
+  address: string
+  email: string
+  phone: string
+  paymentTermsDays: number
+  bankName: string
+  bankAccount: string
+  active: boolean
+  version: number
+}
+
+export type ContactInput = Omit<Contact, 'id'>
+
+export type TaxCode = {
+  code: string
+  kind: 'ppn' | 'pph'
+  name: string
+  rateBp: number
+  dppNum: number
+  dppDen: number
+  article?: '23' | '4(2)'
+  validFrom: string
+  validTo?: string
+}
+
+export type TradeLineInput = {
+  description: string
+  accountId: string
+  qty: string
+  unitPrice: string
+  discountPct: string
+  taxCode: string
+}
+
+export type TradeLine = TradeLineInput & {
+  gross: string
+  discount: string
+  net: string
+  otherDpp: string
+  vat: string
+  accountCode: string
+  accountName: string
+}
+
+export type Totals = { subtotal: string; discount: string; dpp: string; otherDpp: string; vat: string; total: string }
+
+export type DocState = 'draft' | 'open' | 'paid' | 'void'
+
+type DocCommon = {
+  id: string
+  number: string | null
+  status: 'draft' | 'posted' | 'void'
+  state: DocState
+  date: string
+  dueDate: string
+  memo: string
+  total: string
+  paid: string
+  outstanding: string
+  daysOverdue: number
+}
+
+type DocDetailCommon = {
+  totals: Totals
+  lines: TradeLine[]
+  journalEntryId?: string
+  createdById?: string
+  createdBy?: string
+  postedBy?: string
+  postedAt?: string
+  voidedBy?: string
+  voidedAt?: string
+  voidReason?: string
+  version: number
+}
+
+export type Invoice = DocCommon & { customerId: string; customerName: string; dpp: string }
+export type InvoicePayment = { receiptId: string; number: string; date: string; status: string; amount: string; withholding: string; withholdingCode?: string }
+export type InvoiceDetail = Invoice & DocDetailCommon & { payments: InvoicePayment[] }
+
+export type Bill = DocCommon & { supplierId: string; supplierName: string; supplierInvoiceNo: string; payable: string }
+export type BillPayment = { paymentId: string; number: string; date: string; status: string; amount: string }
+export type BillDetail = Bill &
+  DocDetailCommon & {
+    withholdingCode?: string
+    withholding: string
+    payments: BillPayment[]
+    duplicates: { id: string; number: string | null; status: string }[]
+  }
+
+type SettlementCommon = {
+  id: string
+  number: string
+  date: string
+  cashAccountId: string
+  cashAccount: string
+  amount: string
+  memo: string
+  status: 'posted' | 'void'
+  journalEntryId: string
+}
+
+export type Receipt = SettlementCommon & { customerId: string; customerName: string }
+export type ReceiptDetail = Receipt & {
+  allocated: string
+  withholding: string
+  allocations: { invoiceId: string; invoiceNumber: string; amount: string; withholdingCode?: string; withholding: string }[]
+  createdBy?: string
+  voidedBy?: string
+  voidReason?: string
+}
+
+export type Payment = SettlementCommon & { supplierId: string; supplierName: string }
+export type PaymentDetail = Payment & {
+  allocations: { billId: string; billNumber: string; amount: string }[]
+  createdBy?: string
+  voidedBy?: string
+  voidReason?: string
+}
+
+export type AgingBucket = 'current' | '1-30' | '31-60' | '61-90' | '90+'
+
+export type Aging = {
+  asOf: string
+  rows: { contactId: string; contactName: string; buckets: Record<AgingBucket, string>; total: string; documents: number }[]
+  totals: Record<AgingBucket, string>
+  total: string
+}
+
+export type CashAccount = {
+  accountId: string
+  code: string
+  name: string
+  kind: 'kas' | 'bank'
+  bankName: string
+  accountNumber: string
+  active: boolean
+  balance: string
+}
+
+export type CashKind = 'in' | 'out' | 'transfer'
+
+export type CashTransaction = {
+  id: string
+  number: string
+  kind: CashKind
+  date: string
+  cashAccountId: string
+  cashAccount: string
+  toAccountId?: string
+  toAccount?: string
+  amount: string
+  memo: string
+  reference: string
+  status: 'posted' | 'void'
+  journalEntryId: string
+}
+
+export type CashTransactionDetail = CashTransaction & {
+  lines: { accountId: string; accountCode: string; accountName: string; amount: string; memo: string }[]
+  createdBy?: string
+  voidReason?: string
+}
+
+// Pajak dan Coretax ---------------------------------------------------------------------------
+
+export type TaxStatus = 'ready' | 'exported' | 'approved' | 'cancelled' | 'replaced'
+
+export type OutputInvoice = {
+  invoiceId: string
+  number: string
+  date: string
+  invoiceStatus: 'posted' | 'void'
+  buyerId: string
+  buyerName: string
+  buyerNpwp: string
+  dpp: string
+  otherDpp: string
+  vat: string
+  trxCode: string
+  status: TaxStatus
+  taxInvoiceNumber?: string
+  approvedDate?: string
+  replacedBy?: string
+  note: string
+  problems: string[]
+}
+
+export type OutputList = { month: string; pkp: boolean; problems: string[]; items: OutputInvoice[] }
+
+export type TaxSettings = { goodsOpt: 'A' | 'B'; goodsCode: string; unitCode: string }
+
+export type ExportBatch = { id: string; period: string; format: string; invoiceCount: number; fileName: string; createdAt: string; createdBy?: string }
+
+export type VATMonth = { month: string; invoices: number; output: string; bills: number; input: string; compensated: string; payable: string; overpaid: string }
+
+export type VATRecap = { year: number; pkp: boolean; months: VATMonth[]; totals: VATMonth }
+
+export type WithheldByCustomer = { receiptId: string; receiptNumber: string; date: string; contactName: string; invoiceNumber: string; dpp: string; code: string; amount: string }
+export type WithheldByUs = { billId: string; billNumber: string; date: string; contactName: string; contactNpwp: string; supplierInvoiceNo: string; dpp: string; code: string; amount: string }
+export type WithholdingRecap = {
+  month: string
+  byCustomers: WithheldByCustomer[]
+  byUs: WithheldByUs[]
+  customerSums: { code: string; count: number; amount: string }[]
+  ourSums: { code: string; count: number; amount: string }[]
+}
+
+export type CompanyProfile = CompanyAccess & { npwp?: string; nitku?: string; address?: string; version: number }
+
+/** Mengunduh file dari API (mis. XML Coretax). Mengembalikan nama file yang diunduh. */
+export async function download(method: 'GET' | 'POST', path: string, body?: unknown): Promise<string> {
+  const res = await fetch('/api/v1' + path, {
+    method,
+    credentials: 'same-origin',
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => null)
+    throw new ApiError(res.status, data?.code ?? 'unknown', data?.detail || data?.title || 'Unduhan gagal.', data?.fields ?? {})
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'unduhan'
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return name
+}

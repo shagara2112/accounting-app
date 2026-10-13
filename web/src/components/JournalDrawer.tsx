@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
+import { useNavigate } from 'react-router'
 import { ApiError, newIdempotencyKey, type Me } from '../lib/api'
 import { formatDate, formatDateTime, todayISO } from '../lib/dates'
 import { useEntry, useVoidJournal } from '../lib/ledger'
-import { kindLabel, kindTone, sourceLabel } from '../lib/labels'
+import { kindLabel, kindTone, sourceLabel, sourceLink } from '../lib/labels'
 import { formatAmount } from '../lib/money'
 import { can } from '../lib/session'
 import { Alert, Badge, Button, Drawer, Field, Skeleton, TextAreaField, ease } from './ui'
@@ -17,6 +18,7 @@ export function JournalDrawer({ me, id, onClose, onOpen }: { me: Me; id: string 
   const [voiding, setVoiding] = useState<{ entryId: string; date: string; reason: string; key: string; attempt: number } | null>(null)
   const voidJournal = useVoidJournal(companyId)
   const toast = useToast()
+  const navigate = useNavigate()
 
   const canVoid = can(me, 'ledger.journal.void') && e?.status === 'posted' && e.sourceType === 'manual'
   const form = voiding && e && voiding.entryId === e.id ? voiding : null
@@ -92,6 +94,18 @@ export function JournalDrawer({ me, id, onClose, onOpen }: { me: Me; id: string 
       {e && (
         <>
           {e.memo && <p className="text-[15px]">{e.memo}</p>}
+          {sourceLink(e.sourceType, e.sourceId) && (
+            <button
+              type="button"
+              onClick={() => {
+                close()
+                navigate(sourceLink(e.sourceType, e.sourceId)!)
+              }}
+              className="self-start text-sm font-semibold text-accent hover:underline"
+            >
+              Buka dokumen sumber: {sourceLabel(e.sourceType).toLowerCase()} {e.number} →
+            </button>
+          )}
 
           <dl className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-x-6 gap-y-3 text-sm">
             <Meta label="Total">

@@ -124,3 +124,38 @@ func TestNumericRoundTrip(t *testing.T) {
 		t.Error("NULL seharusnya ditolak untuk Amount non-pointer")
 	}
 }
+
+func TestMulFracAndRounding(t *testing.T) {
+	cases := []struct {
+		a        string
+		num, den int64
+		places   int
+		mode     Rounding
+		want     string
+	}{
+		// PPN 12% × DPP nilai lain 11/12 = 11% efektif, dibulatkan ke bawah ke rupiah.
+		{"1000000", 11 * 1200, 12 * 10000, 0, Down, "110000.0000"},
+		{"1234567", 11 * 1200, 12 * 10000, 0, Down, "135802.0000"},
+		// DPP nilai lain dengan 2 desimal.
+		{"1000000", 11, 12, 2, HalfUp, "916666.6700"},
+		// PPh 23 2%, PPh 4(2) 2,65%.
+		{"333333", 200, 10000, 0, Down, "6666.0000"},
+		{"100000000", 265, 10000, 0, Down, "2650000.0000"},
+		// Diskon 12,5% dari 99.999 = 12.499,875 → 12.500 (half up).
+		{"99999", 125, 1000, 0, HalfUp, "12500.0000"},
+		{"-10.5", 1, 1, 0, HalfUp, "-11.0000"},
+		{"-10.5", 1, 1, 0, Down, "-10.0000"},
+	}
+	for _, c := range cases {
+		got := MustParse(c.a).MulFrac(c.num, c.den, c.places, c.mode)
+		if got.String() != c.want {
+			t.Errorf("%s × %d/%d (%d desimal) = %s, seharusnya %s", c.a, c.num, c.den, c.places, got, c.want)
+		}
+	}
+	if got := MustParse("3.5").Mul(MustParse("1999.99"), 0, HalfUp); got.String() != "7000.0000" {
+		t.Errorf("3,5 × 1.999,99 = %s, seharusnya 7000 (6.999,965 dibulatkan)", got)
+	}
+	if got := MustParse("0.3333").Mul(MustParse("3"), 4, HalfUp); got.String() != "0.9999" {
+		t.Errorf("0,3333 × 3 = %s", got)
+	}
+}

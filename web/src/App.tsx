@@ -12,6 +12,12 @@ import { AccountLedgerPage } from './pages/AccountLedger'
 import { Worksheet } from './pages/Worksheet'
 import { Accounts } from './pages/Accounts'
 import { Periods } from './pages/Periods'
+import { TradePage } from './pages/Trade'
+import { TradeDocForm } from './pages/TradeDocForm'
+import { SettlementForm } from './pages/SettlementForm'
+import { CashPage } from './pages/Cash'
+import { Contacts } from './pages/Contacts'
+import { TaxPage } from './pages/Tax'
 
 export function App() {
   const me = useMe()
@@ -47,6 +53,17 @@ export function App() {
         <Route path="neraca-lajur" element={<Worksheet me={me.data} />} />
         <Route path="akun" element={<Accounts me={me.data} />} />
         <Route path="periode" element={<Periods me={me.data} />} />
+        <Route path="penjualan" element={<TradePage key="sales" me={me.data} kind="sales" />} />
+        <Route path="penjualan/baru" element={<TradeDocForm key="sales" me={me.data} kind="sales" />} />
+        <Route path="penjualan/:id/ubah" element={<TradeDocForm key="sales-edit" me={me.data} kind="sales" />} />
+        <Route path="penjualan/pelunasan/baru" element={<SettlementForm key="sales" me={me.data} kind="sales" />} />
+        <Route path="pembelian" element={<TradePage key="purchase" me={me.data} kind="purchase" />} />
+        <Route path="pembelian/baru" element={<TradeDocForm key="purchase" me={me.data} kind="purchase" />} />
+        <Route path="pembelian/:id/ubah" element={<TradeDocForm key="purchase-edit" me={me.data} kind="purchase" />} />
+        <Route path="pembelian/pembayaran/baru" element={<SettlementForm key="purchase" me={me.data} kind="purchase" />} />
+        <Route path="kas" element={<CashPage me={me.data} />} />
+        <Route path="kontak" element={<Contacts me={me.data} />} />
+        <Route path="pajak" element={<TaxPage me={me.data} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

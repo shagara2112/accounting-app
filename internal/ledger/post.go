@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -107,18 +108,16 @@ func (l *ledger) post(ctx context.Context, e entry) (Ref, error) {
 		return Ref{}, err
 	}
 
-	n, err := q.NextNumber(ctx, store.NextNumberParams{CompanyID: e.CompanyID, Series: e.series, Month: month})
-	if err != nil {
-		return Ref{}, err
-	}
-	ref := Ref{
-		ID:     uuid.Must(uuid.NewV7()),
-		Number: fmt.Sprintf("%s/%04d/%02d/%04d", e.series, month.Year(), int(month.Month()), n),
+	ref := Ref{ID: uuid.Must(uuid.NewV7()), Number: e.Number}
+	if ref.Number == "" {
+		if ref.Number, err = nextNumber(ctx, q, e.CompanyID, e.series, month); err != nil {
+			return Ref{}, err
+		}
 	}
 	if err := q.InsertEntry(ctx, store.InsertEntryParams{
 		ID: ref.ID, CompanyID: e.CompanyID, Number: ref.Number, Kind: string(e.Kind), EntryDate: e.Date,
 		Memo: strings.TrimSpace(e.Memo), SourceType: e.SourceType, SourceID: e.SourceID,
-		ReversalOf: e.reversalOf, AutoReverse: e.AutoReverse, Total: total, PostedBy: userRef(e.Actor),
+		ReversalOf: e.reversalOf, AutoReverse: e.AutoReverse, Total: total, PostedBy: e.Actor.UserRef(),
 	}); err != nil {
 		return Ref{}, err
 	}
@@ -253,9 +252,43 @@ func checkPeriod(ctx context.Context, q *store.Queries, companyID uuid.UUID, mon
 	}
 }
 
-// Void membatalkan jurnal dengan jurnal pembalik bertanggal void; jurnal aslinya tidak
+// Void membatalkan jurnal manual dengan jurnal pembalik bertanggal void; jurnal aslinya tidak
 // pernah diubah selain statusnya. Pembalik otomatis milik jurnal itu ikut dibatalkan.
 func (l *ledger) Void(ctx context.Context, companyID, entryID uuid.UUID, date civil.Date, reason string, actor Actor) (Voided, error) {
+	return l.void(ctx, companyID, entryID, date, reason, actor, func(ctx context.Context, q *store.Queries, e store.LedgerJournalEntry) error {
+		switch e.SourceType {
+		case SourceManual:
+			return nil
+		case SourceAutoReversal:
+			origin := "jurnal penyesuaiannya"
+			if e.ReversalOf != nil {
+				if o, err := q.GetEntry(ctx, store.GetEntryParams{CompanyID: companyID, ID: *e.ReversalOf}); err == nil {
+					origin = o.Number
+				}
+			}
+			return httpx.Unprocessable("journal.void_auto_reversal", fmt.Sprintf(
+				"%s dibuat otomatis dari %s. Void %s; jurnal pembalik ini ikut dibatalkan.", e.Number, origin, origin))
+		case SourceVoid:
+			return httpx.Unprocessable("journal.void_reversal", fmt.Sprintf("%s adalah jurnal pembatalan dan tidak bisa di-void.", e.Number))
+		default:
+			return httpx.Unprocessable("journal.void_via_source", fmt.Sprintf(
+				"%s berasal dari dokumen %s; batalkan lewat dokumen itu.", e.Number, e.SourceType))
+		}
+	})
+}
+
+// VoidSource dipakai modul untuk membatalkan jurnal dokumennya sendiri, mis. faktur yang di-void.
+func (l *ledger) VoidSource(ctx context.Context, companyID, entryID uuid.UUID, sourceType string, date civil.Date, reason string, actor Actor) (Voided, error) {
+	return l.void(ctx, companyID, entryID, date, reason, actor, func(_ context.Context, _ *store.Queries, e store.LedgerJournalEntry) error {
+		if e.SourceType != sourceType {
+			return fmt.Errorf("jurnal %s bersumber %s, bukan %s", e.Number, e.SourceType, sourceType)
+		}
+		return nil
+	})
+}
+
+func (l *ledger) void(ctx context.Context, companyID, entryID uuid.UUID, date civil.Date, reason string, actor Actor,
+	allowed func(context.Context, *store.Queries, store.LedgerJournalEntry) error) (Voided, error) {
 	reason = strings.TrimSpace(reason)
 	if n := utf8.RuneCountInString(reason); n < 5 || n > maxVoidReason {
 		msg := fmt.Sprintf("Tulis alasan void (5–%d karakter).", maxVoidReason)
@@ -278,22 +311,8 @@ func (l *ledger) Void(ctx context.Context, companyID, entryID uuid.UUID, date ci
 		if e.Status == "void" {
 			return httpx.Conflict("journal.already_void", fmt.Sprintf("Jurnal %s sudah di-void.", e.Number))
 		}
-		switch e.SourceType {
-		case SourceManual:
-		case SourceAutoReversal:
-			origin := "jurnal penyesuaiannya"
-			if e.ReversalOf != nil {
-				if o, err := q.GetEntry(ctx, store.GetEntryParams{CompanyID: companyID, ID: *e.ReversalOf}); err == nil {
-					origin = o.Number
-				}
-			}
-			return httpx.Unprocessable("journal.void_auto_reversal", fmt.Sprintf(
-				"%s dibuat otomatis dari %s. Void %s; jurnal pembalik ini ikut dibatalkan.", e.Number, origin, origin))
-		case SourceVoid:
-			return httpx.Unprocessable("journal.void_reversal", fmt.Sprintf("%s adalah jurnal pembatalan dan tidak bisa di-void.", e.Number))
-		default:
-			return httpx.Unprocessable("journal.void_via_source", fmt.Sprintf(
-				"%s berasal dari dokumen %s; batalkan lewat dokumen itu.", e.Number, e.SourceType))
+		if err := allowed(ctx, q, e); err != nil {
+			return err
 		}
 		if date.Before(e.EntryDate) {
 			msg := fmt.Sprintf("Tanggal void tidak boleh sebelum tanggal jurnal (%s).", e.EntryDate.Indonesian())
@@ -393,12 +412,23 @@ func swap(lines []LineDraft) []LineDraft {
 	return out
 }
 
-func userRef(a Actor) *uuid.UUID {
-	if a.UserID == uuid.Nil {
-		return nil
+func userRef(a Actor) *uuid.UUID { return a.UserRef() }
+
+var seriesPattern = regexp.MustCompile(`^[A-Z]{2,4}$`)
+
+func nextNumber(ctx context.Context, q *store.Queries, companyID uuid.UUID, series string, month civil.Date) (string, error) {
+	if !seriesPattern.MatchString(series) {
+		return "", fmt.Errorf("seri nomor %q tidak valid", series)
 	}
-	id := a.UserID
-	return &id
+	n, err := q.NextNumber(ctx, store.NextNumberParams{CompanyID: companyID, Series: series, Month: month})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/%04d/%02d/%04d", series, month.Year(), int(month.Month()), n), nil
+}
+
+func (l *ledger) NextNumber(ctx context.Context, companyID uuid.UUID, series string, date civil.Date) (string, error) {
+	return nextNumber(ctx, l.q(ctx), companyID, series, date.MonthStart())
 }
 
 // firstMessage mengambil pesan field pertama (urut kunci) sebagai ringkasan problem.

@@ -22,8 +22,8 @@ const abilities: [string, string][] = [
 const roadmap: [string, string][] = [
   ['Fondasi platform', 'Selesai'],
   ['Buku besar, kode akun 1–9, jurnal penyesuaian', 'Selesai'],
-  ['Penjualan, pembelian, kas dan bank', 'Apr 2027'],
-  ['Pajak dan ekspor Coretax', 'Apr 2027'],
+  ['Penjualan, pembelian, kas dan bank', 'Selesai'],
+  ['Pajak dan ekspor Coretax', 'Selesai'],
   ['Multi-entitas dan konsolidasi', 'Mei 2027'],
   ['Proyek dan persediaan', 'Mei 2027'],
   ['Lisensi, installer, dan pembaruan', 'Mei 2027'],

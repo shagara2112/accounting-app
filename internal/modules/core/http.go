@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"lajur/internal/platform/api"
@@ -20,7 +21,79 @@ func Routes(svc Service, sessions *auth.Sessions) []api.Route {
 		{Method: http.MethodGet, Path: "/api/v1/me", Access: api.Authenticated, License: license.ModeStatus, Handle: h.me},
 		{Method: http.MethodGet, Path: "/api/v1/companies", Access: api.Authenticated, License: license.ModeRead, Handle: h.companies},
 		{Method: http.MethodPost, Path: "/api/v1/session/company", Access: api.Authenticated, License: license.ModeRead, Handle: h.switchCompany},
+
+		{Method: http.MethodGet, Path: "/api/v1/company/profile", Access: api.Permission, Perm: rbac.CompanyView, License: license.ModeRead, Handle: h.profile},
+		{Method: http.MethodPut, Path: "/api/v1/company/profile", Access: api.Permission, Perm: rbac.CompanyEdit, License: license.ModeWrite, Handle: h.updateProfile},
+		{Method: http.MethodGet, Path: "/api/v1/contacts", Access: api.Permission, Perm: rbac.ContactView, License: license.ModeRead, Handle: h.contacts},
+		{Method: http.MethodGet, Path: "/api/v1/contacts/{id}", Access: api.Permission, Perm: rbac.ContactView, License: license.ModeRead, Handle: h.contact},
+		{Method: http.MethodPost, Path: "/api/v1/contacts", Access: api.Permission, Perm: rbac.ContactCreate, License: license.ModeWrite, Idempotent: true, Handle: h.createContact},
+		{Method: http.MethodPut, Path: "/api/v1/contacts/{id}", Access: api.Permission, Perm: rbac.ContactEdit, License: license.ModeWrite, Handle: h.updateContact},
 	}
+}
+
+func companyOf(r *http.Request) uuid.UUID {
+	s, _ := rbac.ScopeFrom(r.Context())
+	return s.CompanyID
+}
+
+func idParam(r *http.Request) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		return uuid.Nil, httpx.NotFound("not_found", "Data tidak ditemukan.")
+	}
+	return id, nil
+}
+
+func (h handlers) contacts(w http.ResponseWriter, r *http.Request) error {
+	q := r.URL.Query()
+	list, err := h.svc.Contacts(r.Context(), companyOf(r), ContactFilter{
+		Role: q.Get("role"), Search: q.Get("q"), IncludeInactive: q.Get("inactive") == "1",
+	})
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h handlers) contact(w http.ResponseWriter, r *http.Request) error {
+	id, err := idParam(r)
+	if err != nil {
+		return err
+	}
+	c, err := h.svc.Contact(r.Context(), companyOf(r), id)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+func (h handlers) createContact(w http.ResponseWriter, r *http.Request) error {
+	var in ContactInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	in.Active = true
+	c, err := h.svc.CreateContact(r.Context(), companyOf(r), in, auth.ActorFrom(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusCreated, c)
+}
+
+func (h handlers) updateContact(w http.ResponseWriter, r *http.Request) error {
+	id, err := idParam(r)
+	if err != nil {
+		return err
+	}
+	var in ContactInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	c, err := h.svc.UpdateContact(r.Context(), companyOf(r), id, in, auth.ActorFrom(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, c)
 }
 
 type handlers struct {
@@ -72,4 +145,24 @@ func (h handlers) switchCompany(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+func (h handlers) profile(w http.ResponseWriter, r *http.Request) error {
+	c, err := h.svc.Company(r.Context(), companyOf(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+func (h handlers) updateProfile(w http.ResponseWriter, r *http.Request) error {
+	var in TaxProfile
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	c, err := h.svc.UpdateTaxProfile(r.Context(), companyOf(r), in, auth.ActorFrom(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, c)
 }

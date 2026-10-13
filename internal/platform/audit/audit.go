@@ -17,6 +17,22 @@ import (
 	"lajur/internal/platform/store"
 )
 
+// Actor adalah pengguna yang melakukan aksi; dicatat di dokumen dan audit trail.
+// UserID kosong berarti aksi sistem.
+type Actor struct {
+	UserID uuid.UUID
+	IP     string
+}
+
+// UserRef mengembalikan nil untuk aksi sistem, supaya kolom created_by/posted_by bernilai NULL.
+func (a Actor) UserRef() *uuid.UUID {
+	if a.UserID == uuid.Nil {
+		return nil
+	}
+	id := a.UserID
+	return &id
+}
+
 // genesis adalah prev_hash untuk baris pertama.
 var genesis = make([]byte, sha256.Size)
 

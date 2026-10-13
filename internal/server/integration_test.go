@@ -18,10 +18,14 @@ import (
 
 	"lajur/internal/ledger"
 	"lajur/internal/modules/core"
+	"lajur/internal/modules/sales"
+	"lajur/internal/modules/trade"
 	"lajur/internal/platform/audit"
 	"lajur/internal/platform/auth"
+	"lajur/internal/platform/civil"
 	"lajur/internal/platform/dbtest"
 	"lajur/internal/platform/license"
+	"lajur/internal/platform/money"
 	"lajur/internal/platform/store"
 )
 
@@ -51,8 +55,8 @@ func newEnv(t *testing.T, lic license.Provider) *testEnv {
 	}
 	h, _ := New(Deps{
 		Pool: pool, Log: slog.New(slog.DiscardHandler), Sessions: auth.NewSessions(pool, false),
-		Core: svc, Ledger: ledger.New(pool), License: lic, Web: fstest.MapFS{"index.html": {Data: []byte("<html>lajur</html>")}},
-	})
+		License: lic, Web: fstest.MapFS{"index.html": {Data: []byte("<html>lajur</html>")}},
+	}.WithModules())
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return &testEnv{t: t, pool: pool, srv: srv, core: svc, companyA: a.ID, companyB: b.ID}
@@ -150,6 +154,9 @@ func TestLoginSessionAndCompanyScope(t *testing.T) {
 	}
 	if n := len(me.body["companies"].([]any)); n != 1 {
 		t.Fatalf("jumlah PT = %d, seharusnya 1", n)
+	}
+	if me.body["companies"].([]any)[0].(map[string]any)["pkp"] != true {
+		t.Fatal("status PKP PT tidak terkirim di /me; formulir faktur butuh ini untuk default PPN")
 	}
 
 	// Pengguna tidak boleh berpindah ke, atau membaca data, PT yang bukan aksesnya.
@@ -401,4 +408,113 @@ func TestExpiredLicenseMakesLedgerReadOnly(t *testing.T) {
 	expect(t, e.do(c, http.MethodGet, "/api/v1/ledger/accounts", nil), http.StatusOK, "")
 	expect(t, e.do(c, http.MethodPost, "/api/v1/journals", journalBody(acc, "1000"), "Idempotency-Key", "kunci-exp-01"),
 		http.StatusForbidden, "license.read_only")
+}
+
+// Matriks izin penjualan: Staf akuntansi membuat dan memposting faktur tetapi tidak bisa void;
+// Manager bisa void; Staf pajak tidak melihat penjualan; Auditor hanya membaca.
+func TestSalesPermissionsFollowPersonas(t *testing.T) {
+	e := newEnv(t, activeLicense())
+	e.user("akuntansi@uji.test", "staf_akuntansi", e.companyA)
+	e.user("manager@uji.test", "manager", e.companyA)
+	e.user("pajak@uji.test", "staf_pajak", e.companyA)
+	e.user("auditor@uji.test", "auditor", e.companyA)
+	acc := e.ledgerAccounts()
+
+	staf := e.client()
+	expect(t, e.login(staf, "akuntansi@uji.test", testPassword), http.StatusOK, "")
+	cust := e.do(staf, http.MethodPost, "/api/v1/contacts", map[string]any{
+		"name": "PT Pelanggan", "isCustomer": true, "npwp": "1234567890123456", "pkp": true, "paymentTermsDays": 30,
+	}, "Idempotency-Key", "kontak-uji-01")
+	expect(t, cust, http.StatusCreated, "")
+	draft := e.do(staf, http.MethodPost, "/api/v1/sales/invoices", map[string]any{
+		"customerId": cust.body["id"], "date": "2026-10-05", "memo": "Jasa",
+		"lines": []map[string]any{{"description": "Konsultasi", "accountId": acc["4-1001"], "qty": "1", "unitPrice": "1000000", "discountPct": "0", "taxCode": "PPN"}},
+	}, "Idempotency-Key", "faktur-uji-01")
+	expect(t, draft, http.StatusCreated, "")
+	id := draft.body["id"].(string)
+	posted := e.do(staf, http.MethodPost, "/api/v1/sales/invoices/"+id+"/post", map[string]any{}, "Idempotency-Key", "faktur-uji-02")
+	expect(t, posted, http.StatusOK, "")
+	if posted.body["number"] != "FJ/2026/10/0001" || posted.body["total"] != "1110000.0000" {
+		t.Fatalf("faktur diposting = %v / %v", posted.body["number"], posted.body["total"])
+	}
+	voidBody := map[string]any{"date": "2026-10-06", "reason": "Salah pelanggan"}
+	expect(t, e.do(staf, http.MethodPost, "/api/v1/sales/invoices/"+id+"/void", voidBody, "Idempotency-Key", "faktur-uji-03"), http.StatusForbidden, "rbac.denied")
+
+	pajak := e.client()
+	expect(t, e.login(pajak, "pajak@uji.test", testPassword), http.StatusOK, "")
+	expect(t, e.do(pajak, http.MethodGet, "/api/v1/sales/invoices", nil), http.StatusForbidden, "rbac.denied")
+	expect(t, e.do(pajak, http.MethodGet, "/api/v1/contacts", nil), http.StatusOK, "")
+
+	auditor := e.client()
+	expect(t, e.login(auditor, "auditor@uji.test", testPassword), http.StatusOK, "")
+	expect(t, e.do(auditor, http.MethodGet, "/api/v1/sales/invoices/"+id, nil), http.StatusOK, "")
+	expect(t, e.do(auditor, http.MethodPost, "/api/v1/contacts", map[string]any{"name": "X", "isSupplier": true}, "Idempotency-Key", "kontak-uji-02"),
+		http.StatusForbidden, "rbac.denied")
+
+	manager := e.client()
+	expect(t, e.login(manager, "manager@uji.test", testPassword), http.StatusOK, "")
+	voided := e.do(manager, http.MethodPost, "/api/v1/sales/invoices/"+id+"/void", voidBody, "Idempotency-Key", "faktur-uji-04")
+	expect(t, voided, http.StatusOK, "")
+	if voided.body["status"] != "void" {
+		t.Fatalf("status setelah void = %v", voided.body["status"])
+	}
+}
+
+// Staf pajak mengekspor XML faktur keluaran tanpa akses ke menu penjualan, dan ekspor tetap
+// berjalan walau lisensi sudah berakhir (PRD: ekspor tidak pernah dikunci).
+func TestTaxExportForTaxStaffWithExpiredLicense(t *testing.T) {
+	e := newEnv(t, license.Static{S: license.Status{State: license.Expired, Message: "Lisensi berakhir."}})
+	e.user("pajak@uji.test", "staf_pajak", e.companyA)
+	acc := e.ledgerAccounts()
+	ctx := context.Background()
+	m := Modules(e.pool)
+	c, _ := m.Core.Company(ctx, e.companyA)
+	if _, err := m.Core.UpdateTaxProfile(ctx, e.companyA, core.TaxProfile{NPWP: "0123456789012345", PKP: true, Version: c.Version}, audit.Actor{}); err != nil {
+		t.Fatal(err)
+	}
+	cust, err := m.Core.CreateContact(ctx, e.companyA, core.ContactInput{Name: "PT Pembeli", IsCustomer: true, NPWP: "1111222233334444", PKP: true}, audit.Actor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := m.Sales.CreateInvoice(ctx, e.companyA, sales.InvoiceInput{CustomerID: cust.ID, Date: civilDay("2026-10-05"),
+		Lines: []trade.LineInput{{AccountID: uuid.MustParse(acc["4-1001"]), Qty: money.FromInt(1), UnitPrice: money.FromInt(5_000_000), TaxCode: "PPN"}}}, audit.Actor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Sales.PostInvoice(ctx, e.companyA, inv.ID, audit.Actor{}); err != nil {
+		t.Fatal(err)
+	}
+
+	c2 := e.client()
+	expect(t, e.login(c2, "pajak@uji.test", testPassword), http.StatusOK, "")
+	expect(t, e.do(c2, http.MethodGet, "/api/v1/sales/invoices", nil), http.StatusForbidden, "rbac.denied")
+	list := e.do(c2, http.MethodGet, "/api/v1/tax/output-invoices?month=2026-10", nil)
+	expect(t, list, http.StatusOK, "")
+	if n := len(list.body["items"].([]any)); n != 1 {
+		t.Fatalf("faktur keluaran = %d", n)
+	}
+
+	body, _ := json.Marshal(map[string]any{"month": "2026-10", "ids": []string{inv.ID.String()}})
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/api/v1/tax/output-invoices/export", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c2.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	xml, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(xml), "<TaxInvoiceBulk") || !strings.Contains(resp.Header.Get("Content-Disposition"), ".xml") {
+		t.Fatalf("ekspor XML = %d %s", resp.StatusCode, xml)
+	}
+	// Mengubah status faktur pajak adalah penulisan data biasa: terkunci saat lisensi berakhir.
+	expect(t, e.do(c2, http.MethodPost, "/api/v1/tax/output-invoices/"+inv.ID.String()+"/approve", map[string]any{"number": "04002600000000031"}),
+		http.StatusForbidden, "license.read_only")
+}
+
+func civilDay(s string) civil.Date {
+	d, err := civil.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return d
 }

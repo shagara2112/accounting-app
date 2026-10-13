@@ -99,7 +99,7 @@ func (l *ledger) Entry(ctx context.Context, companyID, entryID uuid.UUID) (Entry
 	out := EntryDetail{
 		EntrySummary: EntrySummary{
 			ID: e.ID, Number: e.Number, Kind: Kind(e.Kind), Date: e.EntryDate, Memo: e.Memo,
-			SourceType: e.SourceType, Total: e.Total, Status: e.Status, ReversalOf: e.ReversalOf,
+			SourceType: e.SourceType, SourceID: e.SourceID, Total: e.Total, Status: e.Status, ReversalOf: e.ReversalOf,
 		},
 		AutoReverse: e.AutoReverse, PostedAt: e.PostedAt, PostedBy: e.PostedByName,
 		VoidedAt: e.VoidedAt, VoidedBy: e.VoidedByName, VoidReason: e.VoidReason,

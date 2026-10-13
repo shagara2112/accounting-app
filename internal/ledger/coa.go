@@ -294,5 +294,5 @@ const coaTemplate = `
   9-1000 Pajak penghasilan
     9-1001 Beban pajak kini
     9-1002 Beban pajak tangguhan
-    9-1003 Beban PPh final jasa konstruksi @konstruksi
+    9-1003 Beban PPh final
 `

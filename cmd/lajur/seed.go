@@ -11,13 +11,19 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"lajur/internal/ledger"
+	"lajur/internal/modules/cash"
 	"lajur/internal/modules/core"
+	"lajur/internal/modules/purchase"
+	"lajur/internal/modules/sales"
+	"lajur/internal/modules/trade"
+	"lajur/internal/platform/audit"
 	"lajur/internal/platform/auth"
 	"lajur/internal/platform/civil"
 	"lajur/internal/platform/config"
 	"lajur/internal/platform/db"
 	"lajur/internal/platform/money"
 	"lajur/internal/platform/store"
+	"lajur/internal/server"
 )
 
 func init() { extraCommands["seed-dev"] = seedDev }
@@ -101,6 +107,12 @@ func seedDev(ctx context.Context) error {
 		for _, c := range companies {
 			if err := seedLedger(ctx, deps.Ledger, c, industries[c], ids["staf_akuntansi"], ids["manager"]); err != nil {
 				return err
+			}
+			if err := seedTrade(ctx, deps, c, industries[c], audit.Actor{UserID: ids["staf_akuntansi"]}); err != nil {
+				return fmt.Errorf("data penjualan dan pembelian: %w", err)
+			}
+			if err := seedTax(ctx, deps, c, industries[c], audit.Actor{UserID: ids["staf_pajak"]}); err != nil {
+				return fmt.Errorf("data pajak: %w", err)
 			}
 		}
 		fmt.Println("Data contoh Grup Arta siap. Kata sandi semua akun = LAJUR_DEV_SEED_PASSWORD.")
@@ -239,5 +251,215 @@ func seedLedger(ctx context.Context, l ledger.Service, company uuid.UUID, indust
 		return err
 	}
 	fmt.Printf("  buku %-10s bagan akun dan jurnal %s – %s\n", industry, month.MonthLabel(), today.MonthLabel())
+	return nil
+}
+
+// seedTrade mengisi kontak, rekening kas/bank, faktur, pelunasan, tagihan, pembayaran, dan
+// transaksi kas bulan berjalan. PT yang sudah punya kontak dilewati.
+func seedTrade(ctx context.Context, d *server.Deps, company uuid.UUID, industry string, staf audit.Actor) error {
+	existing, err := d.Core.Contacts(ctx, company, core.ContactFilter{IncludeInactive: true})
+	if err != nil || len(existing) > 0 {
+		return err
+	}
+	accounts, err := d.Ledger.Accounts(ctx, company)
+	if err != nil {
+		return err
+	}
+	code := map[string]uuid.UUID{}
+	for _, a := range accounts {
+		code[a.Code] = a.ID
+	}
+	// PT dari seed lama belum punya akun beban PPh final untuk semua industri.
+	if _, ok := code["9-1003"]; !ok {
+		parent := code["9-1000"]
+		a, err := d.Ledger.CreateAccount(ctx, company, ledger.NewAccount{Code: "9-1003", Name: "Beban PPh final", ParentID: &parent, Postable: true}, staf)
+		if err != nil {
+			return err
+		}
+		code[a.Code] = a.ID
+	}
+
+	for _, ca := range []struct{ code, kind, bank, number string }{
+		{"1-1101", "kas", "", ""}, {"1-1102", "kas", "", ""},
+		{"1-1111", "bank", "BCA", "0123456789"}, {"1-1112", "bank", "Mandiri", "1370012345678"},
+	} {
+		if _, err := d.Cash.RegisterAccount(ctx, company, cash.AccountInput{
+			AccountID: code[ca.code], Kind: ca.kind, BankName: ca.bank, AccountNumber: ca.number, Active: true,
+		}, staf); err != nil {
+			return err
+		}
+	}
+
+	type contact struct {
+		name     string
+		customer bool
+		npwp     string
+		terms    int
+	}
+	names := map[string][4]string{
+		"jasa":       {"PT Contoh Energi Mandiri", "PT Contoh Data Teknologi", "CV Contoh Tenaga Ahli", "PT Contoh Graha Perkantoran"},
+		"konstruksi": {"PT Contoh Logistik Gudang", "PT Contoh Properti Hunian", "PT Contoh Baja Ringan", "CV Contoh Mandor Bangunan"},
+		"retail":     {"Koperasi Contoh Sejahtera", "PT Contoh Kantin Sekolah", "PT Contoh Distribusi Pangan", "CV Contoh Kemasan"},
+	}[industry]
+	ids := make([]uuid.UUID, 4)
+	for i, c := range []contact{
+		{names[0], true, fmt.Sprintf("01100000000000%d1", i0(industry)), 30},
+		{names[1], true, fmt.Sprintf("01200000000000%d2", i0(industry)), 14},
+		{names[2], false, fmt.Sprintf("02100000000000%d3", i0(industry)), 14},
+		{names[3], false, fmt.Sprintf("02200000000000%d4", i0(industry)), 30},
+	} {
+		created, err := d.Core.CreateContact(ctx, company, core.ContactInput{
+			Name: c.name, IsCustomer: c.customer, IsSupplier: !c.customer, NPWP: c.npwp, PKP: true,
+			PaymentTermsDays: c.terms, Address: "Jl. Contoh No. " + fmt.Sprint(i+1) + ", Jakarta",
+		}, staf)
+		if err != nil {
+			return err
+		}
+		ids[i] = created.ID
+	}
+	custA, custB, supA, supB := ids[0], ids[1], ids[2], ids[3]
+
+	scale := map[string]int64{"jasa": 1, "konstruksi": 3, "retail": 2}[industry]
+	rp := func(n int64) money.Amount { return money.FromInt(n * scale) }
+	today := civil.Today(civil.Jakarta)
+	month := today.MonthStart()
+	day := func(n int) civil.Date {
+		if t := month.AddDays(n - 1); !t.After(today) {
+			return t
+		}
+		return today
+	}
+	ln := func(acc string, desc string, price money.Amount, taxCode string) trade.LineInput {
+		return trade.LineInput{Description: desc, AccountID: code[acc], Qty: money.FromInt(1), UnitPrice: price, TaxCode: taxCode}
+	}
+	revenue := map[string]string{"jasa": "Jasa konsultansi teknik", "konstruksi": "Termin pekerjaan struktur", "retail": "Penjualan barang dagang"}[industry]
+	whCode := map[string]string{"jasa": "PPH23", "konstruksi": "PPH42-K265", "retail": ""}[industry]
+
+	postInvoice := func(in sales.InvoiceInput) (sales.InvoiceDetail, error) {
+		inv, err := d.Sales.CreateInvoice(ctx, company, in, staf)
+		if err != nil {
+			return inv, err
+		}
+		return d.Sales.PostInvoice(ctx, company, inv.ID, staf)
+	}
+	// 1. Lewat jatuh tempo, belum dibayar.
+	if _, err := postInvoice(sales.InvoiceInput{CustomerID: custA, Date: day(1), DueDate: day(5), Memo: "Tagihan awal bulan",
+		Lines: []trade.LineInput{ln("4-1001", revenue, rp(25_000_000), "PPN")}}); err != nil {
+		return err
+	}
+	// 2. Dibayar sebagian.
+	inv2, err := postInvoice(sales.InvoiceInput{CustomerID: custB, Date: day(3), Memo: "Kontrak bulanan",
+		Lines: []trade.LineInput{ln("4-1001", revenue, rp(12_000_000), "PPN"), ln("4-1002", "Layanan tambahan", rp(3_000_000), "PPN")}})
+	if err != nil {
+		return err
+	}
+	if _, err := d.Sales.CreateReceipt(ctx, company, sales.ReceiptInput{CustomerID: custB, Date: day(10), CashAccountID: code["1-1111"],
+		Allocations: []sales.AllocationInput{{InvoiceID: inv2.ID, Amount: rp(10_000_000)}}}, staf); err != nil {
+		return err
+	}
+	// 3. Lunas, dengan PPh dipotong pelanggan (jasa: PPh 23, konstruksi: PPh final 4(2)).
+	inv3, err := postInvoice(sales.InvoiceInput{CustomerID: custA, Date: day(6), Memo: "Pekerjaan selesai",
+		Lines: []trade.LineInput{ln("4-1001", revenue, rp(10_000_000), "PPN")}})
+	if err != nil {
+		return err
+	}
+	alloc := sales.AllocationInput{InvoiceID: inv3.ID, Amount: inv3.Total}
+	if whCode != "" {
+		table, err := d.Tax.Table(ctx)
+		if err != nil {
+			return err
+		}
+		c, err := table.Find(whCode, day(9))
+		if err != nil {
+			return err
+		}
+		alloc.WithholdingCode, alloc.Withholding = whCode, c.Withholding(inv3.Totals.DPP)
+	}
+	if _, err := d.Sales.CreateReceipt(ctx, company, sales.ReceiptInput{CustomerID: custA, Date: day(9), CashAccountID: code["1-1111"],
+		Allocations: []sales.AllocationInput{alloc}}, staf); err != nil {
+		return err
+	}
+	// 4. Draf yang belum diposting.
+	if _, err := d.Sales.CreateInvoice(ctx, company, sales.InvoiceInput{CustomerID: custB, Date: today, Memo: "Draf untuk dicek Manager",
+		Lines: []trade.LineInput{ln("4-1001", revenue, rp(7_500_000), "PPN")}}, staf); err != nil {
+		return err
+	}
+
+	postBill := func(in purchase.BillInput) (purchase.BillDetail, error) {
+		b, err := d.Purchase.CreateBill(ctx, company, in, staf)
+		if err != nil {
+			return b, err
+		}
+		return d.Purchase.PostBill(ctx, company, b.ID, staf)
+	}
+	cost := map[string][2]string{"jasa": {"5-1001", "Honor tenaga ahli"}, "konstruksi": {"5-1001", "Material baja ringan"}, "retail": {"5-1001", "Pembelian barang dagang"}}[industry]
+	bill1, err := postBill(purchase.BillInput{SupplierID: supA, SupplierInvoiceNo: "INV/" + fmt.Sprint(month.Year()) + "/0091", Date: day(2),
+		WithholdingCode: map[string]string{"jasa": "PPH23", "konstruksi": "", "retail": ""}[industry],
+		Lines:           []trade.LineInput{ln(cost[0], cost[1], rp(8_000_000), "PPN")}})
+	if err != nil {
+		return err
+	}
+	if _, err := d.Purchase.CreatePayment(ctx, company, purchase.PaymentInput{SupplierID: supA, Date: day(8), CashAccountID: code["1-1111"],
+		Allocations: []purchase.AllocationInput{{BillID: bill1.ID, Amount: bill1.Payable}}}, staf); err != nil {
+		return err
+	}
+	if _, err := postBill(purchase.BillInput{SupplierID: supB, SupplierInvoiceNo: "SW-10/" + fmt.Sprint(month.Year()), Date: day(4),
+		Memo: "Sewa dan layanan kantor", Lines: []trade.LineInput{ln("6-2001", "Sewa ruang rapat", rp(4_500_000), "PPN")}}); err != nil {
+		return err
+	}
+	if _, err := d.Purchase.CreateBill(ctx, company, purchase.BillInput{SupplierID: supB, Date: today, Memo: "Draf tagihan listrik gedung",
+		Lines: []trade.LineInput{ln("6-2002", "Listrik gedung", rp(1_250_000), "NON-PPN")}}, staf); err != nil {
+		return err
+	}
+
+	if _, err := d.Cash.Record(ctx, company, cash.TransactionInput{Kind: "out", Date: day(7), CashAccountID: code["1-1111"], Memo: "Mutasi bank",
+		Lines: []cash.LineInput{{AccountID: code["8-1001"], Amount: money.FromInt(25_000), Memo: "Biaya administrasi bulanan"}}}, staf); err != nil {
+		return err
+	}
+	petty := code["1-1101"]
+	if _, err := d.Cash.Record(ctx, company, cash.TransactionInput{Kind: "transfer", Date: day(7), CashAccountID: code["1-1111"],
+		ToAccountID: &petty, Amount: money.FromInt(1_500_000), Memo: "Pengisian kas kecil"}, staf); err != nil {
+		return err
+	}
+	fmt.Printf("  dagang %-9s kontak, rekening, faktur, pelunasan, tagihan, dan kas %s\n", industry, today.MonthLabel())
+	return nil
+}
+
+// i0 membedakan NPWP contoh antar-PT.
+func i0(industry string) int {
+	return map[string]int{"jasa": 1, "konstruksi": 2, "retail": 3}[industry]
+}
+
+// seedTax melengkapi profil pajak PT (NPWP, NITKU, alamat) dan mencatat satu faktur pajak yang
+// sudah terbit, supaya halaman Pajak menunjukkan berbagai status. Hanya untuk PT tanpa NPWP.
+func seedTax(ctx context.Context, d *server.Deps, company uuid.UUID, industry string, staf audit.Actor) error {
+	c, err := d.Core.Company(ctx, company)
+	if err != nil || c.NPWP != "" {
+		return err
+	}
+	npwp := fmt.Sprintf("091234567890%04d", i0(industry))
+	if _, err := d.Core.UpdateTaxProfile(ctx, company, core.TaxProfile{
+		NPWP: npwp, NITKU: npwp + "000000", Address: "Jl. Contoh Raya No. " + fmt.Sprint(i0(industry)*10) + ", Jakarta Selatan",
+		PKP: true, Version: c.Version,
+	}, staf); err != nil {
+		return err
+	}
+	month := civil.Today(civil.Jakarta).MonthStart()
+	list, err := d.Coretax.Outputs(ctx, company, month)
+	if err != nil {
+		return err
+	}
+	for _, it := range list.Items {
+		if it.Status != "ready" {
+			continue
+		}
+		// Nomor contoh: 04 (kode transaksi) + 0 + tahun 2 digit + nomor urut.
+		nsfp := fmt.Sprintf("040%02d%011d", month.Year()%100, i0(industry))
+		if err := d.Coretax.Approve(ctx, company, it.InvoiceID, nsfp, it.Date.AddDays(1), staf); err != nil {
+			return err
+		}
+		break
+	}
+	fmt.Printf("  pajak %-10s profil PT dan satu faktur pajak terbit\n", industry)
 	return nil
 }

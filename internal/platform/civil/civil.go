@@ -51,20 +51,20 @@ func ParseMonth(s string) (Date, error) {
 	return Date{t}, nil
 }
 
-func (d Date) IsZero() bool            { return d.t.IsZero() }
-func (d Date) Year() int               { return d.t.Year() }
-func (d Date) Month() time.Month       { return d.t.Month() }
-func (d Date) Day() int                { return d.t.Day() }
-func (d Date) Before(o Date) bool      { return d.t.Before(o.t) }
-func (d Date) After(o Date) bool       { return d.t.After(o.t) }
-func (d Date) String() string          { return d.t.Format(time.DateOnly) }
-func (d Date) MonthKey() string        { return d.t.Format("2006-01") }
-func (d Date) AddDays(n int) Date      { return Date{d.t.AddDate(0, 0, n)} }
-func (d Date) MonthStart() Date        { return New(d.Year(), d.Month(), 1) }
-func (d Date) MonthEnd() Date          { return d.MonthStart().AddMonths(1).AddDays(-1) }
-func (d Date) SameMonth(o Date) bool   { return d.Year() == o.Year() && d.Month() == o.Month() }
-func (d Date) Compare(o Date) int      { return d.t.Compare(o.t) }
-func (d Date) AddMonths(n int) Date    { return Date{d.MonthStart().t.AddDate(0, n, 0)} } // hasil selalu tanggal 1
+func (d Date) IsZero() bool          { return d.t.IsZero() }
+func (d Date) Year() int             { return d.t.Year() }
+func (d Date) Month() time.Month     { return d.t.Month() }
+func (d Date) Day() int              { return d.t.Day() }
+func (d Date) Before(o Date) bool    { return d.t.Before(o.t) }
+func (d Date) After(o Date) bool     { return d.t.After(o.t) }
+func (d Date) String() string        { return d.t.Format(time.DateOnly) }
+func (d Date) MonthKey() string      { return d.t.Format("2006-01") }
+func (d Date) AddDays(n int) Date    { return Date{d.t.AddDate(0, 0, n)} }
+func (d Date) MonthStart() Date      { return New(d.Year(), d.Month(), 1) }
+func (d Date) MonthEnd() Date        { return d.MonthStart().AddMonths(1).AddDays(-1) }
+func (d Date) SameMonth(o Date) bool { return d.Year() == o.Year() && d.Month() == o.Month() }
+func (d Date) Compare(o Date) int    { return d.t.Compare(o.t) }
+func (d Date) AddMonths(n int) Date  { return Date{d.MonthStart().t.AddDate(0, n, 0)} } // hasil selalu tanggal 1
 
 // Indonesian menulis tanggal untuk pesan ke pengguna, mis. "31 Oktober 2026".
 func (d Date) Indonesian() string {
@@ -115,3 +115,6 @@ func (d Date) DateValue() (pgtype.Date, error) {
 	}
 	return pgtype.Date{Time: d.t, Valid: true}, nil
 }
+
+// DaysSince adalah jumlah hari dari o ke d (negatif bila d sebelum o).
+func (d Date) DaysSince(o Date) int { return int(d.t.Sub(o.t).Hours() / 24) }

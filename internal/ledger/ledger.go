@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lajur/internal/ledger/internal/store"
+	"lajur/internal/platform/audit"
 	"lajur/internal/platform/civil"
 	"lajur/internal/platform/db"
 	"lajur/internal/platform/money"
@@ -34,10 +35,7 @@ const (
 )
 
 // Actor adalah pengguna yang melakukan aksi; dicatat di jurnal dan audit trail.
-type Actor struct {
-	UserID uuid.UUID
-	IP     string
-}
+type Actor = audit.Actor
 
 type LineDraft struct {
 	AccountID uuid.UUID    `json:"accountId"`
@@ -55,6 +53,7 @@ type EntryDraft struct {
 	AutoReverse bool   // hanya penyesuaian: dibalik otomatis tanggal 1 bulan berikutnya (GL-08, GL-11)
 	SourceType  string // "manual", atau jenis dokumen modul pemosting, mis. "sales.invoice"
 	SourceID    *uuid.UUID
+	Number      string // nomor dokumen sumber (mis. FJ/2026/10/0001); kosong = nomor seri jurnal
 	Lines       []LineDraft
 	Actor       Actor
 }
@@ -129,6 +128,7 @@ type EntrySummary struct {
 	Date       civil.Date   `json:"date"`
 	Memo       string       `json:"memo"`
 	SourceType string       `json:"sourceType"`
+	SourceID   *uuid.UUID   `json:"sourceId,omitempty"`
 	Total      money.Amount `json:"total"`
 	Status     string       `json:"status"`
 	ReversalOf *uuid.UUID   `json:"reversalOf,omitempty"`
@@ -245,6 +245,12 @@ type AccountLedger struct {
 type Service interface {
 	Post(ctx context.Context, d EntryDraft) (Posted, error)
 	Void(ctx context.Context, companyID, entryID uuid.UUID, date civil.Date, reason string, actor Actor) (Voided, error)
+	// VoidSource membatalkan jurnal milik dokumen modul; sourceType harus cocok dengan jurnalnya.
+	VoidSource(ctx context.Context, companyID, entryID uuid.UUID, sourceType string, date civil.Date, reason string, actor Actor) (Voided, error)
+	// NextNumber mengambil nomor dokumen tanpa celah, mis. FJ/2026/10/0001 (GL-07).
+	NextNumber(ctx context.Context, companyID uuid.UUID, series string, date civil.Date) (string, error)
+	// RoleAccount mengembalikan akun sistem, mis. piutang usaha untuk faktur penjualan.
+	RoleAccount(ctx context.Context, companyID uuid.UUID, role Role) (Account, error)
 	Entry(ctx context.Context, companyID, entryID uuid.UUID) (EntryDetail, error)
 	Entries(ctx context.Context, companyID uuid.UUID, f EntryFilter) (EntryPage, error)
 

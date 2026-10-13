@@ -11,7 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lajur/internal/modules/core/internal/store"
+	"lajur/internal/platform/audit"
 	"lajur/internal/platform/db"
+	"lajur/internal/platform/httpx"
 	"lajur/internal/platform/rbac"
 )
 
@@ -21,6 +23,11 @@ type Company struct {
 	ShortName string    `json:"shortName"`
 	Kind      string    `json:"kind"`
 	Industry  *string   `json:"industry,omitempty"`
+	PKP       bool      `json:"pkp"`
+	NPWP      string    `json:"npwp,omitempty"`
+	NITKU     string    `json:"nitku,omitempty"`
+	Address   string    `json:"address,omitempty"`
+	Version   int       `json:"version,omitempty"`
 }
 
 type CompanyAccess struct {
@@ -44,8 +51,17 @@ type Service interface {
 	rbac.Resolver
 	CompaniesFor(ctx context.Context, userID uuid.UUID) ([]CompanyAccess, error)
 	Companies(ctx context.Context) ([]Company, error)
+	Company(ctx context.Context, id uuid.UUID) (Company, error)
+	// UpdateTaxProfile mengubah NPWP, NITKU, alamat, dan status PKP PT (TAX-05).
+	UpdateTaxProfile(ctx context.Context, id uuid.UUID, in TaxProfile, actor audit.Actor) (Company, error)
 	CreateCompany(ctx context.Context, c NewCompany) (Company, error)
 	Assign(ctx context.Context, userID, companyID uuid.UUID, roleKey string) error
+
+	Contacts(ctx context.Context, companyID uuid.UUID, f ContactFilter) ([]Contact, error)
+	Contact(ctx context.Context, companyID, id uuid.UUID) (Contact, error)
+	ContactNames(ctx context.Context, companyID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]string, error)
+	CreateContact(ctx context.Context, companyID uuid.UUID, in ContactInput, actor audit.Actor) (Contact, error)
+	UpdateContact(ctx context.Context, companyID, id uuid.UUID, in ContactInput, actor audit.Actor) (Contact, error)
 }
 
 func New(pool *pgxpool.Pool) Service { return &service{pool: pool} }
@@ -82,8 +98,8 @@ func (s *service) CompaniesFor(ctx context.Context, userID uuid.UUID) ([]Company
 	out := make([]CompanyAccess, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, CompanyAccess{
-			Company:  Company{ID: r.ID, Name: r.Name, ShortName: r.ShortName, Kind: r.Kind, Industry: r.Industry},
-			RoleKey:  r.RoleKey, RoleName: r.RoleName, Permissions: r.Permissions,
+			Company: Company{ID: r.ID, Name: r.Name, ShortName: r.ShortName, Kind: r.Kind, Industry: r.Industry, PKP: r.Pkp},
+			RoleKey: r.RoleKey, RoleName: r.RoleName, Permissions: r.Permissions,
 		})
 	}
 	return out, nil
@@ -96,9 +112,27 @@ func (s *service) Companies(ctx context.Context) ([]Company, error) {
 	}
 	out := make([]Company, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Company{ID: r.ID, Name: r.Name, ShortName: r.ShortName, Kind: r.Kind, Industry: r.Industry})
+		out = append(out, Company{ID: r.ID, Name: r.Name, ShortName: r.ShortName, Kind: r.Kind, Industry: r.Industry, PKP: r.Pkp})
 	}
 	return out, nil
+}
+
+func (s *service) Company(ctx context.Context, id uuid.UUID) (Company, error) {
+	r, err := s.q(ctx).GetCompany(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Company{}, httpx.NotFound("company.not_found", "PT tidak ditemukan.")
+	}
+	if err != nil {
+		return Company{}, err
+	}
+	return toCompany(r), nil
+}
+
+func toCompany(r store.CoreCompany) Company {
+	return Company{
+		ID: r.ID, Name: r.Name, ShortName: r.ShortName, Kind: r.Kind, Industry: r.Industry, PKP: r.Pkp,
+		NPWP: deref(r.Npwp), NITKU: deref(r.Nitku), Address: r.Address, Version: int(r.Version),
+	}
 }
 
 func (s *service) CreateCompany(ctx context.Context, c NewCompany) (Company, error) {
@@ -112,7 +146,7 @@ func (s *service) CreateCompany(ctx context.Context, c NewCompany) (Company, err
 	if err != nil {
 		return Company{}, err
 	}
-	return Company{ID: row.ID, Name: row.Name, ShortName: row.ShortName, Kind: row.Kind, Industry: row.Industry}, nil
+	return Company{ID: row.ID, Name: row.Name, ShortName: row.ShortName, Kind: row.Kind, Industry: row.Industry, PKP: row.Pkp}, nil
 }
 
 func (s *service) Assign(ctx context.Context, userID, companyID uuid.UUID, roleKey string) error {

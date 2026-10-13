@@ -127,6 +127,15 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// ActorFrom mengembalikan pengguna sesi dan alamat IP request untuk audit trail.
+func ActorFrom(r *http.Request) audit.Actor {
+	a := audit.Actor{IP: ClientIP(r)}
+	if sess, ok := SessionFrom(r.Context()); ok {
+		a.UserID = sess.UserID
+	}
+	return a
+}
+
 // ClientIP memakai alamat koneksi langsung; Lajur berjalan di LAN tanpa reverse proxy.
 func ClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

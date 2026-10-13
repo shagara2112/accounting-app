@@ -219,7 +219,7 @@ Semua angka di Lajur lewat satu fungsi, `ledger.Post`. Fungsi ini memvalidasi, m
 | Penjualan barang persediaan | HPP | Persediaan |
 | Rekap penjualan harian retail (IND-07) | Kas/bank | Penjualan; PPN keluaran digunggung |
 
-Aturan posting disimpan sebagai kode Go per jenis dokumen, dengan pemetaan akun yang dapat diatur per PT (akun default dari template CoA industri).
+Aturan posting disimpan sebagai kode Go per jenis dokumen, dengan pemetaan akun yang dapat diatur per PT (akun default dari template CoA industri). Saat ini akun sistem (piutang usaha, PPN keluaran/masukan, PPh 23 dibayar di muka, utang PPh, beban PPh final) dicari dari kode defaultnya yang sama di semua template; layar pemetaan per PT menyusul. Jurnal dari dokumen modul memakai nomor dokumennya sendiri (mis. FJ/2026/10/0001), sehingga buku besar dan dokumen sumber mudah dicocokkan.
 
 ## Desain modul bisnis
 
@@ -227,14 +227,16 @@ Setiap dokumen bisnis mengikuti siklus status yang sama: draft → posted → (l
 
 **Penjualan (AR)**
 
-- `sales.invoices` dan `sales.invoice_lines`; pelunasan di `sales.receipts`, dialokasikan ke banyak faktur lewat `receipt_allocations`. Potongan PPh 23 atau PPh final 4(2) dicatat per alokasi (AR-04).
+- `sales.invoices` dan `sales.invoice_lines`; pelunasan di `sales.receipts`, dialokasikan ke banyak faktur lewat `receipt_allocations`. Potongan PPh 23 atau PPh final 4(2) dicatat per alokasi (AR-04). Faktur dikunci `FOR UPDATE` saat dialokasikan, sehingga dua pelunasan bersamaan tidak bisa melebihi sisa faktur.
+- PPN dihitung per baris: PPN = DPP × rasio DPP × tarif, dibulatkan ke bawah ke rupiah; qty × harga dan diskon dibulatkan ke rupiah terdekat. Perhitungan yang sama dipakai di server (Go) dan di formulir (TypeScript, BigInt).
 - Faktur termin (AR-08) dihitung modul proyek: nilai termin = % progres × nilai kontrak − termin sebelumnya; potongan uang muka proporsional; retensi = % retensi × nilai termin.
 - Umur piutang dihitung dari faktur yang belum lunas per tanggal laporan, bukan dari kolom saldo yang disimpan.
 
 **Pembelian (AP)**
 
 - Strukturnya mencerminkan AR: `purchase.bills`, `purchase.payments`, `payment_allocations`.
-- PPh yang dipotong membuat draf bukti potong di modul pajak. Tagihan dengan pemasok dan nomor faktur pemasok yang sama memunculkan peringatan, bukan ditolak.
+- PPh yang dipotong dicatat sebagai utang PPh saat tagihan diposting, sehingga yang dibayar ke pemasok adalah total dikurangi PPh; draf bukti potong di modul pajak menyusul (TAX-08). Tagihan dengan pemasok dan nomor faktur pemasok yang sama memunculkan peringatan, bukan ditolak.
+- PT non-PKP tetap membayar PPN ke pemasok PKP, tetapi PPN itu tidak bisa dikreditkan: saat posting, PPN dibebankan ke akun baris tagihan, bukan ke PPN masukan.
 
 **Kas dan bank (input manual)**
 
@@ -260,7 +262,9 @@ Setiap penerimaan barang menghitung ulang biaya rata-rata per PT dan produk; set
 **Pajak dan ekspor Coretax**
 
 - `tax.tax_codes` bertanggal berlaku: tarif, rasio DPP (mis. 11/12), dan akun. Perhitungan ada di fungsi murni `tax.Calculate(lines, tanggal)` sehingga mudah diuji.
-- Eksportir XML Coretax disimpan per versi template (mis. `coretax/fakturkeluaran/v1_4`) dengan struct `encoding/xml`. Setiap versi diuji terhadap file contoh resmi DJP.
+- Eksportir XML Coretax disimpan per versi template (saat ini `coretax-faktur-keluaran/v1`, struktur `TaxInvoiceBulk`) dengan struct `encoding/xml` dan tes golden. Versi v1 disusun dari struktur impor massal yang dipakai luas, belum dari TaxInvoice.xsd resmi; sebelum dipakai pelanggan, uji dengan file contoh resmi DJP dan satu unggahan percobaan di Coretax.
+- Status faktur pajak keluaran disimpan modul pajak (`tax.output_invoices`): siap → diekspor → terbit (nomor faktur tercatat) → dibatalkan atau diganti. Data fakturnya dibaca lewat service penjualan. Kode transaksi default 04 bila DPP nilai lain dipakai, selain itu 01. Faktur penjualan yang faktur pajaknya terbit tidak bisa di-void sampai faktur pajaknya ditandai dibatalkan (pengunci dipasang lewat hook di service penjualan, tanpa dependensi melingkar).
+- Rekap PPN per masa dihitung dari faktur dan tagihan yang diposting; lebih bayar otomatis dikompensasikan ke masa berikutnya. Restitusi, faktur pajak masukan (TAX-07), bukti potong (TAX-08), dan PPN digunggung retail (TAX-12) belum dibangun.
 - Nomor faktur yang terbit dicatat kembali dengan mengimpor file unduhan Coretax, dicocokkan lewat nomor referensi faktur Lajur (TAX-03).
 - Rekap PPN digunggung untuk retail (TAX-12) dihasilkan per masa dari rekap penjualan harian.
 
@@ -594,5 +598,5 @@ Risiko teknis terbesar adalah dua komponen yang tidak sepenuhnya kita kendalikan
 - [ ] Di mana registry container dan update server di-hosting (mis. GitHub Container Registry dan object storage)?
 - [ ] Apakah konsolidasi perlu mendukung kepemilikan sebagian (kepentingan nonpengendali) sejak MVP?
 - [ ] Siapa yang menyimpan cadangan kunci dekripsi backup bila Pemilik kehilangan kuncinya?
-- [ ] Apakah Staf akuntansi boleh mengubah draf miliknya sendiri yang belum diposting? Sampai diputuskan, jurnal manual langsung diposting saat disimpan (tanpa draf).
+- [ ] Apakah Staf akuntansi boleh mengubah draf miliknya sendiri yang belum diposting? Keputusan sementara: faktur dan tagihan draf boleh diubah dan dihapus oleh pembuatnya, serta oleh Manager dan Pemilik; jurnal manual tetap langsung diposting saat disimpan.
 - [ ] Apakah PRD diperbarui agar frontend memakai Vite, bukan Next.js?

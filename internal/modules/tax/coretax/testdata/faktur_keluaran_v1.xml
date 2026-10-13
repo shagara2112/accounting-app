@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TaxInvoiceBulk xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="TaxInvoice.xsd">
+  <TIN>0123456789012345</TIN>
+  <ListOfTaxInvoice>
+    <TaxInvoice>
+      <TaxInvoiceDate>2026-10-05</TaxInvoiceDate>
+      <TaxInvoiceOpt>Normal</TaxInvoiceOpt>
+      <TrxCode>04</TrxCode>
+      <AddInfo></AddInfo>
+      <CustomDoc></CustomDoc>
+      <RefDesc>FJ/2026/10/0001</RefDesc>
+      <FacilityStamp></FacilityStamp>
+      <SellerIDTKU>0123456789012345000000</SellerIDTKU>
+      <BuyerTin>0987654321098765</BuyerTin>
+      <BuyerDocument>TIN</BuyerDocument>
+      <BuyerCountry>IDN</BuyerCountry>
+      <BuyerDocumentNumber></BuyerDocumentNumber>
+      <BuyerName>PT Pembeli &amp; Rekan</BuyerName>
+      <BuyerAdress>Jl. Contoh No. 1, Jakarta</BuyerAdress>
+      <BuyerEmail></BuyerEmail>
+      <BuyerIDTKU>0987654321098765000001</BuyerIDTKU>
+      <ListOfGoodService>
+        <GoodService>
+          <Opt>B</Opt>
+          <Code>000000</Code>
+          <Name>Jasa konsultansi</Name>
+          <Unit>UM.0021</Unit>
+          <Price>4500000.00</Price>
+          <Qty>2</Qty>
+          <TotalDiscount>900000.00</TotalDiscount>
+          <TaxBase>8100000.00</TaxBase>
+          <OtherTaxBase>7425000.00</OtherTaxBase>
+          <VATRate>12</VATRate>
+          <VAT>891000.00</VAT>
+          <STLGRate>0</STLGRate>
+          <STLG>0</STLG>
+        </GoodService>
+        <GoodService>
+          <Opt>B</Opt>
+          <Code>000000</Code>
+          <Name>Biaya perjalanan</Name>
+          <Unit>UM.0021</Unit>
+          <Price>1234567.00</Price>
+          <Qty>1.5</Qty>
+          <TotalDiscount>0.00</TotalDiscount>
+          <TaxBase>1851851.00</TaxBase>
+          <OtherTaxBase>1697530.08</OtherTaxBase>
+          <VATRate>12</VATRate>
+          <VAT>203703.00</VAT>
+          <STLGRate>0</STLGRate>
+          <STLG>0</STLG>
+        </GoodService>
+      </ListOfGoodService>
+    </TaxInvoice>
+  </ListOfTaxInvoice>
+</TaxInvoiceBulk>

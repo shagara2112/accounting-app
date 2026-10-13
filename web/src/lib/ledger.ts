@@ -1,4 +1,5 @@
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
+import { useInvalidateCompany } from './invalidate'
 import {
   api,
   query,
@@ -20,13 +21,8 @@ import {
 // semua tampilan PT itu setelah posting, void, atau tutup buku.
 const key = (companyId: string | null, ...rest: unknown[]) => ['ledger', companyId, ...rest]
 
-function useInvalidateLedger(companyId: string | null) {
-  const qc = useQueryClient()
-  return () => {
-    void qc.invalidateQueries({ queryKey: ['ledger', companyId] })
-    void qc.invalidateQueries({ queryKey: ['audit', companyId] })
-  }
-}
+// Posting jurnal juga mengubah saldo kas dan laporan modul lain, jadi semua data PT disegarkan.
+const useInvalidateLedger = useInvalidateCompany
 
 export function useAccounts(companyId: string | null) {
   return useQuery({

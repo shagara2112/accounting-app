@@ -36,7 +36,7 @@ func (q *Queries) AssignRoleByKey(ctx context.Context, arg AssignRoleByKeyParams
 const createCompany = `-- name: CreateCompany :one
 INSERT INTO core.companies (id, name, short_name, npwp, nitku, kind, industry)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, name, short_name, npwp, nitku, kind, industry, active, created_at, version
+RETURNING id, name, short_name, npwp, nitku, kind, industry, active, created_at, version, pkp, address
 `
 
 type CreateCompanyParams struct {
@@ -71,6 +71,8 @@ func (q *Queries) CreateCompany(ctx context.Context, arg CreateCompanyParams) (C
 		&i.Active,
 		&i.CreatedAt,
 		&i.Version,
+		&i.Pkp,
+		&i.Address,
 	)
 	return i, err
 }
@@ -100,8 +102,139 @@ func (q *Queries) GetAccess(ctx context.Context, arg GetAccessParams) (GetAccess
 	return i, err
 }
 
+const getCompany = `-- name: GetCompany :one
+SELECT id, name, short_name, npwp, nitku, kind, industry, active, created_at, version, pkp, address FROM core.companies WHERE id = $1
+`
+
+func (q *Queries) GetCompany(ctx context.Context, id uuid.UUID) (CoreCompany, error) {
+	row := q.db.QueryRow(ctx, getCompany, id)
+	var i CoreCompany
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.ShortName,
+		&i.Npwp,
+		&i.Nitku,
+		&i.Kind,
+		&i.Industry,
+		&i.Active,
+		&i.CreatedAt,
+		&i.Version,
+		&i.Pkp,
+		&i.Address,
+	)
+	return i, err
+}
+
+const getContact = `-- name: GetContact :one
+SELECT id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version FROM core.contacts WHERE company_id = $1 AND id = $2
+`
+
+type GetContactParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) GetContact(ctx context.Context, arg GetContactParams) (CoreContact, error) {
+	row := q.db.QueryRow(ctx, getContact, arg.CompanyID, arg.ID)
+	var i CoreContact
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.IsCustomer,
+		&i.IsSupplier,
+		&i.Npwp,
+		&i.Nik,
+		&i.Nitku,
+		&i.Pkp,
+		&i.Address,
+		&i.Email,
+		&i.Phone,
+		&i.PaymentTermsDays,
+		&i.BankName,
+		&i.BankAccount,
+		&i.Active,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.Version,
+	)
+	return i, err
+}
+
+const insertContact = `-- name: InsertContact :one
+INSERT INTO core.contacts
+  (id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone,
+   payment_terms_days, bank_name, bank_account, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+RETURNING id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version
+`
+
+type InsertContactParams struct {
+	ID               uuid.UUID
+	CompanyID        uuid.UUID
+	Name             string
+	IsCustomer       bool
+	IsSupplier       bool
+	Npwp             *string
+	Nik              *string
+	Nitku            *string
+	Pkp              bool
+	Address          string
+	Email            string
+	Phone            string
+	PaymentTermsDays int32
+	BankName         string
+	BankAccount      string
+	CreatedBy        *uuid.UUID
+}
+
+func (q *Queries) InsertContact(ctx context.Context, arg InsertContactParams) (CoreContact, error) {
+	row := q.db.QueryRow(ctx, insertContact,
+		arg.ID,
+		arg.CompanyID,
+		arg.Name,
+		arg.IsCustomer,
+		arg.IsSupplier,
+		arg.Npwp,
+		arg.Nik,
+		arg.Nitku,
+		arg.Pkp,
+		arg.Address,
+		arg.Email,
+		arg.Phone,
+		arg.PaymentTermsDays,
+		arg.BankName,
+		arg.BankAccount,
+		arg.CreatedBy,
+	)
+	var i CoreContact
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.IsCustomer,
+		&i.IsSupplier,
+		&i.Npwp,
+		&i.Nik,
+		&i.Nitku,
+		&i.Pkp,
+		&i.Address,
+		&i.Email,
+		&i.Phone,
+		&i.PaymentTermsDays,
+		&i.BankName,
+		&i.BankAccount,
+		&i.Active,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.Version,
+	)
+	return i, err
+}
+
 const listAccessForUser = `-- name: ListAccessForUser :many
-SELECT c.id, c.name, c.short_name, c.kind, c.industry,
+SELECT c.id, c.name, c.short_name, c.kind, c.industry, c.pkp,
        r.key AS role_key, r.name AS role_name, r.permissions
 FROM core.user_company_roles ucr
 JOIN core.companies c ON c.id = ucr.company_id
@@ -116,6 +249,7 @@ type ListAccessForUserRow struct {
 	ShortName   string
 	Kind        string
 	Industry    *string
+	Pkp         bool
 	RoleKey     string
 	RoleName    string
 	Permissions []string
@@ -136,6 +270,7 @@ func (q *Queries) ListAccessForUser(ctx context.Context, userID uuid.UUID) ([]Li
 			&i.ShortName,
 			&i.Kind,
 			&i.Industry,
+			&i.Pkp,
 			&i.RoleKey,
 			&i.RoleName,
 			&i.Permissions,
@@ -151,7 +286,7 @@ func (q *Queries) ListAccessForUser(ctx context.Context, userID uuid.UUID) ([]Li
 }
 
 const listCompanies = `-- name: ListCompanies :many
-SELECT id, name, short_name, npwp, nitku, kind, industry, active, created_at, version FROM core.companies WHERE active ORDER BY name
+SELECT id, name, short_name, npwp, nitku, kind, industry, active, created_at, version, pkp, address FROM core.companies WHERE active ORDER BY name
 `
 
 func (q *Queries) ListCompanies(ctx context.Context) ([]CoreCompany, error) {
@@ -174,6 +309,8 @@ func (q *Queries) ListCompanies(ctx context.Context) ([]CoreCompany, error) {
 			&i.Active,
 			&i.CreatedAt,
 			&i.Version,
+			&i.Pkp,
+			&i.Address,
 		); err != nil {
 			return nil, err
 		}
@@ -183,4 +320,189 @@ func (q *Queries) ListCompanies(ctx context.Context) ([]CoreCompany, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const listContacts = `-- name: ListContacts :many
+SELECT id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version FROM core.contacts
+WHERE company_id = $1
+  AND (NOT $2::bool OR is_customer)
+  AND (NOT $3::bool OR is_supplier)
+  AND ($4::bool OR active)
+  AND ($5::text IS NULL
+       OR name ILIKE '%' || $5::text || '%'
+       OR npwp LIKE $5::text || '%')
+ORDER BY lower(name)
+LIMIT 500
+`
+
+type ListContactsParams struct {
+	CompanyID       uuid.UUID
+	CustomersOnly   bool
+	SuppliersOnly   bool
+	IncludeInactive bool
+	Search          *string
+}
+
+func (q *Queries) ListContacts(ctx context.Context, arg ListContactsParams) ([]CoreContact, error) {
+	rows, err := q.db.Query(ctx, listContacts,
+		arg.CompanyID,
+		arg.CustomersOnly,
+		arg.SuppliersOnly,
+		arg.IncludeInactive,
+		arg.Search,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CoreContact
+	for rows.Next() {
+		var i CoreContact
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.Name,
+			&i.IsCustomer,
+			&i.IsSupplier,
+			&i.Npwp,
+			&i.Nik,
+			&i.Nitku,
+			&i.Pkp,
+			&i.Address,
+			&i.Email,
+			&i.Phone,
+			&i.PaymentTermsDays,
+			&i.BankName,
+			&i.BankAccount,
+			&i.Active,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateCompanyTaxProfile = `-- name: UpdateCompanyTaxProfile :one
+UPDATE core.companies
+SET npwp = $1, nitku = $2, address = $3, pkp = $4, version = version + 1
+WHERE id = $5 AND version = $6
+RETURNING id, name, short_name, npwp, nitku, kind, industry, active, created_at, version, pkp, address
+`
+
+type UpdateCompanyTaxProfileParams struct {
+	Npwp    *string
+	Nitku   *string
+	Address string
+	Pkp     bool
+	ID      uuid.UUID
+	Version int32
+}
+
+func (q *Queries) UpdateCompanyTaxProfile(ctx context.Context, arg UpdateCompanyTaxProfileParams) (CoreCompany, error) {
+	row := q.db.QueryRow(ctx, updateCompanyTaxProfile,
+		arg.Npwp,
+		arg.Nitku,
+		arg.Address,
+		arg.Pkp,
+		arg.ID,
+		arg.Version,
+	)
+	var i CoreCompany
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.ShortName,
+		&i.Npwp,
+		&i.Nitku,
+		&i.Kind,
+		&i.Industry,
+		&i.Active,
+		&i.CreatedAt,
+		&i.Version,
+		&i.Pkp,
+		&i.Address,
+	)
+	return i, err
+}
+
+const updateContact = `-- name: UpdateContact :one
+UPDATE core.contacts
+SET name = $1, is_customer = $2, is_supplier = $3, npwp = $4, nik = $5,
+    nitku = $6, pkp = $7, address = $8, email = $9, phone = $10,
+    payment_terms_days = $11, bank_name = $12, bank_account = $13,
+    active = $14, version = version + 1
+WHERE company_id = $15 AND id = $16 AND version = $17
+RETURNING id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version
+`
+
+type UpdateContactParams struct {
+	Name             string
+	IsCustomer       bool
+	IsSupplier       bool
+	Npwp             *string
+	Nik              *string
+	Nitku            *string
+	Pkp              bool
+	Address          string
+	Email            string
+	Phone            string
+	PaymentTermsDays int32
+	BankName         string
+	BankAccount      string
+	Active           bool
+	CompanyID        uuid.UUID
+	ID               uuid.UUID
+	Version          int32
+}
+
+func (q *Queries) UpdateContact(ctx context.Context, arg UpdateContactParams) (CoreContact, error) {
+	row := q.db.QueryRow(ctx, updateContact,
+		arg.Name,
+		arg.IsCustomer,
+		arg.IsSupplier,
+		arg.Npwp,
+		arg.Nik,
+		arg.Nitku,
+		arg.Pkp,
+		arg.Address,
+		arg.Email,
+		arg.Phone,
+		arg.PaymentTermsDays,
+		arg.BankName,
+		arg.BankAccount,
+		arg.Active,
+		arg.CompanyID,
+		arg.ID,
+		arg.Version,
+	)
+	var i CoreContact
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.IsCustomer,
+		&i.IsSupplier,
+		&i.Npwp,
+		&i.Nik,
+		&i.Nitku,
+		&i.Pkp,
+		&i.Address,
+		&i.Email,
+		&i.Phone,
+		&i.PaymentTermsDays,
+		&i.BankName,
+		&i.BankAccount,
+		&i.Active,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.Version,
+	)
+	return i, err
 }
