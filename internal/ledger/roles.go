@@ -30,6 +30,8 @@ const (
 	OpeningEquity       Role = "ekuitas_saldo_awal"
 	AssetGain           Role = "laba_pelepasan_aset"
 	AssetLoss           Role = "rugi_pelepasan_aset"
+	WithholdingPPh26    Role = "utang_pph26"
+	NonCreditableVAT    Role = "beban_ppn_tidak_dikreditkan"
 )
 
 type roleInfo struct {
@@ -57,6 +59,11 @@ var roles = map[Role]roleInfo{
 	// Pelepasan aset tetap (FA-03). PT lama tanpa akun rugi khusus memakai beban lain-lain.
 	AssetGain: {[]string{"7-1003"}, "laba pelepasan aset tetap"},
 	AssetLoss: {[]string{"8-1005", "8-1009"}, "rugi pelepasan aset tetap"},
+	// PPh 26 pemasok luar negeri (TAX-08).
+	WithholdingPPh26: {[]string{"2-1206"}, "utang PPh 26"},
+	// PPN masukan tidak dikreditkan atas barang persediaan (TAX-07): akun persediaan hanya
+	// berubah lewat kartu stok, jadi PPN-nya dibebankan di sini.
+	NonCreditableVAT: {[]string{"6-4003", "6-4002"}, "beban PPN masukan tidak dapat dikreditkan"},
 }
 
 // RoleAccount mencari akun sistem dari kode defaultnya. Akun harus ada, aktif, dan akun detail;

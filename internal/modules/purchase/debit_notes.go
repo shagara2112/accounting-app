@@ -141,6 +141,11 @@ func (s *service) CreateDebitNote(ctx context.Context, companyID uuid.UUID, in D
 			msg := fmt.Sprintf("Tanggal nota tidak boleh sebelum tanggal tagihan (%s).", b.BillDate.Indonesian())
 			return httpx.Unprocessable("debit_note.invalid", msg).WithFields(map[string]string{"date": msg})
 		}
+		if s.NoteGuard != nil {
+			if err := s.NoteGuard(ctx, companyID, b.ID); err != nil {
+				return err
+			}
+		}
 
 		stored, err := q.BillLines(ctx, store.BillLinesParams{CompanyID: companyID, BillID: b.ID})
 		if err != nil {
@@ -284,11 +289,7 @@ func (s *service) CreateDebitNote(ctx context.Context, companyID uuid.UUID, in D
 			drafts = append(drafts, ledger.LineDraft{AccountID: acc.ID, Debit: excess, Memo: "Kelebihan nota debit " + noteNumber + " (tagihan sudah lunas)"})
 		}
 		if withholding.Sign() > 0 {
-			role := ledger.WithholdingPPh23
-			if whCode.Article == tax.ArticleFinal {
-				role = ledger.WithholdingPPhFinal
-			}
-			acc, err := s.Ledger.RoleAccount(ctx, companyID, role)
+			acc, err := s.Ledger.RoleAccount(ctx, companyID, withholdingRole(whCode.Article))
 			if err != nil {
 				return err
 			}
@@ -385,6 +386,11 @@ func (s *service) VoidDebitNote(ctx context.Context, companyID, id uuid.UUID, da
 		}
 		if excess := n.Payable.Sub(n.Applied); excess.Sign() > 0 {
 			if err := s.checkAdvanceRemoval(ctx, companyID, n.SupplierID, excess, n.Number); err != nil {
+				return err
+			}
+		}
+		if s.NoteGuard != nil {
+			if err := s.NoteGuard(ctx, companyID, n.BillID); err != nil {
 				return err
 			}
 		}

@@ -89,6 +89,13 @@ Status:
 - **Revisi klien (16 Okt 2026)**: departemen per baris di transaksi kas, dan jurnal manual bisa
   diubah selama periodenya belum dikunci (nomor tetap, riwayat versi, audit trail).
 
+- **Faktur masukan dan bukti potong (TAX-07, TAX-08)**: nomor faktur pajak pemasok, masa
+  pengkreditan (paling lama tiga masa sesudah masa faktur), PPN tidak dikreditkan yang dijurnal ke
+  biaya, dan pencocokan dengan daftar pajak masukan Coretax. Bukti potong PPh 23, 4(2), dan 26 per
+  tagihan dengan kode objek pajak dari referensi DJP, ekspor XML BPPU (dalam negeri) dan BPNR (pemasok
+  luar negeri), serta pencatatan nomor bukti potong yang terbit. Tagihan yang bukti potongnya terbit
+  tidak bisa di-void. Uji dulu satu file kecil di Coretax sebelum mengekspor banyak bukti potong.
+
 - **Tahap 9F — cabang, penomoran, dan jurnal berulang**: cabang dan departemen di faktur, tagihan,
   dan kas yang diwariskan ke jurnal; laba rugi per cabang; format nomor dokumen per seri (awalan,
   siklus, digit, nomor per cabang); jurnal berulang bulanan dengan pengejaran jadwal terlewat; dan
@@ -180,7 +187,8 @@ internal/platform/     db, migrasi, http, sesi dan login, peran (rbac), audit tr
 internal/ledger/       mesin buku besar: posting, void, bagan akun, periode, neraca lajur
 internal/modules/core/ PT, hak akses per PT, dan kontak
 internal/modules/tax/  kode pajak bertanggal berlaku; perhitungan PPN dan PPh
-internal/modules/tax/coretax/ faktur pajak keluaran, ekspor XML Coretax, rekap PPN dan PPh
+internal/modules/tax/coretax/ faktur pajak keluaran dan masukan, bukti potong (BPPU/BPNR), ekspor XML
+                       Coretax, rekap PPN dan PPh
 internal/modules/trade/ perhitungan baris faktur/tagihan dan umur piutang/utang (bersama sales dan purchase)
 internal/modules/sales/ faktur penjualan, pelunasan, umur piutang
 internal/modules/purchase/ tagihan pemasok, pembayaran, umur utang

@@ -25,6 +25,7 @@ const (
 
 	ArticlePPh23 = "23"
 	ArticleFinal = "4(2)"
+	ArticlePPh26 = "26" // pemasok luar negeri (TAX-08)
 )
 
 // Code adalah satu versi kode pajak yang berlaku pada rentang tanggal tertentu.

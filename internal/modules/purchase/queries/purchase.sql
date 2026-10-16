@@ -376,3 +376,41 @@ GROUP BY l.bill_line_id;
 UPDATE purchase.debit_notes
 SET status = 'void', voided_at = now(), voided_by = $3, void_reason = $4
 WHERE company_id = $1 AND id = $2 AND status = 'posted';
+
+-- Data pendukung pajak masukan dan bukti potong (TAX-07, TAX-08) --------------------------
+
+-- name: InputVATBills :many
+-- Tagihan ber-PPN masukan di rentang tanggal tagihan, dengan PPN yang sudah dikurangi nota debit.
+SELECT b.id, b.number, b.bill_date, b.supplier_id, b.supplier_invoice_no, b.dpp, b.vat,
+       coalesce((SELECT sum(n.vat) FROM purchase.debit_notes n WHERE n.bill_id = b.id AND n.status = 'posted'), 0)::numeric AS noted_vat
+FROM purchase.bills b
+WHERE b.company_id = @company_id AND b.status = 'posted' AND b.vat > 0
+  AND b.bill_date >= @from_date AND b.bill_date < @to_date
+ORDER BY b.bill_date, b.number;
+
+-- name: DebitNoteVAT :many
+-- PPN nota debit per tanggal nota; mengurangi PPN masukan pada masa notanya.
+SELECT n.id, n.bill_id, n.note_date, n.vat
+FROM purchase.debit_notes n
+WHERE n.company_id = @company_id AND n.status = 'posted' AND n.vat > 0
+  AND n.note_date >= @from_date AND n.note_date < @to_date;
+
+-- name: BillVATLines :many
+-- PPN per baris tagihan sesudah nota debit, untuk jurnal PPN masukan tidak dikreditkan.
+SELECT l.account_id, l.project_id,
+       (l.vat - coalesce((SELECT sum(dl.vat) FROM purchase.debit_note_lines dl
+                          JOIN purchase.debit_notes n ON n.id = dl.debit_note_id
+                          WHERE dl.bill_line_id = l.id AND n.status = 'posted'), 0))::numeric AS vat
+FROM purchase.bill_lines l
+WHERE l.company_id = @company_id AND l.bill_id = @bill_id AND l.vat > 0
+ORDER BY l.line_no;
+
+-- name: WithholdingBills :many
+-- Tagihan yang memotong PPh di rentang tanggal tagihan, dengan DPP dan PPh nota debitnya.
+SELECT b.id, b.number, b.bill_date, b.supplier_id, b.supplier_invoice_no, b.withholding_code, b.dpp, b.withholding,
+       coalesce((SELECT sum(n.dpp) FROM purchase.debit_notes n WHERE n.bill_id = b.id AND n.status = 'posted'), 0)::numeric AS noted_dpp,
+       coalesce((SELECT sum(n.withholding) FROM purchase.debit_notes n WHERE n.bill_id = b.id AND n.status = 'posted'), 0)::numeric AS noted_withholding
+FROM purchase.bills b
+WHERE b.company_id = @company_id AND b.status = 'posted' AND b.withholding > 0
+  AND b.bill_date >= @from_date AND b.bill_date < @to_date
+ORDER BY b.bill_date, b.number;

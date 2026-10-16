@@ -19,6 +19,8 @@ import {
   useVATRecap,
   useWithholding,
 } from '../lib/tax'
+import { InputsTab } from './TaxInputs'
+import { SlipsTab, WithholdingObjectsCard } from './TaxSlips'
 import { MonthNav } from '../components/MonthNav'
 import { useToast } from '../components/Toast'
 import { Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, PageHeader, Segmented, Skeleton, TableShell, Tabs, TextAreaField, td, th, type Tone } from '../components/ui'
@@ -38,7 +40,7 @@ export function TaxPage({ me }: { me: Me }) {
     <div className="flex flex-col gap-5">
       <PageHeader
         title="Pajak"
-        subtitle="Faktur pajak keluaran diekspor ke XML lalu diunggah manual ke Coretax; nomor faktur yang terbit dicatat kembali di sini. Rekap PPN dan PPh dihitung dari faktur dan tagihan yang diposting."
+        subtitle="Faktur pajak keluaran dan bukti potong diekspor ke XML lalu diunggah manual ke Coretax; nomor yang terbit dicatat kembali di sini. Faktur masukan dicocokkan dengan Coretax. Rekap PPN dan PPh dihitung dari faktur dan tagihan yang diposting."
       />
       <Tabs
         label="Pajak"
@@ -46,6 +48,8 @@ export function TaxPage({ me }: { me: Me }) {
         onChange={(v) => setParams(v === 'faktur' ? {} : { tab: v }, { replace: true })}
         tabs={[
           { value: 'faktur', label: 'Faktur keluaran' },
+          { value: 'masukan', label: 'Faktur masukan' },
+          { value: 'bupot', label: 'Bukti potong' },
           { value: 'ppn', label: 'Rekap PPN' },
           { value: 'pph', label: 'PPh dipotong' },
           { value: 'digunggung', label: 'PPN digunggung' },
@@ -53,6 +57,8 @@ export function TaxPage({ me }: { me: Me }) {
         ]}
       />
       {tab === 'faktur' && <Outputs me={me} />}
+      {tab === 'masukan' && <InputsTab me={me} />}
+      {tab === 'bupot' && <SlipsTab me={me} />}
       {tab === 'ppn' && <VATRecapTab me={me} />}
       {tab === 'pph' && <WithholdingTab me={me} />}
       {tab === 'digunggung' && <DigunggungTab me={me} />}
@@ -610,7 +616,7 @@ function WithholdingTab({ me }: { me: Me }) {
       <MonthNav label="Masa pajak" value={month} onChange={setMonth} />
       <Card
         title="PPh yang kita potong dari pemasok"
-        subtitle="Disetor dan dilaporkan lewat SPT Masa PPh Unifikasi; bukti potongnya dibuat di Coretax. Dasar: tagihan yang diposting di masa ini."
+        subtitle="Disetor dan dilaporkan lewat SPT Masa PPh Unifikasi; bukti potongnya diekspor dari tab Bukti potong. Dasar: tagihan yang diposting di masa ini."
         actions={
           <span className="flex flex-wrap gap-2">
             {w?.ourSums.map((s) => (
@@ -699,6 +705,7 @@ function SettingsTab({ me }: { me: Me }) {
       <ProfileCard key={`p-${profile.data.version}`} me={me} profile={profile.data} />
       <LogoCard me={me} />
       <CoretaxCard key={`s-${settings.data.unitCode}-${settings.data.goodsCode}-${settings.data.goodsOpt}`} me={me} initial={settings.data} />
+      <WithholdingObjectsCard me={me} />
     </div>
   )
 }

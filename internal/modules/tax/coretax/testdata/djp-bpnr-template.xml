@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<BPNRBulk xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<TIN>0029482015507000</TIN>
+	<ListOfBPNR>
+		<BPNR>
+			<TaxPeriodMonth>10</TaxPeriodMonth>
+			<TaxPeriodYear>2024</TaxPeriodYear>
+			<CounterpartTin>4567</CounterpartTin>
+			<CounterpartReceiptNumber>SKDWPLN-ESP/2/2024/00022</CounterpartReceiptNumber>
+			<CounterpartName>DAVE NAVARO</CounterpartName>
+			<CounterpartCountry>ESP</CounterpartCountry>
+			<CounterpartAddress>Jagelonia, Spain</CounterpartAddress>
+			<CounterpartDob xsi:nil="true"/>
+			<CounterpartBirthCity xsi:nil="true"/>
+			<CounterpartPassport xsi:nil="true"/>
+			<CounterpartKitas xsi:nil="true"/>
+			<TaxCertificate>COD</TaxCertificate>
+			<TaxObjectCode>27-101-01</TaxObjectCode>
+			<GrossIncome>100000000</GrossIncome>
+			<Deemed>10</Deemed>
+			<Rate>1</Rate>
+			<Document>CommercialInvoice</Document>
+			<DocumentNumber>ABC123</DocumentNumber>
+			<DocumentDate>2024-01-13</DocumentDate>
+			<GovTreasurerOpt>N/A</GovTreasurerOpt>
+			<SP2DNumber xsi:nil="true"/>
+			<WithholdingDate>2024-10-21</WithholdingDate>
+			<IDPlaceOfBusinessActivity>0029482015507000000000</IDPlaceOfBusinessActivity>
+		</BPNR>
+		<BPNR>
+			<TaxPeriodMonth>10</TaxPeriodMonth>
+			<TaxPeriodYear>2024</TaxPeriodYear>
+			<CounterpartTin>NPWP-JEPANG-123</CounterpartTin>
+			<CounterpartReceiptNumber xsi:nil="true"/>
+			<CounterpartName>IKARI SHINJI</CounterpartName>
+			<CounterpartCountry>JPN</CounterpartCountry>
+			<CounterpartAddress>SHIBUYA</CounterpartAddress>
+			<CounterpartDob xsi:nil="true"/>
+			<CounterpartBirthCity xsi:nil="true"/>
+			<CounterpartPassport xsi:nil="true"/>
+			<CounterpartKitas xsi:nil="true"/>
+			<TaxCertificate>N/A</TaxCertificate>
+			<TaxObjectCode>27-100-05</TaxObjectCode>
+			<GrossIncome>200000000</GrossIncome>
+			<Deemed>25</Deemed>
+			<Rate>20</Rate>
+			<Document>CommercialInvoice</Document>
+			<DocumentNumber>ABC123</DocumentNumber>
+			<DocumentDate>2024-01-13</DocumentDate>
+			<GovTreasurerOpt>N/A</GovTreasurerOpt>
+			<SP2DNumber xsi:nil="true"/>
+			<WithholdingDate>2024-10-21</WithholdingDate>
+			<IDPlaceOfBusinessActivity>0029482015507000000000</IDPlaceOfBusinessActivity>
+		</BPNR>
+		<BPNR>
+			<TaxPeriodMonth>10</TaxPeriodMonth>
+			<TaxPeriodYear>2024</TaxPeriodYear>
+			<CounterpartTin>NPWP-USA-ABC</CounterpartTin>
+			<CounterpartReceiptNumber xsi:nil="true"/>
+			<CounterpartName>JASON LEE SCOOT</CounterpartName>
+			<CounterpartCountry>USA</CounterpartCountry>
+			<CounterpartAddress>CALIFORNIA</CounterpartAddress>
+			<CounterpartDob xsi:nil="true"/>
+			<CounterpartBirthCity xsi:nil="true"/>
+			<CounterpartPassport xsi:nil="true"/>
+			<CounterpartKitas xsi:nil="true"/>
+			<TaxCertificate>N/A</TaxCertificate>
+			<TaxObjectCode>27-102-01</TaxObjectCode>
+			<GrossIncome>40000000</GrossIncome>
+			<Deemed>100</Deemed>
+			<Rate>20</Rate>
+			<Document>TaxInvoice</Document>
+			<DocumentNumber>0100012292489165</DocumentNumber>
+			<DocumentDate>2022-02-26</DocumentDate>
+			<GovTreasurerOpt>N/A</GovTreasurerOpt>
+			<SP2DNumber xsi:nil="true"/>
+			<WithholdingDate>2024-10-21</WithholdingDate>
+			<IDPlaceOfBusinessActivity>0029482015507000000000</IDPlaceOfBusinessActivity>
+		</BPNR>
+		<BPNR>
+			<TaxPeriodMonth>10</TaxPeriodMonth>
+			<TaxPeriodYear>2024</TaxPeriodYear>
+			<CounterpartTin>NPWP-SGP-XYZ</CounterpartTin>
+			<CounterpartReceiptNumber xsi:nil="true"/>
+			<CounterpartName>DATOK CHING</CounterpartName>
+			<CounterpartCountry>SGP</CounterpartCountry>
+			<CounterpartAddress>BUGIS STREET</CounterpartAddress>
+			<CounterpartDob xsi:nil="true"/>
+			<CounterpartBirthCity xsi:nil="true"/>
+			<CounterpartPassport xsi:nil="true"/>
+			<CounterpartKitas xsi:nil="true"/>
+			<TaxCertificate>ETC</TaxCertificate>
+			<TaxObjectCode>28-405-02</TaxObjectCode>
+			<GrossIncome>50000000</GrossIncome>
+			<Deemed>1</Deemed>
+			<Rate>1</Rate>
+			<Document>CommercialInvoice</Document>
+			<DocumentNumber>ABC123</DocumentNumber>
+			<DocumentDate>2024-01-13</DocumentDate>
+			<GovTreasurerOpt>N/A</GovTreasurerOpt>
+			<SP2DNumber xsi:nil="true"/>
+			<WithholdingDate>2024-10-21</WithholdingDate>
+			<IDPlaceOfBusinessActivity>0029482015507000000000</IDPlaceOfBusinessActivity>
+		</BPNR>
+	</ListOfBPNR>
+</BPNRBulk>

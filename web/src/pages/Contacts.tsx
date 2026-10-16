@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ApiError, newIdempotencyKey, type Account, type Contact, type ContactInput, type Me } from '../lib/api'
 import { useCashAccounts, useContacts, useSaveContact } from '../lib/cash'
 import { formatAmount, fromUnits, parseInput } from '../lib/money'
 import { useDebounced } from '../lib/hooks'
+import { useBupotRef } from '../lib/bupot'
 import { useAccounts } from '../lib/ledger'
 import { can } from '../lib/session'
 import { AccountPicker } from '../components/AccountPicker'
@@ -19,6 +20,8 @@ const empty: ContactInput = {
   nik: '',
   nitku: '',
   pkp: false,
+  countryCode: 'IDN',
+  foreignTin: '',
   address: '',
   email: '',
   phone: '',
@@ -126,7 +129,9 @@ export function Contacts({ me }: { me: Me }) {
                   {c.linkedCompanyId && <Badge tone="neutral">PT grup</Badge>}
                 </span>
               </td>
-              <td className={`${td} num whitespace-nowrap`}>{c.npwp ? groupDigits(c.npwp) : c.nik ? `NIK ${groupDigits(c.nik)}` : '—'}</td>
+              <td className={`${td} num whitespace-nowrap`}>
+                {c.countryCode && c.countryCode !== 'IDN' ? `${c.countryCode} · TIN ${c.foreignTin || '—'}` : c.npwp ? groupDigits(c.npwp) : c.nik ? `NIK ${groupDigits(c.nik)}` : '—'}
+              </td>
               <td className={`${td} num text-right`}>{c.paymentTermsDays} hari</td>
               <td className={`${td} max-w-[240px] truncate text-ink-2`}>{[c.phone, c.email].filter(Boolean).join(' · ') || '—'}</td>
             </tr>
@@ -149,6 +154,8 @@ function ContactDialog({ me, editing, onClose }: { me: Me; editing: Contact | 'n
   const save = useSaveContact(me.activeCompanyId)
   const accounts = useAccounts(editing !== null ? me.activeCompanyId : null)
   const all = accounts.data?.items ?? []
+  const ref = useBupotRef(editing !== null).data
+  const countries = useMemo(() => [...(ref?.countries ?? [])].sort((a, b) => a.name.localeCompare(b.name, 'id')), [ref])
   const toast = useToast()
   const [form, setForm] = useState<ContactInput>(empty)
   const [shownFor, setShownFor] = useState<Contact | 'new' | null>(null)
@@ -164,6 +171,7 @@ function ContactDialog({ me, editing, onClose }: { me: Me; editing: Contact | 'n
   const isNew = (editing ?? shownFor) === 'new'
   const err = save.error instanceof ApiError ? save.error : null
   const set = (patch: Partial<ContactInput>) => setForm((f) => ({ ...f, ...patch }))
+  const foreign = !!form.countryCode && form.countryCode !== 'IDN'
 
   function close() {
     setShownFor(null)
@@ -201,13 +209,37 @@ function ContactDialog({ me, editing, onClose }: { me: Me; editing: Contact | 'n
       <div className="flex flex-wrap gap-x-6">
         <Checkbox checked={form.isCustomer} onChange={(v) => set({ isCustomer: v })} label="Pelanggan" />
         <Checkbox checked={form.isSupplier} onChange={(v) => set({ isSupplier: v })} label="Pemasok" />
-        <Checkbox checked={form.pkp} onChange={(v) => set({ pkp: v })} label="Pengusaha Kena Pajak (PKP)" />
+        {!foreign && <Checkbox checked={form.pkp} onChange={(v) => set({ pkp: v })} label="Pengusaha Kena Pajak (PKP)" />}
       </div>
       {err?.fields.role && <p className="text-[13px] text-bad">{err.fields.role}</p>}
       <div className="grid grid-cols-2 gap-4 max-sm:grid-cols-1">
-        <Field id="k-npwp" label="NPWP" inputMode="numeric" className="num" placeholder="16 digit" value={form.npwp} onChange={(e) => set({ npwp: e.target.value })} error={err?.fields.npwp} />
-        <Field id="k-nik" label="NIK (tanpa NPWP)" inputMode="numeric" className="num" placeholder="16 digit" value={form.nik} onChange={(e) => set({ nik: e.target.value })} error={err?.fields.nik} />
-        <Field id="k-nitku" label="NITKU" inputMode="numeric" className="num" placeholder="22 digit, diawali NPWP" value={form.nitku} onChange={(e) => set({ nitku: e.target.value })} error={err?.fields.nitku} />
+        <SelectField
+          id="k-negara"
+          label="Negara"
+          value={form.countryCode || 'IDN'}
+          onChange={(e) => set(e.target.value === 'IDN' ? { countryCode: 'IDN', foreignTin: '' } : { countryCode: e.target.value, npwp: '', nik: '', nitku: '', pkp: false })}
+          error={err?.fields.countryCode}
+          hint={foreign ? 'Pemasok luar negeri dipotong PPh 26 dan bukti potongnya diekspor sebagai BPNR.' : undefined}
+        >
+          <option value="IDN">Indonesia</option>
+          {countries
+            .filter((c) => c.code !== 'IDN')
+            .map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.name}
+              </option>
+            ))}
+          {foreign && !countries.some((c) => c.code === form.countryCode) && <option value={form.countryCode}>{form.countryCode}</option>}
+        </SelectField>
+        {foreign ? (
+          <Field id="k-tin" label="TIN di negara asal" className="num" maxLength={50} value={form.foreignTin} onChange={(e) => set({ foreignTin: e.target.value })} error={err?.fields.foreignTin} />
+        ) : (
+          <>
+            <Field id="k-npwp" label="NPWP" inputMode="numeric" className="num" placeholder="16 digit" value={form.npwp} onChange={(e) => set({ npwp: e.target.value })} error={err?.fields.npwp} />
+            <Field id="k-nik" label="NIK (tanpa NPWP)" inputMode="numeric" className="num" placeholder="16 digit" value={form.nik} onChange={(e) => set({ nik: e.target.value })} error={err?.fields.nik} />
+            <Field id="k-nitku" label="NITKU" inputMode="numeric" className="num" placeholder="22 digit, diawali NPWP" value={form.nitku} onChange={(e) => set({ nitku: e.target.value })} error={err?.fields.nitku} />
+          </>
+        )}
         <Field
           id="k-termin"
           label="Termin pembayaran (hari)"

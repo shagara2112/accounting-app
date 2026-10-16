@@ -214,6 +214,48 @@ func (q *Queries) BillPayments(ctx context.Context, arg BillPaymentsParams) ([]B
 	return items, nil
 }
 
+const billVATLines = `-- name: BillVATLines :many
+SELECT l.account_id, l.project_id,
+       (l.vat - coalesce((SELECT sum(dl.vat) FROM purchase.debit_note_lines dl
+                          JOIN purchase.debit_notes n ON n.id = dl.debit_note_id
+                          WHERE dl.bill_line_id = l.id AND n.status = 'posted'), 0))::numeric AS vat
+FROM purchase.bill_lines l
+WHERE l.company_id = $1 AND l.bill_id = $2 AND l.vat > 0
+ORDER BY l.line_no
+`
+
+type BillVATLinesParams struct {
+	CompanyID uuid.UUID
+	BillID    uuid.UUID
+}
+
+type BillVATLinesRow struct {
+	AccountID uuid.UUID
+	ProjectID *uuid.UUID
+	Vat       money.Amount
+}
+
+// PPN per baris tagihan sesudah nota debit, untuk jurnal PPN masukan tidak dikreditkan.
+func (q *Queries) BillVATLines(ctx context.Context, arg BillVATLinesParams) ([]BillVATLinesRow, error) {
+	rows, err := q.db.Query(ctx, billVATLines, arg.CompanyID, arg.BillID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BillVATLinesRow
+	for rows.Next() {
+		var i BillVATLinesRow
+		if err := rows.Scan(&i.AccountID, &i.ProjectID, &i.Vat); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const costByAccount = `-- name: CostByAccount :many
 SELECT x.account_id, sum(x.net)::numeric AS amount
 FROM (
@@ -304,6 +346,52 @@ func (q *Queries) DebitNoteLines(ctx context.Context, arg DebitNoteLinesParams) 
 			&i.Net,
 			&i.TaxCode,
 			&i.OtherDpp,
+			&i.Vat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const debitNoteVAT = `-- name: DebitNoteVAT :many
+SELECT n.id, n.bill_id, n.note_date, n.vat
+FROM purchase.debit_notes n
+WHERE n.company_id = $1 AND n.status = 'posted' AND n.vat > 0
+  AND n.note_date >= $2 AND n.note_date < $3
+`
+
+type DebitNoteVATParams struct {
+	CompanyID uuid.UUID
+	FromDate  civil.Date
+	ToDate    civil.Date
+}
+
+type DebitNoteVATRow struct {
+	ID       uuid.UUID
+	BillID   uuid.UUID
+	NoteDate civil.Date
+	Vat      money.Amount
+}
+
+// PPN nota debit per tanggal nota; mengurangi PPN masukan pada masa notanya.
+func (q *Queries) DebitNoteVAT(ctx context.Context, arg DebitNoteVATParams) ([]DebitNoteVATRow, error) {
+	rows, err := q.db.Query(ctx, debitNoteVAT, arg.CompanyID, arg.FromDate, arg.ToDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DebitNoteVATRow
+	for rows.Next() {
+		var i DebitNoteVATRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BillID,
+			&i.NoteDate,
 			&i.Vat,
 		); err != nil {
 			return nil, err
@@ -787,6 +875,64 @@ func (q *Queries) GetPaymentForUpdate(ctx context.Context, arg GetPaymentForUpda
 		&i.FromAdvance,
 	)
 	return i, err
+}
+
+const inputVATBills = `-- name: InputVATBills :many
+
+SELECT b.id, b.number, b.bill_date, b.supplier_id, b.supplier_invoice_no, b.dpp, b.vat,
+       coalesce((SELECT sum(n.vat) FROM purchase.debit_notes n WHERE n.bill_id = b.id AND n.status = 'posted'), 0)::numeric AS noted_vat
+FROM purchase.bills b
+WHERE b.company_id = $1 AND b.status = 'posted' AND b.vat > 0
+  AND b.bill_date >= $2 AND b.bill_date < $3
+ORDER BY b.bill_date, b.number
+`
+
+type InputVATBillsParams struct {
+	CompanyID uuid.UUID
+	FromDate  civil.Date
+	ToDate    civil.Date
+}
+
+type InputVATBillsRow struct {
+	ID                uuid.UUID
+	Number            *string
+	BillDate          civil.Date
+	SupplierID        uuid.UUID
+	SupplierInvoiceNo string
+	Dpp               money.Amount
+	Vat               money.Amount
+	NotedVat          money.Amount
+}
+
+// Data pendukung pajak masukan dan bukti potong (TAX-07, TAX-08) --------------------------
+// Tagihan ber-PPN masukan di rentang tanggal tagihan, dengan PPN yang sudah dikurangi nota debit.
+func (q *Queries) InputVATBills(ctx context.Context, arg InputVATBillsParams) ([]InputVATBillsRow, error) {
+	rows, err := q.db.Query(ctx, inputVATBills, arg.CompanyID, arg.FromDate, arg.ToDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []InputVATBillsRow
+	for rows.Next() {
+		var i InputVATBillsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.BillDate,
+			&i.SupplierID,
+			&i.SupplierInvoiceNo,
+			&i.Dpp,
+			&i.Vat,
+			&i.NotedVat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const insertAllocation = `-- name: InsertAllocation :exec
@@ -2145,6 +2291,67 @@ func (q *Queries) WithheldFromSuppliers(ctx context.Context, arg WithheldFromSup
 			&i.Dpp,
 			&i.WithholdingCode,
 			&i.Withholding,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const withholdingBills = `-- name: WithholdingBills :many
+SELECT b.id, b.number, b.bill_date, b.supplier_id, b.supplier_invoice_no, b.withholding_code, b.dpp, b.withholding,
+       coalesce((SELECT sum(n.dpp) FROM purchase.debit_notes n WHERE n.bill_id = b.id AND n.status = 'posted'), 0)::numeric AS noted_dpp,
+       coalesce((SELECT sum(n.withholding) FROM purchase.debit_notes n WHERE n.bill_id = b.id AND n.status = 'posted'), 0)::numeric AS noted_withholding
+FROM purchase.bills b
+WHERE b.company_id = $1 AND b.status = 'posted' AND b.withholding > 0
+  AND b.bill_date >= $2 AND b.bill_date < $3
+ORDER BY b.bill_date, b.number
+`
+
+type WithholdingBillsParams struct {
+	CompanyID uuid.UUID
+	FromDate  civil.Date
+	ToDate    civil.Date
+}
+
+type WithholdingBillsRow struct {
+	ID                uuid.UUID
+	Number            *string
+	BillDate          civil.Date
+	SupplierID        uuid.UUID
+	SupplierInvoiceNo string
+	WithholdingCode   *string
+	Dpp               money.Amount
+	Withholding       money.Amount
+	NotedDpp          money.Amount
+	NotedWithholding  money.Amount
+}
+
+// Tagihan yang memotong PPh di rentang tanggal tagihan, dengan DPP dan PPh nota debitnya.
+func (q *Queries) WithholdingBills(ctx context.Context, arg WithholdingBillsParams) ([]WithholdingBillsRow, error) {
+	rows, err := q.db.Query(ctx, withholdingBills, arg.CompanyID, arg.FromDate, arg.ToDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WithholdingBillsRow
+	for rows.Next() {
+		var i WithholdingBillsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.BillDate,
+			&i.SupplierID,
+			&i.SupplierInvoiceNo,
+			&i.WithholdingCode,
+			&i.Dpp,
+			&i.Withholding,
+			&i.NotedDpp,
+			&i.NotedWithholding,
 		); err != nil {
 			return nil, err
 		}

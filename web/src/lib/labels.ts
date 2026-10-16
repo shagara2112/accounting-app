@@ -34,6 +34,7 @@ const sources: Record<string, string> = {
   'inventory.adjustment': 'Dokumen persediaan',
   'asset.depreciation': 'Penyusutan aset',
   'asset.disposal': 'Pelepasan aset',
+  'tax.input_vat': 'PPN masukan tidak dikreditkan',
 }
 
 /** Asal jurnal selain input manual, mis. "Pembatalan" untuk pembalik karena void. */
@@ -50,6 +51,7 @@ export function sourceLink(source: string, id?: string): string | null {
     case 'sales.receipt':
       return `/penjualan?tab=pelunasan&pid=${id}`
     case 'purchase.bill':
+    case 'tax.input_vat':
       return `/pembelian?id=${id}`
     case 'purchase.payment':
       return `/pembelian?tab=pembayaran&pid=${id}`

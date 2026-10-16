@@ -269,6 +269,10 @@ export type Contact = {
   nik: string
   nitku: string
   pkp: boolean
+  /** ISO alfa-3; IDN = dalam negeri. Pemasok luar negeri dipotong PPh 26 (TAX-08). */
+  countryCode: string
+  /** TIN di negara asal pemasok luar negeri. */
+  foreignTin: string
   address: string
   email: string
   phone: string
@@ -300,7 +304,7 @@ export type TaxCode = {
   rateBp: number
   dppNum: number
   dppDen: number
-  article?: '23' | '4(2)'
+  article?: '23' | '4(2)' | '26'
   validFrom: string
   validTo?: string
 }

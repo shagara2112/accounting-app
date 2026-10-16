@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"lajur/internal/ledger"
 	"lajur/internal/modules/core"
 	"lajur/internal/modules/purchase"
 	"lajur/internal/modules/sales"
@@ -28,6 +29,13 @@ import (
 	"lajur/internal/platform/db"
 	"lajur/internal/platform/httpx"
 	"lajur/internal/platform/money"
+)
+
+// Jenis file ekspor Coretax.
+const (
+	BatchFaktur = "faktur" // faktur pajak keluaran
+	BatchBPPU   = "bppu"   // bukti potong PPh unifikasi (PPh 23, 4(2))
+	BatchBPNR   = "bpnr"   // bukti potong non residen (PPh 26)
 )
 
 // Status faktur pajak keluaran.
@@ -101,6 +109,7 @@ type Settings struct {
 
 type Batch struct {
 	ID           uuid.UUID `json:"id"`
+	Kind         string    `json:"kind,omitempty"`
 	Period       string    `json:"period"`
 	Format       string    `json:"format"`
 	InvoiceCount int       `json:"invoiceCount"`
@@ -121,7 +130,8 @@ type Service interface {
 	Outputs(ctx context.Context, companyID uuid.UUID, month civil.Date) (OutputList, error)
 	SetTrxCode(ctx context.Context, companyID uuid.UUID, ids []uuid.UUID, code string, actor audit.Actor) error
 	Export(ctx context.Context, companyID uuid.UUID, month civil.Date, ids []uuid.UUID, actor audit.Actor) (Batch, error)
-	Batches(ctx context.Context, companyID uuid.UUID, month civil.Date) ([]Batch, error)
+	// Batches: riwayat ekspor satu masa; kinds = faktur, bppu, dan/atau bpnr.
+	Batches(ctx context.Context, companyID uuid.UUID, month civil.Date, kinds []string) ([]Batch, error)
 	Batch(ctx context.Context, companyID, id uuid.UUID) (Batch, error)
 	Approve(ctx context.Context, companyID, invoiceID uuid.UUID, number string, date civil.Date, actor audit.Actor) error
 	Cancel(ctx context.Context, companyID, invoiceID uuid.UUID, note string, actor audit.Actor) error
@@ -135,6 +145,27 @@ type Service interface {
 	Withholding(ctx context.Context, companyID uuid.UUID, month civil.Date) (WithholdingRecap, error)
 	// Digunggung adalah rekap PPN penjualan eceran satu masa (TAX-12).
 	Digunggung(ctx context.Context, companyID uuid.UUID, month civil.Date) (Digunggung, error)
+
+	// Faktur pajak masukan (TAX-07).
+	Inputs(ctx context.Context, companyID uuid.UUID, month civil.Date) (InputList, error)
+	UpdateInput(ctx context.Context, companyID, billID uuid.UUID, in InputUpdate, actor audit.Actor) (InputInvoice, error)
+	SetCreditable(ctx context.Context, companyID, billID uuid.UUID, creditable bool, date civil.Date, reason string, actor audit.Actor) (InputInvoice, error)
+	ImportCoretaxInputs(ctx context.Context, companyID uuid.UUID, name string, data []byte, actor audit.Actor) (InputMatch, error)
+
+	// Bukti potong PPh 23/4(2)/26 (TAX-08).
+	Slips(ctx context.Context, companyID uuid.UUID, month civil.Date) (SlipList, error)
+	UpdateSlip(ctx context.Context, companyID, billID uuid.UUID, in SlipUpdate, actor audit.Actor) (Slip, error)
+	SetSlipObject(ctx context.Context, companyID uuid.UUID, ids []uuid.UUID, kop string, actor audit.Actor) error
+	ExportSlips(ctx context.Context, companyID uuid.UUID, month civil.Date, ids []uuid.UUID, actor audit.Actor) ([]Batch, error)
+	ApproveSlip(ctx context.Context, companyID, billID uuid.UUID, number string, date civil.Date, actor audit.Actor) error
+	ResetSlip(ctx context.Context, companyID, billID uuid.UUID, cancel bool, note string, actor audit.Actor) error
+	ImportSlipNumbers(ctx context.Context, companyID uuid.UUID, month civil.Date, name string, data []byte, actor audit.Actor) (ImportResult, error)
+	WithholdingObjects(ctx context.Context, companyID uuid.UUID) (map[string]string, error)
+	SetWithholdingObjects(ctx context.Context, companyID uuid.UUID, objects map[string]string, actor audit.Actor) (map[string]string, error)
+	// CanVoidBill menolak void tagihan yang bukti potongnya sudah terbit atau PPN masukannya
+	// sudah dijurnal tidak dikreditkan; CanChangeBillVAT menolak nota debit atas tagihan itu.
+	CanVoidBill(ctx context.Context, companyID, billID uuid.UUID) error
+	CanChangeBillVAT(ctx context.Context, companyID, billID uuid.UUID) error
 }
 
 type Deps struct {
@@ -143,6 +174,8 @@ type Deps struct {
 	Tax      tax.Service
 	Sales    sales.Service
 	Purchase purchase.Service
+	// Ledger memposting jurnal PPN masukan yang tidak dikreditkan (TAX-07).
+	Ledger ledger.Service
 }
 
 func New(d Deps) Service { return &service{d} }
@@ -482,7 +515,7 @@ func (s *service) Export(ctx context.Context, companyID uuid.UUID, month civil.D
 		}
 		if err := s.q(ctx).InsertExportBatch(ctx, store.InsertExportBatchParams{
 			ID: batchID, CompanyID: companyID, Period: month, Format: FormatV1, InvoiceCount: int32(len(invoices)),
-			FileName: out.FileName, Content: content, CreatedBy: actor.UserRef(),
+			FileName: out.FileName, Content: content, CreatedBy: actor.UserRef(), Kind: BatchFaktur,
 		}); err != nil {
 			return err
 		}
@@ -506,14 +539,14 @@ func (s *service) Export(ctx context.Context, companyID uuid.UUID, month civil.D
 	return out, err
 }
 
-func (s *service) Batches(ctx context.Context, companyID uuid.UUID, month civil.Date) ([]Batch, error) {
-	rows, err := s.q(ctx).ListExportBatches(ctx, store.ListExportBatchesParams{CompanyID: companyID, Period: month.MonthStart()})
+func (s *service) Batches(ctx context.Context, companyID uuid.UUID, month civil.Date, kinds []string) ([]Batch, error) {
+	rows, err := s.q(ctx).ListExportBatches(ctx, store.ListExportBatchesParams{CompanyID: companyID, Period: month.MonthStart(), Kinds: kinds})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Batch, len(rows))
 	for i, r := range rows {
-		out[i] = Batch{ID: r.ID, Period: r.Period.MonthKey(), Format: r.Format, InvoiceCount: int(r.InvoiceCount),
+		out[i] = Batch{ID: r.ID, Kind: r.Kind, Period: r.Period.MonthKey(), Format: r.Format, InvoiceCount: int(r.InvoiceCount),
 			FileName: r.FileName, CreatedAt: r.CreatedAt, CreatedBy: r.CreatedByName}
 	}
 	return out, nil
@@ -527,7 +560,7 @@ func (s *service) Batch(ctx context.Context, companyID, id uuid.UUID) (Batch, er
 	if err != nil {
 		return Batch{}, err
 	}
-	return Batch{ID: r.ID, Period: r.Period.MonthKey(), Format: r.Format, InvoiceCount: int(r.InvoiceCount),
+	return Batch{ID: r.ID, Kind: r.Kind, Period: r.Period.MonthKey(), Format: r.Format, InvoiceCount: int(r.InvoiceCount),
 		FileName: r.FileName, CreatedAt: r.CreatedAt, Content: r.Content}, nil
 }
 

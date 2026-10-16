@@ -16,6 +16,7 @@ import (
 
 	"lajur/internal/modules/purchase"
 	"lajur/internal/modules/sales"
+	"lajur/internal/modules/tax/internal/store"
 	"lajur/internal/platform/audit"
 	"lajur/internal/platform/civil"
 	"lajur/internal/platform/db"
@@ -59,10 +60,6 @@ func (s *service) VATRecap(ctx context.Context, companyID uuid.UUID, year int) (
 	if err != nil {
 		return VATRecap{}, err
 	}
-	in, err := s.Purchase.VATByMonth(ctx, companyID, since, end)
-	if err != nil {
-		return VATRecap{}, err
-	}
 	months := map[string]*VATMonth{}
 	get := func(k string) *VATMonth {
 		if m, ok := months[k]; ok {
@@ -78,9 +75,8 @@ func (s *service) VATRecap(ctx context.Context, companyID uuid.UUID, year int) (
 	}
 	// PT non-PKP tidak bisa mengkreditkan PPN masukan.
 	if company.PKP {
-		for _, r := range in {
-			m := get(r.Month.MonthKey())
-			m.Bills, m.Input = r.Documents, r.VAT
+		if err := s.inputByMonth(ctx, companyID, since, end, get); err != nil {
+			return VATRecap{}, err
 		}
 	}
 	for i := 1; i <= 12; i++ {
@@ -116,6 +112,55 @@ func (s *service) VATRecap(ctx context.Context, companyID uuid.UUID, year int) (
 		recap.Totals.Overpaid = recap.Months[n-1].Overpaid
 	}
 	return recap, nil
+}
+
+// inputByMonth menjumlahkan PPN masukan per masa pengkreditannya (TAX-07): tagihan yang tidak
+// dikreditkan dilewati beserta nota debitnya, dan nota debit mengurangi PPN masukan pada masa
+// notanya, atau masa pengkreditan tagihannya bila lebih akhir.
+func (s *service) inputByMonth(ctx context.Context, companyID uuid.UUID, since, end civil.Date, get func(string) *VATMonth) error {
+	bills, err := s.Purchase.InputBills(ctx, companyID, since, end)
+	if err != nil {
+		return err
+	}
+	credits, err := s.Purchase.InputCredits(ctx, companyID, since, end)
+	if err != nil {
+		return err
+	}
+	rows, err := s.q(ctx).AllInputInvoiceStates(ctx, companyID)
+	if err != nil {
+		return err
+	}
+	states := make(map[uuid.UUID]store.TaxInputInvoice, len(rows))
+	for _, r := range rows {
+		states[r.BillID] = store.TaxInputInvoice{BillID: r.BillID, Creditable: r.Creditable, CreditPeriod: r.CreditPeriod}
+	}
+	credited := make(map[uuid.UUID]civil.Date, len(bills))
+	for _, b := range bills {
+		r, ok := states[b.BillID]
+		if !ok {
+			r = defaultInput(b.BillID, companyID)
+		}
+		cm := creditMonth(r, b.Date)
+		if cm.IsZero() {
+			continue
+		}
+		credited[b.BillID] = cm
+		m := get(cm.MonthKey())
+		m.Bills++
+		m.Input = m.Input.Add(b.VAT)
+	}
+	for _, c := range credits {
+		cm, ok := credited[c.BillID]
+		if !ok {
+			continue
+		}
+		if month := c.Date.MonthStart(); month.After(cm) {
+			cm = month
+		}
+		m := get(cm.MonthKey())
+		m.Input = m.Input.Sub(c.VAT)
+	}
+	return nil
 }
 
 type WithholdingTotal struct {
