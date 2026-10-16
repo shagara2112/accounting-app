@@ -51,6 +51,7 @@ var kinds = map[string]kind{
 	"cash_transaction":     {"cash.transactions", rbac.CashView, rbac.CashCreate, rbac.CashVoid},
 	"inventory_adjustment": {"inventory.adjustments", rbac.InventoryView, rbac.InventoryCreate, rbac.InventoryVoid},
 	"project":              {"project.projects", rbac.ProjectView, rbac.ProjectCreate, rbac.ProjectVoid},
+	"fixed_asset":          {"asset.assets", rbac.AssetView, rbac.AssetCreate, rbac.AssetVoid},
 	"contact":              {"core.contacts", rbac.ContactView, rbac.ContactCreate, rbac.ContactEdit},
 }
 

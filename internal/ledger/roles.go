@@ -28,6 +28,8 @@ const (
 	RetentionReceivable Role = "piutang_retensi"
 	SupplierAdvance     Role = "uang_muka_pembelian"
 	OpeningEquity       Role = "ekuitas_saldo_awal"
+	AssetGain           Role = "laba_pelepasan_aset"
+	AssetLoss           Role = "rugi_pelepasan_aset"
 )
 
 type roleInfo struct {
@@ -52,6 +54,9 @@ var roles = map[Role]roleInfo{
 	// Penampung saldo awal: bernilai nol setelah semua saldo awal (neraca saldo, piutang,
 	// utang, dan stok per dokumen) selesai diimpor.
 	OpeningEquity: {[]string{"3-3001"}, "ekuitas saldo awal"},
+	// Pelepasan aset tetap (FA-03). PT lama tanpa akun rugi khusus memakai beban lain-lain.
+	AssetGain: {[]string{"7-1003"}, "laba pelepasan aset tetap"},
+	AssetLoss: {[]string{"8-1005", "8-1009"}, "rugi pelepasan aset tetap"},
 }
 
 // RoleAccount mencari akun sistem dari kode defaultnya. Akun harus ada, aktif, dan akun detail;

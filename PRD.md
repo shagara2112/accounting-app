@@ -269,6 +269,8 @@ MVP menyediakan persediaan dasar untuk pelanggan retail: stok satu gudang, HPP r
 | FA-03 | Penjualan, pelepasan, dan penghapusan aset dengan jurnal laba atau rugi | P1 · Fase 2 |
 | FA-04 | Laporan selisih penyusutan komersial vs fiskal sebagai dasar koreksi fiskal | P2 · Fase 3 |
 
+FA-01–03 dan daftar penyusutan fiskal dasar (kolom koreksi FA-04) dibangun lebih awal, Oktober 2026, atas permintaan klien.
+
 LIFO tidak disediakan karena tidak diperkenankan oleh SAK Indonesia maupun ketentuan pajak.
 
 ## Kebutuhan fungsional — Perpajakan Indonesia

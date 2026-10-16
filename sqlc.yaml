@@ -173,3 +173,12 @@ sql:
         out: internal/platform/mail/internal/store
         sql_package: pgx/v5
         emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/modules/asset/queries
+    gen:
+      go:
+        package: store
+        out: internal/modules/asset/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true

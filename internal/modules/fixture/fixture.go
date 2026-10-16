@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lajur/internal/ledger"
+	"lajur/internal/modules/asset"
 	"lajur/internal/modules/cash"
 	"lajur/internal/modules/consol"
 	"lajur/internal/modules/core"
@@ -44,6 +45,7 @@ type Env struct {
 	Purchase  purchase.Service
 	Coretax   coretax.Service
 	Project   project.Service
+	Asset     asset.Service
 	Report    report.Service
 	Consol    consol.Service
 	Imports   imports.Service
@@ -69,7 +71,7 @@ func NewWith(t testing.TB, industry string) *Env {
 	e := &Env{T: t, Ctx: ctx, Pool: pool, Acc: map[string]uuid.UUID{}}
 	m := server.Modules(pool)
 	e.Core, e.Ledger, e.Tax, e.Cash, e.Sales, e.Purchase, e.Coretax = m.Core, m.Ledger, m.Tax, m.Cash, m.Sales, m.Purchase, m.Coretax
-	e.Inventory, e.Project, e.Report, e.Consol, e.Imports = m.Inventory, m.Project, m.Report, m.Consol, m.Imports
+	e.Inventory, e.Project, e.Report, e.Consol, e.Imports, e.Asset = m.Inventory, m.Project, m.Report, m.Consol, m.Imports, m.Asset
 	e.Actor = audit.Actor{UserID: e.user("akuntansi@uji.test"), IP: "127.0.0.1"}
 	e.Other = audit.Actor{UserID: e.user("akuntansi2@uji.test"), IP: "127.0.0.1"}
 	e.setup("PT Uji "+industry, industry)

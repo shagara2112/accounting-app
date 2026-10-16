@@ -32,6 +32,8 @@ const sources: Record<string, string> = {
   'sales.daily': 'Penjualan harian',
   opening: 'Saldo awal',
   'inventory.adjustment': 'Dokumen persediaan',
+  'asset.depreciation': 'Penyusutan aset',
+  'asset.disposal': 'Pelepasan aset',
 }
 
 /** Asal jurnal selain input manual, mis. "Pembatalan" untuk pembalik karena void. */
@@ -65,6 +67,10 @@ export function sourceLink(source: string, id?: string): string | null {
       return `/penjualan?id=${id}`
     case 'inventory.adjustment':
       return `/persediaan?tab=dokumen&doc=${id}`
+    case 'asset.depreciation':
+      return `/aset?tab=penyusutan&run=${id}`
+    case 'asset.disposal':
+      return `/aset?pelepasan=${id}`
     default:
       return null
   }

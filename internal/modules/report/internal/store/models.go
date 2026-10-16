@@ -12,6 +12,101 @@ import (
 	"lajur/internal/platform/money"
 )
 
+type AssetAsset struct {
+	ID                uuid.UUID
+	CompanyID         uuid.UUID
+	Code              string
+	Name              string
+	CategoryID        uuid.UUID
+	AcquiredOn        civil.Date
+	Cost              money.Amount
+	Residual          money.Amount
+	Method            string
+	LifeMonths        int32
+	DepreciationStart civil.Date
+	AssetAccountID    uuid.UUID
+	AccumAccountID    *uuid.UUID
+	ExpenseAccountID  *uuid.UUID
+	FiscalGroup       string
+	FiscalMethod      string
+	OpeningAccum      money.Amount
+	OpeningMonth      *civil.Date
+	Location          string
+	Custodian         string
+	Notes             string
+	BranchID          *uuid.UUID
+	DepartmentID      *uuid.UUID
+	Status            string
+	DisposedOn        *civil.Date
+	CreatedAt         time.Time
+	CreatedBy         *uuid.UUID
+	Version           int32
+}
+
+type AssetCategory struct {
+	ID               uuid.UUID
+	CompanyID        uuid.UUID
+	Name             string
+	AssetAccountID   uuid.UUID
+	AccumAccountID   *uuid.UUID
+	ExpenseAccountID *uuid.UUID
+	Method           string
+	LifeMonths       int32
+	FiscalGroup      string
+	FiscalMethod     string
+	Active           bool
+	Version          int32
+}
+
+type AssetDepreciationLine struct {
+	ID         uuid.UUID
+	CompanyID  uuid.UUID
+	AssetID    uuid.UUID
+	Month      civil.Date
+	Amount     money.Amount
+	RunID      *uuid.UUID
+	DisposalID *uuid.UUID
+}
+
+type AssetDepreciationRun struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Month          civil.Date
+	Number         string
+	JournalEntryID uuid.UUID
+	Total          money.Amount
+	Assets         int32
+	Status         string
+	PostedAt       time.Time
+	PostedBy       *uuid.UUID
+	VoidedAt       *time.Time
+	VoidedBy       *uuid.UUID
+	VoidReason     *string
+}
+
+type AssetDisposal struct {
+	ID                uuid.UUID
+	CompanyID         uuid.UUID
+	AssetID           uuid.UUID
+	Number            string
+	Kind              string
+	DisposalDate      civil.Date
+	Proceeds          money.Amount
+	ProceedsAccountID *uuid.UUID
+	Cost              money.Amount
+	Accumulated       money.Amount
+	BookValue         money.Amount
+	Gain              money.Amount
+	Memo              string
+	JournalEntryID    uuid.UUID
+	Status            string
+	CreatedAt         time.Time
+	CreatedBy         *uuid.UUID
+	VoidedAt          *time.Time
+	VoidedBy          *uuid.UUID
+	VoidReason        *string
+}
+
 type CashAccount struct {
 	CompanyID     uuid.UUID
 	AccountID     uuid.UUID

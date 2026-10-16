@@ -82,6 +82,10 @@ Status:
   kelebihan atas dokumen lunas menjadi uang muka; rekap PPN, umur piutang/utang, dan kartu kontak
   ikut berkurang; nota antar-PT dicerminkan otomatis.
 
+- **Aset tetap**: register aset per kategori, penyusutan bulanan otomatis (garis lurus atau saldo
+  menurun) dengan penyusutan susulan, daftar penyusutan fiskal per kelompok harta dengan kolom koreksi,
+  pelepasan aset dengan laba/rugi, dan pencocokan register dengan buku besar.
+
 - **Revisi klien (16 Okt 2026)**: departemen per baris di transaksi kas, dan jurnal manual bisa
   diubah selama periodenya belum dikunci (nomor tetap, riwayat versi, audit trail).
 

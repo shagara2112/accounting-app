@@ -26,6 +26,7 @@ const icons = {
   project: 'M2 20h20M5 20V9l7-5 7 5v11M9 20v-6h6v6',
   inventory: 'M21 8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8',
   products: 'M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01',
+  assets: 'M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6M9 10h.01M15 10h.01',
   reports: 'M3 3v18h18M7 15l4-4 3 3 6-6M15 8h5v5',
   consol: 'M3 21h18M5 21V8l4-3v16M9 21V5l6 4v12M15 21V11l4-2v12',
   imports: 'M12 3v12M7 10l5 5 5-5M5 21h14',
@@ -54,6 +55,7 @@ export function Shell({ me }: { me: Me }) {
     can(me, 'project.view') && { to: '/proyek', label: 'Proyek', icon: icons.project },
     can(me, 'inventory.view') && !restricted && { to: '/persediaan', label: 'Persediaan', icon: icons.inventory },
     can(me, 'inventory.view') && { to: '/produk', label: 'Produk dan jasa', icon: icons.products },
+    can(me, 'asset.view') && !restricted && { to: '/aset', label: 'Aset tetap', icon: icons.assets },
   ].filter((x) => x !== false)
   const logout = useLogout()
   // Di layar sempit menu dilipat di bawah bar atas dan tertutup lagi setiap pindah halaman.

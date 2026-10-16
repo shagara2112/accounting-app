@@ -174,6 +174,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	if loc, err := time.LoadLocation(cfg.Timezone); err == nil {
 		go dailyAlerts(ctx, deps, loc, log)
 		go recurringJournals(ctx, deps, loc, log)
+		go assetDepreciation(ctx, deps, loc, log)
 	}
 
 	go purgeIdempotencyKeys(ctx, deps, log)

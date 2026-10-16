@@ -13,6 +13,7 @@ export type AttachmentType =
   | 'inventory_adjustment'
   | 'project'
   | 'contact'
+  | 'fixed_asset'
 
 export type Attachment = {
   id: string

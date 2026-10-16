@@ -27,6 +27,7 @@ var Series = []struct{ Code, Label string }{
 	{"BKK", "Bukti kas keluar (pembayaran, pengeluaran)"}, {"TRF", "Transfer kas"},
 	{"JU", "Jurnal umum"}, {"JP", "Jurnal penyesuaian"}, {"JB", "Jurnal balik otomatis"}, {"JV", "Jurnal pembatalan"},
 	{"HPP", "Jurnal HPP"}, {"PS", "Dokumen persediaan"},
+	{"PNY", "Penyusutan aset tetap"}, {"PAT", "Pelepasan aset tetap"},
 	{"SA", "Saldo awal"}, {"SAP", "Saldo awal piutang"}, {"SAU", "Saldo awal utang"},
 }
 

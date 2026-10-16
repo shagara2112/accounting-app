@@ -614,6 +614,29 @@ services:
 - Route yang mencakup seluruh PT ditandai `Route.WholeCompany` (jurnal, buku besar, neraca lajur, periode, pengaturan buku, penomoran, jurnal berulang, pajak, konsolidasi, impor, rekonsiliasi bank, stok dan kartu persediaan, dan laporan) dan menolak pengguna terbatas. Pengecualian: laba rugi dan ekspornya (tersaring ke cabang pengguna), kode pajak (dibutuhkan formulir), dan GET pengaturan buku (awal tahun buku untuk pilihan periode).
 - Di antarmuka, pengguna terbatas tidak melihat menu Akuntansi, Pajak, Persediaan, Konsolidasi, dashboard beranda, rekonsiliasi bank, dan proyeksi kas. Laporan hanya menampilkan laba rugi cabangnya.
 
+## Aset tetap (FA-01–03, dibangun lebih awal atas permintaan klien)
+
+**Register dan kategori**
+
+- Skema `asset` (migrasi 00021): `categories`, `assets`, `depreciation_runs`, `depreciation_lines`, dan `disposals`. Izin `asset.view`, `asset.create`, dan `asset.void`; Staf pajak boleh melihat. Route `/api/v1/assets` ditandai seluruh PT, sehingga pengguna terbatas cabang tidak membukanya.
+- Kategori menyimpan akun aset, akumulasi, dan beban, metode (`garis_lurus`, `saldo_menurun`, `tidak_disusutkan`), umur dalam bulan, serta kelompok dan metode fiskal. "Buat kategori bawaan" membuat tanah, bangunan, kendaraan, peralatan kantor, alat berat, dan peralatan toko dari akun template 1-21xx/1-22xx/6-30xx yang ada di bagan akun PT. Umur dan kelompok bawaan perlu dicek konsultan pajak.
+- Aset menyalin nilai bawaan kategori dan bisa diatur sendiri; kode otomatis `AT-0001`. Aset lama mencatat akumulasi awal s.d. bulan tertentu, lalu jadwalnya dilanjutkan dari nilai buku sisanya.
+- Perolehan tidak dijurnal modul ini; aset dibeli lewat tagihan, kas, jurnal, atau saldo awal. Halaman aset mencocokkan total register (harga perolehan dan akumulasi aset aktif) dengan saldo akun di buku besar per akun.
+- Setelah penyusutan dijurnal atau aset dilepas, kategori, nilai, umur, metode, dan akunnya terkunci; yang lain tetap bisa diubah. Aset tanpa jurnal bisa dihapus.
+
+**Penyusutan (FA-02)**
+
+- `schedule.go` menghitung jadwal komersial bulanan, dibulatkan ke rupiah dan sisa pembulatan masuk bulan terakhir. Garis lurus membagi rata nilai buku dikurangi nilai sisa ke sisa masa manfaat. Saldo menurun memakai tarif 2/umur dari nilai buku awal tiap tahun kalender, lalu dibagi rata pada 12 bulan terakhir supaya habis tepat di akhir masa manfaat.
+- Satu jurnal penyesuaian per bulan (seri PNY, sumber `asset.depreciation`) memuat semua penyusutan yang jatuh tempo s.d. bulan itu dan belum dijurnal, termasuk bulan-bulan yang terlewat. Baris digabung per akun beban/akumulasi dan per cabang/departemen aset. `depreciation_lines` mencatat aset × bulan yang sudah dijurnal (unik), sehingga tidak ada bulan yang dijurnal dua kali.
+- Penjadwal di proses server memposting penyusutan bulan lalu mulai tanggal 1 untuk PT yang belum memostingnya; PT dengan periode terkunci atau tanpa penyusutan jatuh tempo dilewati. Pengguna juga bisa memosting bulan berjalan lebih awal.
+- Void jurnal penyusutan menghapus baris bulannya, sehingga bulan itu ikut jurnal berikutnya. Void ditolak bila jurnal itu memuat aset yang sudah dilepas.
+- Fiskal dihitung per tahun pajak (UU PPh Pasal 11): tahun pertama sebanding jumlah bulannya, garis lurus = harga perolehan × tarif, saldo menurun = nilai sisa buku × tarif, dan pada tahun terakhir sisa nilai buku disusutkan sekaligus. Bangunan hanya garis lurus; tanah tidak disusutkan. Daftar penyusutan fiskal per tahun menampilkan penyusutan komersial dari jadwal dan koreksinya (komersial − fiskal).
+
+**Pelepasan (FA-03)**
+
+- Jenis: `jual` (uang diterima ke akun kepala 1), `faktur` (dijual lewat faktur penjualan, mis. karena terutang PPN), dan `hapus`. Jurnal seri PAT (sumber `asset.disposal`) memuat penyusutan susulan s.d. bulan pelepasan, mendebit akumulasi, dan mengkredit harga perolehan. Jual: debit akun penerimaan, lalu laba ke 7-1003 atau rugi ke 8-1005 (atau 8-1009 di PT lama). Faktur: nilai buku didebit ke 7-1003 dan harga jualnya masuk lewat faktur ke akun yang sama. Hapus: nilai buku menjadi rugi.
+- Tanggal pelepasan tidak boleh sebelum bulan terakhir yang sudah disusutkan. Void pelepasan membalik jurnalnya, menghapus penyusutan susulannya, dan mengaktifkan aset lagi.
+
 ## Revisi klien 16 Oktober 2026
 
 **Departemen per baris transaksi kas**

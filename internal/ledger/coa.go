@@ -289,6 +289,7 @@ const coaTemplate = `
     8-1002 Beban bunga pinjaman
     8-1003 Rugi selisih kurs
     8-1004 PPh final jasa giro
+    8-1005 Rugi pelepasan aset tetap
     8-1009 Beban lain-lain
 9 Pajak penghasilan
   9-1000 Pajak penghasilan

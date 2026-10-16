@@ -39,6 +39,10 @@ const (
 	InventoryCreate = "inventory.create"
 	InventoryVoid   = "inventory.void"
 
+	AssetView   = "asset.view"
+	AssetCreate = "asset.create" // daftarkan aset, posting penyusutan, dan lepas aset
+	AssetVoid   = "asset.void"   // void penyusutan dan pelepasan, hapus aset
+
 	ProjectView   = "project.view"
 	ProjectCreate = "project.create"
 	ProjectVoid   = "project.void"
@@ -65,6 +69,7 @@ var All = []string{
 	CashView, CashCreate, CashVoid,
 	InventoryView, InventoryCreate, InventoryVoid,
 	ProjectView, ProjectCreate, ProjectVoid,
+	AssetView, AssetCreate, AssetVoid,
 	TaxView, TaxCreate, TaxExport,
 	ConsolView, ConsolRun,
 	ApprovalManage, AuditView, UserManage, SystemManage,
@@ -73,14 +78,14 @@ var All = []string{
 var (
 	viewAll = []string{
 		CompanyView, ContactView, ReportView, LedgerView, SalesView, PurchaseView, CashView,
-		InventoryView, ProjectView, TaxView, ConsolView,
+		InventoryView, ProjectView, AssetView, TaxView, ConsolView,
 	}
 	createAll = []string{
 		ContactCreate, AccountCreate, JournalCreate, JournalEdit, AdjustmentCreate, AdjustmentPost, SalesCreate, PurchaseCreate,
-		CashCreate, InventoryCreate, ProjectCreate, TaxCreate, ConsolRun,
+		CashCreate, InventoryCreate, ProjectCreate, AssetCreate, TaxCreate, ConsolRun,
 	}
 	// changeAll = "ubah, hapus, atau void transaksi" di matriks: hanya Pemilik dan Manager.
-	changeAll = []string{CompanyEdit, ContactEdit, AccountEdit, JournalVoid, SalesVoid, PurchaseVoid, CashVoid, InventoryVoid, ProjectVoid}
+	changeAll = []string{CompanyEdit, ContactEdit, AccountEdit, JournalVoid, SalesVoid, PurchaseVoid, CashVoid, InventoryVoid, ProjectVoid, AssetVoid}
 	control   = []string{ApprovalManage, PeriodManage, AuditView}
 	admin     = []string{UserManage, SystemManage}
 )
@@ -97,7 +102,7 @@ var Builtin = []BuiltinRole{
 	{Key: "pemilik", Name: "Pemilik", Permissions: join(viewAll, createAll, changeAll, control, admin, []string{TaxExport, DataExport})},
 	{Key: "manager", Name: "Manager", Permissions: join(viewAll, createAll, changeAll, control, admin, []string{TaxExport, DataExport})},
 	{Key: "staf_akuntansi", Name: "Staf akuntansi", Permissions: join(viewAll, createAll, []string{DataExport})},
-	{Key: "staf_pajak", Name: "Staf pajak", Permissions: []string{CompanyView, ContactView, TaxView, TaxCreate, TaxExport, DataExport}},
+	{Key: "staf_pajak", Name: "Staf pajak", Permissions: []string{CompanyView, ContactView, TaxView, TaxCreate, TaxExport, DataExport, AssetView}},
 	{Key: "auditor", Name: "Auditor", Permissions: join(viewAll, []string{AuditView, DataExport})},
 	{Key: "admin", Name: "Admin pelanggan", Permissions: join([]string{CompanyView}, admin)},
 }
@@ -144,6 +149,7 @@ var Catalog = []CatalogGroup{
 	{"Pembelian", []CatalogPerm{{PurchaseView, "Lihat tagihan dan pembayaran"}, {PurchaseCreate, "Buat tagihan dan pembayaran"}, {PurchaseVoid, "Void pembelian"}}},
 	{"Kas dan bank", []CatalogPerm{{CashView, "Lihat kas dan bank"}, {CashCreate, "Catat transaksi kas"}, {CashVoid, "Void kas dan hapus draf orang lain"}}},
 	{"Persediaan", []CatalogPerm{{InventoryView, "Lihat produk dan stok"}, {InventoryCreate, "Tambah produk dan penyesuaian stok"}, {InventoryVoid, "Void penyesuaian stok"}}},
+	{"Aset tetap", []CatalogPerm{{AssetView, "Lihat aset tetap dan penyusutan"}, {AssetCreate, "Daftarkan aset, posting penyusutan, dan lepas aset"}, {AssetVoid, "Void penyusutan dan pelepasan, hapus aset"}}},
 	{"Proyek", []CatalogPerm{{ProjectView, "Lihat proyek"}, {ProjectCreate, "Buat proyek, RAB, dan termin"}, {ProjectVoid, "Batalkan proyek"}}},
 	{"Pajak", []CatalogPerm{{TaxView, "Lihat pajak"}, {TaxCreate, "Kelola faktur pajak"}, {TaxExport, "Ekspor XML Coretax dan rekap SPT"}}},
 	{"Laporan", []CatalogPerm{

@@ -74,6 +74,27 @@ func dailyAlerts(ctx context.Context, d *server.Deps, loc *time.Location, log *s
 	}
 }
 
+// assetDepreciation memposting penyusutan aset tetap bulan lalu (FA-02) sejak tanggal 1:
+// sekali saat start lalu tiap jam, untuk PT yang belum memostingnya sendiri.
+func assetDepreciation(ctx context.Context, d *server.Deps, loc *time.Location, log *slog.Logger) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		now := time.Now().In(loc)
+		today := civil.New(now.Year(), now.Month(), now.Day())
+		if n, err := d.Asset.RunDue(ctx, today); err != nil && ctx.Err() == nil {
+			log.Error("memposting penyusutan aset", "err", err)
+		} else if n > 0 {
+			log.Info("penyusutan aset diposting", "jumlah", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
 // recurringJournals memposting jurnal berulang yang jatuh tempo (GL-08): sekali saat start
 // (mengejar jadwal yang terlewat saat server mati) lalu tiap jam.
 func recurringJournals(ctx context.Context, d *server.Deps, loc *time.Location, log *slog.Logger) {

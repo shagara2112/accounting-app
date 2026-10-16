@@ -8,6 +8,8 @@ import { Home } from './pages/Home'
 import { Audit } from './pages/Audit'
 import { Journals } from './pages/Journals'
 import { JournalEdit, JournalForm } from './pages/JournalForm'
+import { AssetForm } from './pages/AssetForm'
+import { AssetsPage } from './pages/Assets'
 import { AccountLedgerPage } from './pages/AccountLedger'
 import { Worksheet } from './pages/Worksheet'
 import { Accounts } from './pages/Accounts'
@@ -71,6 +73,9 @@ export function App() {
         <Route path="jurnal" element={<Journals me={me.data} />} />
         <Route path="jurnal/baru" element={<JournalForm me={me.data} />} />
         <Route path="jurnal/:id/ubah" element={<JournalEdit me={me.data} />} />
+        <Route path="aset" element={<AssetsPage me={me.data} />} />
+        <Route path="aset/baru" element={<AssetForm key="new" me={me.data} />} />
+        <Route path="aset/:id/ubah" element={<AssetForm key="edit" me={me.data} />} />
         <Route path="buku-besar" element={<AccountLedgerPage me={me.data} />} />
         <Route path="neraca-lajur" element={<Worksheet me={me.data} />} />
         <Route path="akun" element={<Accounts me={me.data} />} />
