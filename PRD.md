@@ -157,7 +157,7 @@ Contoh struktur bertingkat: `1` Aset → `1-1000` Aset lancar → `1-1100` Kas d
 
 **Aturan bisnis**
 
-- Jurnal yang sudah diposting tidak dapat dihapus atau diedit; koreksi lewat void atau jurnal pembalik, keduanya tercatat di audit trail.
+- Jurnal yang sudah diposting tidak dapat dihapus. Jurnal manual (umum dan penyesuaian) boleh diubah oleh Staf akuntansi, Manager, dan Pemilik selama periodenya belum dikunci; nomor tetap, dan versi sebelumnya tersimpan di riwayat perubahan dan audit trail (revisi klien 16 Oktober 2026). Jurnal dari dokumen dan jurnal di periode terkunci tetap dikoreksi lewat void atau jurnal pembalik.
 - Transaksi bertanggal di periode terkunci ditolak, kecuali oleh peran berizin “buka periode” dengan alasan tertulis.
 - Nominal disimpan sebagai desimal presisi tetap (bukan floating point), dalam mata uang transaksi dan mata uang dasar.
 - Struktur laporan mengikuti SAK Indonesia; template SAK EP untuk entitas privat tersedia sejak MVP.
@@ -542,7 +542,7 @@ Semua data keuangan tinggal di server pelanggan. Yang keluar ke internet hanya c
 
 - Satu instalasi untuk satu pelanggan; tabel bisnis memakai `company_id` untuk memisahkan entitas di dalamnya.
 - Nominal disimpan sebagai `NUMERIC(19,4)`, tidak pernah floating point.
-- Jurnal bersifat append-only: baris yang sudah diposting tidak pernah di-UPDATE atau DELETE; koreksi selalu berupa entri baru.
+- Jurnal bersifat append-only: baris yang sudah diposting tidak pernah di-UPDATE. Satu-satunya pengecualian adalah revisi jurnal manual di periode terbuka, yang mengganti barisnya setelah menyimpan versi lama secara utuh; selain itu koreksi selalu berupa entri baru.
 - Setiap jurnal menyimpan `source_type` dan `source_id` dokumen asalnya untuk drill-down.
 - Tarif pajak dan kurs disimpan bertanggal berlaku (`valid_from`, `valid_to`).
 - Sisi pelanggan hanya menyimpan token lisensi bertanda tangan terakhir; sumber kebenaran status lisensi ada di License Console.

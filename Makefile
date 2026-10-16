@@ -5,7 +5,10 @@ GO ?= $(shell command -v go 2>/dev/null || echo $(HOME)/.local/go/bin/go)
 -include .env
 export
 
-.PHONY: dev-db dev-db-down sqlc web-install web-build web-dev build build-release run serve seed test vet
+VERSION ?= 0.0.0-dev
+REGISTRY ?= ghcr.io/lajur
+
+.PHONY: dev-db dev-db-down sqlc web-install web-build web-dev build build-release image run serve seed test vet
 
 dev-db:          ## Nyalakan PostgreSQL pengembangan di 127.0.0.1:5433
 	docker compose -f deploy/docker-compose.dev.yml up -d --wait
@@ -29,7 +32,11 @@ build: web-build ## Binary pengembangan di bin/lajur
 	$(GO) build -o bin/lajur ./cmd/lajur
 
 build-release: web-build ## Binary rilis: tanpa provider lisensi local dan tanpa seed-dev
-	CGO_ENABLED=0 $(GO) build -tags release -trimpath -o bin/lajur ./cmd/lajur
+	CGO_ENABLED=0 $(GO) build -tags release -trimpath -ldflags "-s -w -X lajur/internal/platform/buildinfo.Version=$(VERSION)" -o bin/lajur ./cmd/lajur
+
+image:           ## Image Docker rilis (app dan updater): make image VERSION=1.2.3 REGISTRY=ghcr.io/lajur
+	docker build --build-arg VERSION=$(VERSION) -t $(REGISTRY)/lajur:$(VERSION) .
+	docker build --build-arg VERSION=$(VERSION) -f Dockerfile.updater -t $(REGISTRY)/lajur-updater:$(VERSION) .
 
 run:             ## Jalankan server dari kode sumber (migrasi otomatis) di LAJUR_LISTEN
 	$(GO) run ./cmd/lajur serve

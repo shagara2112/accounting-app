@@ -16,7 +16,7 @@ import (
 
 const accountLines = `-- name: AccountLines :many
 SELECT l.entry_id, e.number, e.kind, e.status, e.source_type, l.entry_date, l.line_no,
-       e.memo AS entry_memo, l.memo, l.debit, l.credit
+       e.memo AS entry_memo, l.memo, l.debit, l.credit, l.project_id
 FROM ledger.journal_lines l
 JOIN ledger.journal_entries e ON e.id = l.entry_id
 WHERE l.company_id = $1 AND l.account_id = $2
@@ -45,6 +45,7 @@ type AccountLinesRow struct {
 	Memo       string
 	Debit      money.Amount
 	Credit     money.Amount
+	ProjectID  *uuid.UUID
 }
 
 func (q *Queries) AccountLines(ctx context.Context, arg AccountLinesParams) ([]AccountLinesRow, error) {
@@ -74,6 +75,7 @@ func (q *Queries) AccountLines(ctx context.Context, arg AccountLinesParams) ([]A
 			&i.Memo,
 			&i.Debit,
 			&i.Credit,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -212,6 +214,22 @@ func (q *Queries) AccountsByIDs(ctx context.Context, arg AccountsByIDsParams) ([
 	return items, nil
 }
 
+const advanceRecurring = `-- name: AdvanceRecurring :exec
+UPDATE ledger.recurring_journals
+SET next_date = $1, last_error = NULL, last_run_at = now(), version = version + 1
+WHERE id = $2
+`
+
+type AdvanceRecurringParams struct {
+	NextDate civil.Date
+	ID       uuid.UUID
+}
+
+func (q *Queries) AdvanceRecurring(ctx context.Context, arg AdvanceRecurringParams) error {
+	_, err := q.db.Exec(ctx, advanceRecurring, arg.NextDate, arg.ID)
+	return err
+}
+
 const balanceMismatches = `-- name: BalanceMismatches :one
 WITH l AS (
   SELECT jl.account_id, date_trunc('month', jl.entry_date)::date AS month, e.kind,
@@ -233,6 +251,22 @@ func (q *Queries) BalanceMismatches(ctx context.Context, companyID uuid.UUID) (i
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const branchCode = `-- name: BranchCode :one
+SELECT code FROM core.branches WHERE company_id = $1 AND id = $2
+`
+
+type BranchCodeParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) BranchCode(ctx context.Context, arg BranchCodeParams) (string, error) {
+	row := q.db.QueryRow(ctx, branchCode, arg.CompanyID, arg.ID)
+	var code string
+	err := row.Scan(&code)
+	return code, err
 }
 
 const countAccounts = `-- name: CountAccounts :one
@@ -273,6 +307,118 @@ func (q *Queries) CountEntries(ctx context.Context, companyID uuid.UUID) (int64,
 	return count, err
 }
 
+const deleteEntryLines = `-- name: DeleteEntryLines :exec
+DELETE FROM ledger.journal_lines WHERE company_id = $1 AND entry_id = $2
+`
+
+type DeleteEntryLinesParams struct {
+	CompanyID uuid.UUID
+	EntryID   uuid.UUID
+}
+
+func (q *Queries) DeleteEntryLines(ctx context.Context, arg DeleteEntryLinesParams) error {
+	_, err := q.db.Exec(ctx, deleteEntryLines, arg.CompanyID, arg.EntryID)
+	return err
+}
+
+const deleteRecurring = `-- name: DeleteRecurring :execrows
+DELETE FROM ledger.recurring_journals WHERE company_id = $1 AND id = $2
+`
+
+type DeleteRecurringParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) DeleteRecurring(ctx context.Context, arg DeleteRecurringParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteRecurring, arg.CompanyID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const dimensions = `-- name: Dimensions :many
+SELECT 'cabang'::text AS kind, b.id, b.code, b.name, b.active FROM core.branches b
+WHERE b.company_id = $1 AND b.id = ANY($2::uuid[])
+UNION ALL
+SELECT 'departemen'::text, d.id, d.code, d.name, d.active FROM core.departments d
+WHERE d.company_id = $1 AND d.id = ANY($3::uuid[])
+`
+
+type DimensionsParams struct {
+	CompanyID     uuid.UUID
+	BranchIds     []uuid.UUID
+	DepartmentIds []uuid.UUID
+}
+
+type DimensionsRow struct {
+	Kind   string
+	ID     uuid.UUID
+	Code   string
+	Name   string
+	Active bool
+}
+
+// Cabang dan departemen yang dirujuk baris jurnal baru, untuk validasi.
+func (q *Queries) Dimensions(ctx context.Context, arg DimensionsParams) ([]DimensionsRow, error) {
+	rows, err := q.db.Query(ctx, dimensions, arg.CompanyID, arg.BranchIds, arg.DepartmentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DimensionsRow
+	for rows.Next() {
+		var i DimensionsRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.Code,
+			&i.Name,
+			&i.Active,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueRecurring = `-- name: DueRecurring :many
+SELECT company_id, id, created_by FROM ledger.recurring_journals
+WHERE active AND next_date <= $1 AND (end_date IS NULL OR next_date <= end_date)
+ORDER BY next_date
+`
+
+type DueRecurringRow struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+	CreatedBy *uuid.UUID
+}
+
+func (q *Queries) DueRecurring(ctx context.Context, today civil.Date) ([]DueRecurringRow, error) {
+	rows, err := q.db.Query(ctx, dueRecurring, today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DueRecurringRow
+	for rows.Next() {
+		var i DueRecurringRow
+		if err := rows.Scan(&i.CompanyID, &i.ID, &i.CreatedBy); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const ensurePeriod = `-- name: EnsurePeriod :exec
 INSERT INTO ledger.periods (company_id, month) VALUES ($1, $2) ON CONFLICT DO NOTHING
 `
@@ -285,6 +431,62 @@ type EnsurePeriodParams struct {
 func (q *Queries) EnsurePeriod(ctx context.Context, arg EnsurePeriodParams) error {
 	_, err := q.db.Exec(ctx, ensurePeriod, arg.CompanyID, arg.Month)
 	return err
+}
+
+const entriesBySource = `-- name: EntriesBySource :many
+SELECT id, number, kind, entry_date, memo, source_type, source_id, total, status, reversal_of
+FROM ledger.journal_entries
+WHERE company_id = $1 AND source_type = $2 AND status = 'posted'
+ORDER BY entry_date, number
+`
+
+type EntriesBySourceParams struct {
+	CompanyID  uuid.UUID
+	SourceType string
+}
+
+type EntriesBySourceRow struct {
+	ID         uuid.UUID
+	Number     string
+	Kind       string
+	EntryDate  civil.Date
+	Memo       string
+	SourceType string
+	SourceID   *uuid.UUID
+	Total      money.Amount
+	Status     string
+	ReversalOf *uuid.UUID
+}
+
+func (q *Queries) EntriesBySource(ctx context.Context, arg EntriesBySourceParams) ([]EntriesBySourceRow, error) {
+	rows, err := q.db.Query(ctx, entriesBySource, arg.CompanyID, arg.SourceType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EntriesBySourceRow
+	for rows.Next() {
+		var i EntriesBySourceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.Kind,
+			&i.EntryDate,
+			&i.Memo,
+			&i.SourceType,
+			&i.SourceID,
+			&i.Total,
+			&i.Status,
+			&i.ReversalOf,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const entryCountsByMonth = `-- name: EntryCountsByMonth :many
@@ -327,9 +529,12 @@ func (q *Queries) EntryCountsByMonth(ctx context.Context, arg EntryCountsByMonth
 }
 
 const entryLines = `-- name: EntryLines :many
-SELECT l.line_no, l.account_id, a.code AS account_code, a.name AS account_name, l.debit, l.credit, l.memo
+SELECT l.line_no, l.account_id, a.code AS account_code, a.name AS account_name, l.debit, l.credit, l.memo, l.project_id,
+       l.branch_id, l.department_id, b.code AS branch_code, d.code AS department_code
 FROM ledger.journal_lines l
 JOIN ledger.accounts a ON a.id = l.account_id
+LEFT JOIN core.branches b ON b.id = l.branch_id
+LEFT JOIN core.departments d ON d.id = l.department_id
 WHERE l.company_id = $1 AND l.entry_id = $2
 ORDER BY l.line_no
 `
@@ -340,13 +545,18 @@ type EntryLinesParams struct {
 }
 
 type EntryLinesRow struct {
-	LineNo      int16
-	AccountID   uuid.UUID
-	AccountCode string
-	AccountName string
-	Debit       money.Amount
-	Credit      money.Amount
-	Memo        string
+	LineNo         int16
+	AccountID      uuid.UUID
+	AccountCode    string
+	AccountName    string
+	Debit          money.Amount
+	Credit         money.Amount
+	Memo           string
+	ProjectID      *uuid.UUID
+	BranchID       *uuid.UUID
+	DepartmentID   *uuid.UUID
+	BranchCode     *string
+	DepartmentCode *string
 }
 
 func (q *Queries) EntryLines(ctx context.Context, arg EntryLinesParams) ([]EntryLinesRow, error) {
@@ -366,6 +576,11 @@ func (q *Queries) EntryLines(ctx context.Context, arg EntryLinesParams) ([]Entry
 			&i.Debit,
 			&i.Credit,
 			&i.Memo,
+			&i.ProjectID,
+			&i.BranchID,
+			&i.DepartmentID,
+			&i.BranchCode,
+			&i.DepartmentCode,
 		); err != nil {
 			return nil, err
 		}
@@ -375,6 +590,73 @@ func (q *Queries) EntryLines(ctx context.Context, arg EntryLinesParams) ([]Entry
 		return nil, err
 	}
 	return items, nil
+}
+
+const entryRevisions = `-- name: EntryRevisions :many
+SELECT r.revision, r.entry_date, r.memo, r.total, r.lines, r.reason, r.revised_at, u.name AS revised_by_name
+FROM ledger.journal_revisions r
+LEFT JOIN platform.users u ON u.id = r.revised_by
+WHERE r.company_id = $1 AND r.entry_id = $2
+ORDER BY r.revision DESC
+`
+
+type EntryRevisionsParams struct {
+	CompanyID uuid.UUID
+	EntryID   uuid.UUID
+}
+
+type EntryRevisionsRow struct {
+	Revision      int32
+	EntryDate     civil.Date
+	Memo          string
+	Total         money.Amount
+	Lines         []byte
+	Reason        string
+	RevisedAt     time.Time
+	RevisedByName *string
+}
+
+func (q *Queries) EntryRevisions(ctx context.Context, arg EntryRevisionsParams) ([]EntryRevisionsRow, error) {
+	rows, err := q.db.Query(ctx, entryRevisions, arg.CompanyID, arg.EntryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EntryRevisionsRow
+	for rows.Next() {
+		var i EntryRevisionsRow
+		if err := rows.Scan(
+			&i.Revision,
+			&i.EntryDate,
+			&i.Memo,
+			&i.Total,
+			&i.Lines,
+			&i.Reason,
+			&i.RevisedAt,
+			&i.RevisedByName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const failRecurring = `-- name: FailRecurring :exec
+UPDATE ledger.recurring_journals SET last_error = $1, last_run_at = now() WHERE id = $2
+`
+
+type FailRecurringParams struct {
+	LastError *string
+	ID        uuid.UUID
+}
+
+func (q *Queries) FailRecurring(ctx context.Context, arg FailRecurringParams) error {
+	_, err := q.db.Exec(ctx, failRecurring, arg.LastError, arg.ID)
+	return err
 }
 
 const getAccount = `-- name: GetAccount :one
@@ -436,10 +718,11 @@ func (q *Queries) GetAccountByCode(ctx context.Context, arg GetAccountByCodePara
 }
 
 const getEntry = `-- name: GetEntry :one
-SELECT e.id, e.company_id, e.number, e.kind, e.entry_date, e.memo, e.source_type, e.source_id, e.reversal_of, e.auto_reverse, e.total, e.status, e.posted_at, e.posted_by, e.voided_at, e.voided_by, e.void_reason, pu.name AS posted_by_name, vu.name AS voided_by_name
+SELECT e.id, e.company_id, e.number, e.kind, e.entry_date, e.memo, e.source_type, e.source_id, e.reversal_of, e.auto_reverse, e.total, e.status, e.posted_at, e.posted_by, e.voided_at, e.voided_by, e.void_reason, e.revision, e.revised_at, e.revised_by, pu.name AS posted_by_name, vu.name AS voided_by_name, ru.name AS revised_by_name
 FROM ledger.journal_entries e
 LEFT JOIN platform.users pu ON pu.id = e.posted_by
 LEFT JOIN platform.users vu ON vu.id = e.voided_by
+LEFT JOIN platform.users ru ON ru.id = e.revised_by
 WHERE e.company_id = $1 AND e.id = $2
 `
 
@@ -449,25 +732,29 @@ type GetEntryParams struct {
 }
 
 type GetEntryRow struct {
-	ID           uuid.UUID
-	CompanyID    uuid.UUID
-	Number       string
-	Kind         string
-	EntryDate    civil.Date
-	Memo         string
-	SourceType   string
-	SourceID     *uuid.UUID
-	ReversalOf   *uuid.UUID
-	AutoReverse  bool
-	Total        money.Amount
-	Status       string
-	PostedAt     time.Time
-	PostedBy     *uuid.UUID
-	VoidedAt     *time.Time
-	VoidedBy     *uuid.UUID
-	VoidReason   *string
-	PostedByName *string
-	VoidedByName *string
+	ID            uuid.UUID
+	CompanyID     uuid.UUID
+	Number        string
+	Kind          string
+	EntryDate     civil.Date
+	Memo          string
+	SourceType    string
+	SourceID      *uuid.UUID
+	ReversalOf    *uuid.UUID
+	AutoReverse   bool
+	Total         money.Amount
+	Status        string
+	PostedAt      time.Time
+	PostedBy      *uuid.UUID
+	VoidedAt      *time.Time
+	VoidedBy      *uuid.UUID
+	VoidReason    *string
+	Revision      int32
+	RevisedAt     *time.Time
+	RevisedBy     *uuid.UUID
+	PostedByName  *string
+	VoidedByName  *string
+	RevisedByName *string
 }
 
 func (q *Queries) GetEntry(ctx context.Context, arg GetEntryParams) (GetEntryRow, error) {
@@ -491,14 +778,18 @@ func (q *Queries) GetEntry(ctx context.Context, arg GetEntryParams) (GetEntryRow
 		&i.VoidedAt,
 		&i.VoidedBy,
 		&i.VoidReason,
+		&i.Revision,
+		&i.RevisedAt,
+		&i.RevisedBy,
 		&i.PostedByName,
 		&i.VoidedByName,
+		&i.RevisedByName,
 	)
 	return i, err
 }
 
 const getEntryForUpdate = `-- name: GetEntryForUpdate :one
-SELECT id, company_id, number, kind, entry_date, memo, source_type, source_id, reversal_of, auto_reverse, total, status, posted_at, posted_by, voided_at, voided_by, void_reason FROM ledger.journal_entries WHERE company_id = $1 AND id = $2 FOR UPDATE
+SELECT id, company_id, number, kind, entry_date, memo, source_type, source_id, reversal_of, auto_reverse, total, status, posted_at, posted_by, voided_at, voided_by, void_reason, revision, revised_at, revised_by FROM ledger.journal_entries WHERE company_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetEntryForUpdateParams struct {
@@ -527,6 +818,69 @@ func (q *Queries) GetEntryForUpdate(ctx context.Context, arg GetEntryForUpdatePa
 		&i.VoidedAt,
 		&i.VoidedBy,
 		&i.VoidReason,
+		&i.Revision,
+		&i.RevisedAt,
+		&i.RevisedBy,
+	)
+	return i, err
+}
+
+const getNumberFormat = `-- name: GetNumberFormat :one
+
+SELECT company_id, series, prefix, reset, digits, per_branch, updated_by, updated_at FROM ledger.number_formats WHERE company_id = $1 AND series = $2
+`
+
+type GetNumberFormatParams struct {
+	CompanyID uuid.UUID
+	Series    string
+}
+
+// Penomoran dokumen (GL-07) ---------------------------------------------------------
+func (q *Queries) GetNumberFormat(ctx context.Context, arg GetNumberFormatParams) (LedgerNumberFormat, error) {
+	row := q.db.QueryRow(ctx, getNumberFormat, arg.CompanyID, arg.Series)
+	var i LedgerNumberFormat
+	err := row.Scan(
+		&i.CompanyID,
+		&i.Series,
+		&i.Prefix,
+		&i.Reset,
+		&i.Digits,
+		&i.PerBranch,
+		&i.UpdatedBy,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getRecurring = `-- name: GetRecurring :one
+SELECT id, company_id, name, kind, memo, auto_reverse, day_of_month, next_date, end_date, active, last_error, last_run_at, source_entry_id, created_by, created_at, version FROM ledger.recurring_journals WHERE company_id = $1 AND id = $2
+`
+
+type GetRecurringParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) GetRecurring(ctx context.Context, arg GetRecurringParams) (LedgerRecurringJournal, error) {
+	row := q.db.QueryRow(ctx, getRecurring, arg.CompanyID, arg.ID)
+	var i LedgerRecurringJournal
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.Kind,
+		&i.Memo,
+		&i.AutoReverse,
+		&i.DayOfMonth,
+		&i.NextDate,
+		&i.EndDate,
+		&i.Active,
+		&i.LastError,
+		&i.LastRunAt,
+		&i.SourceEntryID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.Version,
 	)
 	return i, err
 }
@@ -634,15 +988,147 @@ func (q *Queries) InsertEntry(ctx context.Context, arg InsertEntryParams) error 
 }
 
 type InsertLinesParams struct {
+	ID           uuid.UUID
+	CompanyID    uuid.UUID
+	EntryID      uuid.UUID
+	EntryDate    civil.Date
+	LineNo       int16
+	AccountID    uuid.UUID
+	Debit        money.Amount
+	Credit       money.Amount
+	Memo         string
+	ProjectID    *uuid.UUID
+	BranchID     *uuid.UUID
+	DepartmentID *uuid.UUID
+}
+
+const insertRecurring = `-- name: InsertRecurring :exec
+
+INSERT INTO ledger.recurring_journals
+  (id, company_id, name, kind, memo, auto_reverse, day_of_month, next_date, end_date, source_entry_id, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+`
+
+type InsertRecurringParams struct {
+	ID            uuid.UUID
+	CompanyID     uuid.UUID
+	Name          string
+	Kind          string
+	Memo          string
+	AutoReverse   bool
+	DayOfMonth    int16
+	NextDate      civil.Date
+	EndDate       *civil.Date
+	SourceEntryID *uuid.UUID
+	CreatedBy     *uuid.UUID
+}
+
+// Jurnal berulang (GL-08) -----------------------------------------------------------
+func (q *Queries) InsertRecurring(ctx context.Context, arg InsertRecurringParams) error {
+	_, err := q.db.Exec(ctx, insertRecurring,
+		arg.ID,
+		arg.CompanyID,
+		arg.Name,
+		arg.Kind,
+		arg.Memo,
+		arg.AutoReverse,
+		arg.DayOfMonth,
+		arg.NextDate,
+		arg.EndDate,
+		arg.SourceEntryID,
+		arg.CreatedBy,
+	)
+	return err
+}
+
+const insertRecurringLine = `-- name: InsertRecurringLine :exec
+INSERT INTO ledger.recurring_lines
+  (id, company_id, recurring_id, line_no, account_id, debit, credit, memo, project_id, branch_id, department_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+`
+
+type InsertRecurringLineParams struct {
+	ID           uuid.UUID
+	CompanyID    uuid.UUID
+	RecurringID  uuid.UUID
+	LineNo       int16
+	AccountID    uuid.UUID
+	Debit        money.Amount
+	Credit       money.Amount
+	Memo         string
+	ProjectID    *uuid.UUID
+	BranchID     *uuid.UUID
+	DepartmentID *uuid.UUID
+}
+
+func (q *Queries) InsertRecurringLine(ctx context.Context, arg InsertRecurringLineParams) error {
+	_, err := q.db.Exec(ctx, insertRecurringLine,
+		arg.ID,
+		arg.CompanyID,
+		arg.RecurringID,
+		arg.LineNo,
+		arg.AccountID,
+		arg.Debit,
+		arg.Credit,
+		arg.Memo,
+		arg.ProjectID,
+		arg.BranchID,
+		arg.DepartmentID,
+	)
+	return err
+}
+
+const insertRecurringRun = `-- name: InsertRecurringRun :execrows
+INSERT INTO ledger.recurring_runs (recurring_id, run_date, entry_id) VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type InsertRecurringRunParams struct {
+	RecurringID uuid.UUID
+	RunDate     civil.Date
+	EntryID     uuid.UUID
+}
+
+func (q *Queries) InsertRecurringRun(ctx context.Context, arg InsertRecurringRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertRecurringRun, arg.RecurringID, arg.RunDate, arg.EntryID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertRevision = `-- name: InsertRevision :exec
+INSERT INTO ledger.journal_revisions (id, company_id, entry_id, revision, entry_date, memo, total, lines, reason, revised_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+`
+
+type InsertRevisionParams struct {
 	ID        uuid.UUID
 	CompanyID uuid.UUID
 	EntryID   uuid.UUID
+	Revision  int32
 	EntryDate civil.Date
-	LineNo    int16
-	AccountID uuid.UUID
-	Debit     money.Amount
-	Credit    money.Amount
 	Memo      string
+	Total     money.Amount
+	Lines     []byte
+	Reason    string
+	RevisedBy *uuid.UUID
+}
+
+func (q *Queries) InsertRevision(ctx context.Context, arg InsertRevisionParams) error {
+	_, err := q.db.Exec(ctx, insertRevision,
+		arg.ID,
+		arg.CompanyID,
+		arg.EntryID,
+		arg.Revision,
+		arg.EntryDate,
+		arg.Memo,
+		arg.Total,
+		arg.Lines,
+		arg.Reason,
+		arg.RevisedBy,
+	)
+	return err
 }
 
 const listAccounts = `-- name: ListAccounts :many
@@ -761,6 +1247,39 @@ func (q *Queries) ListEntries(ctx context.Context, arg ListEntriesParams) ([]Lis
 	return items, nil
 }
 
+const listNumberFormats = `-- name: ListNumberFormats :many
+SELECT company_id, series, prefix, reset, digits, per_branch, updated_by, updated_at FROM ledger.number_formats WHERE company_id = $1 ORDER BY series
+`
+
+func (q *Queries) ListNumberFormats(ctx context.Context, companyID uuid.UUID) ([]LedgerNumberFormat, error) {
+	rows, err := q.db.Query(ctx, listNumberFormats, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LedgerNumberFormat
+	for rows.Next() {
+		var i LedgerNumberFormat
+		if err := rows.Scan(
+			&i.CompanyID,
+			&i.Series,
+			&i.Prefix,
+			&i.Reset,
+			&i.Digits,
+			&i.PerBranch,
+			&i.UpdatedBy,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPeriods = `-- name: ListPeriods :many
 SELECT p.month, p.status, p.changed_at, p.reason, u.name AS changed_by_name
 FROM ledger.periods p
@@ -809,6 +1328,71 @@ func (q *Queries) ListPeriods(ctx context.Context, arg ListPeriodsParams) ([]Lis
 	return items, nil
 }
 
+const listRecurring = `-- name: ListRecurring :many
+SELECT r.id, r.company_id, r.name, r.kind, r.memo, r.auto_reverse, r.day_of_month, r.next_date, r.end_date, r.active, r.last_error, r.last_run_at, r.source_entry_id, r.created_by, r.created_at, r.version, coalesce((SELECT sum(l.debit) FROM ledger.recurring_lines l WHERE l.recurring_id = r.id), 0)::numeric AS total
+FROM ledger.recurring_journals r
+WHERE r.company_id = $1
+ORDER BY r.active DESC, r.next_date, r.name
+`
+
+type ListRecurringRow struct {
+	ID            uuid.UUID
+	CompanyID     uuid.UUID
+	Name          string
+	Kind          string
+	Memo          string
+	AutoReverse   bool
+	DayOfMonth    int16
+	NextDate      civil.Date
+	EndDate       *civil.Date
+	Active        bool
+	LastError     *string
+	LastRunAt     *time.Time
+	SourceEntryID *uuid.UUID
+	CreatedBy     *uuid.UUID
+	CreatedAt     time.Time
+	Version       int32
+	Total         money.Amount
+}
+
+func (q *Queries) ListRecurring(ctx context.Context, companyID uuid.UUID) ([]ListRecurringRow, error) {
+	rows, err := q.db.Query(ctx, listRecurring, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRecurringRow
+	for rows.Next() {
+		var i ListRecurringRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.Name,
+			&i.Kind,
+			&i.Memo,
+			&i.AutoReverse,
+			&i.DayOfMonth,
+			&i.NextDate,
+			&i.EndDate,
+			&i.Active,
+			&i.LastError,
+			&i.LastRunAt,
+			&i.SourceEntryID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.Version,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockPeriodForUpdate = `-- name: LockPeriodForUpdate :one
 SELECT status FROM ledger.periods WHERE company_id = $1 AND month = $2 FOR UPDATE
 `
@@ -842,6 +1426,39 @@ func (q *Queries) LockPeriodShared(ctx context.Context, arg LockPeriodSharedPara
 	return status, err
 }
 
+const lockRecurring = `-- name: LockRecurring :one
+SELECT id, company_id, name, kind, memo, auto_reverse, day_of_month, next_date, end_date, active, last_error, last_run_at, source_entry_id, created_by, created_at, version FROM ledger.recurring_journals WHERE company_id = $1 AND id = $2 FOR UPDATE
+`
+
+type LockRecurringParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) LockRecurring(ctx context.Context, arg LockRecurringParams) (LedgerRecurringJournal, error) {
+	row := q.db.QueryRow(ctx, lockRecurring, arg.CompanyID, arg.ID)
+	var i LedgerRecurringJournal
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Name,
+		&i.Kind,
+		&i.Memo,
+		&i.AutoReverse,
+		&i.DayOfMonth,
+		&i.NextDate,
+		&i.EndDate,
+		&i.Active,
+		&i.LastError,
+		&i.LastRunAt,
+		&i.SourceEntryID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
 const nextNumber = `-- name: NextNumber :one
 INSERT INTO ledger.sequences (company_id, series, month, last_no)
 VALUES ($1, $2, $3, 1)
@@ -862,6 +1479,24 @@ func (q *Queries) NextNumber(ctx context.Context, arg NextNumberParams) (int32, 
 	return last_no, err
 }
 
+const periodStatus = `-- name: PeriodStatus :one
+
+SELECT coalesce((SELECT status FROM ledger.periods WHERE company_id = $1 AND month = $2), 'open')::text AS status
+`
+
+type PeriodStatusParams struct {
+	CompanyID uuid.UUID
+	Month     civil.Date
+}
+
+// Revisi jurnal manual (revisi klien) ---------------------------------------------------
+func (q *Queries) PeriodStatus(ctx context.Context, arg PeriodStatusParams) (string, error) {
+	row := q.db.QueryRow(ctx, periodStatus, arg.CompanyID, arg.Month)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const priorYearsResult = `-- name: PriorYearsResult :one
 SELECT coalesce(sum(b.debit - b.credit), 0)::numeric AS net
 FROM ledger.balances b
@@ -880,6 +1515,270 @@ func (q *Queries) PriorYearsResult(ctx context.Context, arg PriorYearsResultPara
 	var net money.Amount
 	err := row.Scan(&net)
 	return net, err
+}
+
+const projectBalanceMismatches = `-- name: ProjectBalanceMismatches :one
+WITH l AS (
+  SELECT jl.project_id, jl.account_id, date_trunc('month', jl.entry_date)::date AS month,
+         sum(jl.debit) AS debit, sum(jl.credit) AS credit
+  FROM ledger.journal_lines jl
+  WHERE jl.company_id = $1 AND jl.project_id IS NOT NULL
+  GROUP BY 1, 2, 3
+), b AS (
+  SELECT pb.project_id, pb.account_id, pb.month, pb.debit, pb.credit
+  FROM ledger.project_balances pb WHERE pb.company_id = $1
+)
+SELECT count(*) FROM l FULL JOIN b USING (project_id, account_id, month)
+WHERE l.debit IS DISTINCT FROM b.debit OR l.credit IS DISTINCT FROM b.credit
+`
+
+// Sama seperti BalanceMismatches, untuk saldo per proyek.
+func (q *Queries) ProjectBalanceMismatches(ctx context.Context, companyID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, projectBalanceMismatches, companyID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const projectLines = `-- name: ProjectLines :many
+SELECT l.entry_id, e.number, e.status, e.source_type, e.source_id, l.entry_date, l.line_no,
+       e.memo AS entry_memo, l.memo, l.account_id, a.code AS account_code, a.name AS account_name,
+       l.debit, l.credit
+FROM ledger.journal_lines l
+JOIN ledger.journal_entries e ON e.id = l.entry_id
+JOIN ledger.accounts a ON a.id = l.account_id
+WHERE l.company_id = $1 AND l.project_id = $2
+  AND ($3::uuid IS NULL OR l.account_id = $3::uuid)
+  AND l.entry_date >= $4 AND l.entry_date <= $5
+ORDER BY l.entry_date, e.posted_at, e.number, l.line_no
+LIMIT $6
+`
+
+type ProjectLinesParams struct {
+	CompanyID uuid.UUID
+	ProjectID *uuid.UUID
+	AccountID *uuid.UUID
+	FromDate  civil.Date
+	ToDate    civil.Date
+	RowLimit  int32
+}
+
+type ProjectLinesRow struct {
+	EntryID     uuid.UUID
+	Number      string
+	Status      string
+	SourceType  string
+	SourceID    *uuid.UUID
+	EntryDate   civil.Date
+	LineNo      int16
+	EntryMemo   string
+	Memo        string
+	AccountID   uuid.UUID
+	AccountCode string
+	AccountName string
+	Debit       money.Amount
+	Credit      money.Amount
+}
+
+func (q *Queries) ProjectLines(ctx context.Context, arg ProjectLinesParams) ([]ProjectLinesRow, error) {
+	rows, err := q.db.Query(ctx, projectLines,
+		arg.CompanyID,
+		arg.ProjectID,
+		arg.AccountID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProjectLinesRow
+	for rows.Next() {
+		var i ProjectLinesRow
+		if err := rows.Scan(
+			&i.EntryID,
+			&i.Number,
+			&i.Status,
+			&i.SourceType,
+			&i.SourceID,
+			&i.EntryDate,
+			&i.LineNo,
+			&i.EntryMemo,
+			&i.Memo,
+			&i.AccountID,
+			&i.AccountCode,
+			&i.AccountName,
+			&i.Debit,
+			&i.Credit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectNet = `-- name: ProjectNet :many
+
+SELECT project_id, account_id, sum(debit)::numeric AS debit, sum(credit)::numeric AS credit
+FROM ledger.project_balances
+WHERE company_id = $1 AND month >= $2 AND month <= $3
+  AND ($4::uuid IS NULL OR project_id = $4::uuid)
+GROUP BY project_id, account_id
+`
+
+type ProjectNetParams struct {
+	CompanyID uuid.UUID
+	FromMonth civil.Date
+	ToMonth   civil.Date
+	ProjectID *uuid.UUID
+}
+
+type ProjectNetRow struct {
+	ProjectID uuid.UUID
+	AccountID uuid.UUID
+	Debit     money.Amount
+	Credit    money.Amount
+}
+
+// Proyek ------------------------------------------------------------------------
+// Mutasi debit dan kredit per proyek dan akun untuk bulan @from_month s.d. @to_month.
+func (q *Queries) ProjectNet(ctx context.Context, arg ProjectNetParams) ([]ProjectNetRow, error) {
+	rows, err := q.db.Query(ctx, projectNet,
+		arg.CompanyID,
+		arg.FromMonth,
+		arg.ToMonth,
+		arg.ProjectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProjectNetRow
+	for rows.Next() {
+		var i ProjectNetRow
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.AccountID,
+			&i.Debit,
+			&i.Credit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recurringLines = `-- name: RecurringLines :many
+SELECT l.id, l.company_id, l.recurring_id, l.line_no, l.account_id, l.debit, l.credit, l.memo, l.project_id, l.branch_id, l.department_id, a.code AS account_code, a.name AS account_name
+FROM ledger.recurring_lines l
+JOIN ledger.accounts a ON a.id = l.account_id
+WHERE l.company_id = $1 AND l.recurring_id = $2
+ORDER BY l.line_no
+`
+
+type RecurringLinesParams struct {
+	CompanyID   uuid.UUID
+	RecurringID uuid.UUID
+}
+
+type RecurringLinesRow struct {
+	ID           uuid.UUID
+	CompanyID    uuid.UUID
+	RecurringID  uuid.UUID
+	LineNo       int16
+	AccountID    uuid.UUID
+	Debit        money.Amount
+	Credit       money.Amount
+	Memo         string
+	ProjectID    *uuid.UUID
+	BranchID     *uuid.UUID
+	DepartmentID *uuid.UUID
+	AccountCode  string
+	AccountName  string
+}
+
+func (q *Queries) RecurringLines(ctx context.Context, arg RecurringLinesParams) ([]RecurringLinesRow, error) {
+	rows, err := q.db.Query(ctx, recurringLines, arg.CompanyID, arg.RecurringID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecurringLinesRow
+	for rows.Next() {
+		var i RecurringLinesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.RecurringID,
+			&i.LineNo,
+			&i.AccountID,
+			&i.Debit,
+			&i.Credit,
+			&i.Memo,
+			&i.ProjectID,
+			&i.BranchID,
+			&i.DepartmentID,
+			&i.AccountCode,
+			&i.AccountName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recurringRuns = `-- name: RecurringRuns :many
+SELECT rr.run_date, rr.entry_id, e.number, e.status
+FROM ledger.recurring_runs rr
+JOIN ledger.journal_entries e ON e.id = rr.entry_id
+WHERE rr.recurring_id = $1
+ORDER BY rr.run_date DESC
+LIMIT 24
+`
+
+type RecurringRunsRow struct {
+	RunDate civil.Date
+	EntryID uuid.UUID
+	Number  string
+	Status  string
+}
+
+func (q *Queries) RecurringRuns(ctx context.Context, recurringID uuid.UUID) ([]RecurringRunsRow, error) {
+	rows, err := q.db.Query(ctx, recurringRuns, recurringID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecurringRunsRow
+	for rows.Next() {
+		var i RecurringRunsRow
+		if err := rows.Scan(
+			&i.RunDate,
+			&i.EntryID,
+			&i.Number,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const reversalsOf = `-- name: ReversalsOf :many
@@ -928,6 +1827,38 @@ func (q *Queries) ReversalsOf(ctx context.Context, arg ReversalsOfParams) ([]Rev
 	return items, nil
 }
 
+const reviseEntry = `-- name: ReviseEntry :execrows
+UPDATE ledger.journal_entries
+SET entry_date = $3, memo = $4, total = $5, revision = revision + 1, revised_at = now(), revised_by = $6
+WHERE company_id = $1 AND id = $2 AND status = 'posted' AND revision = $7
+`
+
+type ReviseEntryParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+	EntryDate civil.Date
+	Memo      string
+	Total     money.Amount
+	RevisedBy *uuid.UUID
+	Expected  int32
+}
+
+func (q *Queries) ReviseEntry(ctx context.Context, arg ReviseEntryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reviseEntry,
+		arg.CompanyID,
+		arg.ID,
+		arg.EntryDate,
+		arg.Memo,
+		arg.Total,
+		arg.RevisedBy,
+		arg.Expected,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setPeriodStatus = `-- name: SetPeriodStatus :exec
 UPDATE ledger.periods
 SET status = $3, changed_at = now(), changed_by = $4, reason = $5
@@ -950,6 +1881,16 @@ func (q *Queries) SetPeriodStatus(ctx context.Context, arg SetPeriodStatusParams
 		arg.ChangedBy,
 		arg.Reason,
 	)
+	return err
+}
+
+const setRevising = `-- name: SetRevising :exec
+SELECT set_config('lajur.revise_entry', $1::text, true)
+`
+
+// Menandai jurnal yang boleh direvisi di transaksi ini (dibaca trigger guard_entry/guard_line).
+func (q *Queries) SetRevising(ctx context.Context, entryID string) error {
+	_, err := q.db.Exec(ctx, setRevising, entryID)
 	return err
 }
 
@@ -992,6 +1933,72 @@ func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (L
 		&i.Version,
 	)
 	return i, err
+}
+
+const updateRecurring = `-- name: UpdateRecurring :execrows
+UPDATE ledger.recurring_journals
+SET name = $1, day_of_month = $2, next_date = $3, end_date = $4,
+    active = $5, last_error = NULL, version = version + 1
+WHERE company_id = $6 AND id = $7 AND version = $8
+`
+
+type UpdateRecurringParams struct {
+	Name       string
+	DayOfMonth int16
+	NextDate   civil.Date
+	EndDate    *civil.Date
+	Active     bool
+	CompanyID  uuid.UUID
+	ID         uuid.UUID
+	Version    int32
+}
+
+func (q *Queries) UpdateRecurring(ctx context.Context, arg UpdateRecurringParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateRecurring,
+		arg.Name,
+		arg.DayOfMonth,
+		arg.NextDate,
+		arg.EndDate,
+		arg.Active,
+		arg.CompanyID,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const upsertNumberFormat = `-- name: UpsertNumberFormat :exec
+INSERT INTO ledger.number_formats (company_id, series, prefix, reset, digits, per_branch, updated_by, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+ON CONFLICT (company_id, series) DO UPDATE
+SET prefix = EXCLUDED.prefix, reset = EXCLUDED.reset, digits = EXCLUDED.digits, per_branch = EXCLUDED.per_branch,
+    updated_by = EXCLUDED.updated_by, updated_at = now()
+`
+
+type UpsertNumberFormatParams struct {
+	CompanyID uuid.UUID
+	Series    string
+	Prefix    string
+	Reset     string
+	Digits    int16
+	PerBranch bool
+	UpdatedBy *uuid.UUID
+}
+
+func (q *Queries) UpsertNumberFormat(ctx context.Context, arg UpsertNumberFormatParams) error {
+	_, err := q.db.Exec(ctx, upsertNumberFormat,
+		arg.CompanyID,
+		arg.Series,
+		arg.Prefix,
+		arg.Reset,
+		arg.Digits,
+		arg.PerBranch,
+		arg.UpdatedBy,
+	)
+	return err
 }
 
 const upsertSettings = `-- name: UpsertSettings :exec

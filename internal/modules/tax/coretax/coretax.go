@@ -133,6 +133,8 @@ type Service interface {
 
 	VATRecap(ctx context.Context, companyID uuid.UUID, year int) (VATRecap, error)
 	Withholding(ctx context.Context, companyID uuid.UUID, month civil.Date) (WithholdingRecap, error)
+	// Digunggung adalah rekap PPN penjualan eceran satu masa (TAX-12).
+	Digunggung(ctx context.Context, companyID uuid.UUID, month civil.Date) (Digunggung, error)
 }
 
 type Deps struct {

@@ -12,8 +12,10 @@ export function useLicense() {
 export function useLogin() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { email: string; password: string }) => api('POST', '/auth/login', v),
-    onSuccess: () => qc.invalidateQueries(),
+    mutationFn: (v: { email: string; password: string }) => api<{ ok?: boolean; totpRequired?: boolean; challenge?: string }>('POST', '/auth/login', v),
+    // Bila masih butuh kode 2FA, sesi belum ada: jangan muat ulang /me, karena query yang
+    // error tanpa data kembali "pending" dan halaman login (beserta challenge-nya) ter-unmount.
+    onSuccess: (r) => (r.totpRequired ? undefined : qc.invalidateQueries()),
   })
 }
 

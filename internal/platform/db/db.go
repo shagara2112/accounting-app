@@ -3,6 +3,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -72,4 +73,28 @@ func Run(ctx context.Context, pool *pgxpool.Pool, fn func(ctx context.Context) e
 		return fn(ctx)
 	}
 	return InTx(ctx, pool, pgx.TxOptions{}, fn)
+}
+
+// IsUniqueViolation: galat pelanggaran UNIQUE (23505), mis. untuk menolak data ganda dengan pesan jelas.
+func IsUniqueViolation(err error) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == "23505"
+}
+
+// Savepoint menjalankan fn di dalam savepoint transaksi yang sedang berjalan: bila fn gagal,
+// hanya perubahan fn yang dibatalkan dan transaksinya tetap bisa dipakai.
+func Savepoint(ctx context.Context, pool *pgxpool.Pool, fn func(ctx context.Context) error) error {
+	conn := Conn(ctx, pool)
+	if _, err := conn.Exec(ctx, "SAVEPOINT lajur_sp"); err != nil {
+		return err
+	}
+	if err := fn(ctx); err != nil {
+		if _, rbErr := conn.Exec(ctx, "ROLLBACK TO SAVEPOINT lajur_sp"); rbErr != nil {
+			return rbErr
+		}
+		_, _ = conn.Exec(ctx, "RELEASE SAVEPOINT lajur_sp")
+		return err
+	}
+	_, err := conn.Exec(ctx, "RELEASE SAVEPOINT lajur_sp")
+	return err
 }

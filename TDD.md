@@ -80,15 +80,15 @@ lajur/
 │   ├── platform/         # db, http, auth, rbac, audit, jobs, license, config, tls
 │   ├── ledger/           # mesin buku besar: posting, saldo, periode, penomoran
 │   └── modules/
-│       ├── core/         # perusahaan, cabang, pengguna, kontak, produk
+│       ├── core/         # perusahaan, cabang, pengguna, kontak
 │       ├── sales/        # AR: faktur, termin, pelunasan, nota kredit
 │       ├── purchase/     # AP: tagihan, pembayaran, biaya
 │       ├── cash/         # kas, bank, rekonsiliasi
-│       ├── inventory/    # stok, HPP rata-rata, stock opname
-│       ├── project/      # proyek, RAB, retensi
+│       ├── inventory/    # produk dan jasa, stok, HPP rata-rata, stock opname
+│       ├── project/      # proyek, RAB, laba per proyek, termin dan retensi
 │       ├── tax/          # kode pajak, PPN, PPh, ekspor Coretax
 │       ├── consol/       # intercompany dan konsolidasi
-│       └── report/       # laporan keuangan dan dashboard
+│       └── report/       # laporan keuangan, arus kas, ringkasan, dashboard, ekspor
 ├── migrations/           # file SQL goose, dikelompokkan per modul
 ├── api/openapi.yaml      # kontrak API
 ├── web/                  # React + Vite
@@ -161,7 +161,7 @@ erDiagram
   }
 ```
 
-Baris jurnal adalah satu-satunya sumber angka; saldo hanya agregat darinya. Tabel `consol.ic_links` (tidak digambar) menghubungkan dua jurnal cerminan antar-PT.
+Baris jurnal adalah satu-satunya sumber angka; saldo hanya agregat darinya. Tabel `consol.ic_links` (tidak digambar) menghubungkan dua dokumen cerminan antar-PT (faktur ↔ tagihan).
 
 **Konvensi skema**
 
@@ -182,19 +182,19 @@ Semua angka di Lajur lewat satu fungsi, `ledger.Post`. Fungsi ini memvalidasi, m
 2. `ledger.Post` memeriksa total debit = kredit, akun aktif dan bukan akun induk, periode masih terbuka untuk modul itu, dan dimensi wajib terisi (mis. proyek untuk akun biaya proyek).
 3. Nomor dokumen diambil dari `ledger.sequences` dengan `SELECT … FOR UPDATE`, sehingga nomor tanpa celah per PT, jenis dokumen, cabang, dan tahun (GL-07).
 4. `journal_entries` dan `journal_lines` disimpan; constraint trigger `DEFERRABLE` memastikan Σ debit = Σ kredit saat commit.
-5. `ledger.balances` (saldo per PT × akun × bulan × jenis jurnal) diperbarui oleh trigger pada `journal_lines`, sehingga tidak mungkin terlupa. Dimensi (proyek, cabang) ditambahkan bersama modul yang memakainya.
+5. `ledger.balances` (saldo per PT × akun × bulan × jenis jurnal) diperbarui oleh trigger pada `journal_lines`, sehingga tidak mungkin terlupa. Baris berproyek juga mengisi `ledger.project_balances` (PT × proyek × akun × bulan) lewat trigger yang sama. Dimensi cabang ditambahkan bersama modul yang memakainya.
 6. Audit log dan job lanjutan (River) ditulis di transaksi yang sama.
 
 **Invariant yang dijaga basis data, bukan hanya aplikasi**
 
 - Σ debit = Σ kredit per jurnal, dicek trigger saat commit.
-- Baris jurnal tidak bisa diubah atau dihapus: role basis data aplikasi tidak punya hak `UPDATE`/`DELETE` atas `journal_lines`, ditambah trigger penolak.
+- Baris jurnal tidak bisa diubah atau dihapus: trigger `guard_line` menolak `UPDATE` dan `DELETE`, kecuali `DELETE` untuk jurnal yang sedang direvisi (lihat Revisi jurnal manual).
 - Setiap baris jurnal ber-`company_id` sama dengan jurnalnya, dijaga foreign key komposit.
 - Saldo di `balances` selalu sama dengan jumlah baris jurnal; job harian mencocokkannya dan memberi alert bila berbeda.
 
 **Koreksi dan kunci periode**
 
-- Dokumen yang sudah diposting tidak pernah diedit. Koreksi = void (jurnal pembalik bertanggal void, kolom `reversal_of`) lalu dokumen baru; hanya Manager dan Pemilik yang boleh void.
+- Dokumen yang sudah diposting tidak pernah diedit. Koreksi = void (jurnal pembalik bertanggal void, kolom `reversal_of`) lalu dokumen baru; hanya Manager dan Pemilik yang boleh void. Pengecualian: jurnal manual di periode yang belum dikunci boleh direvisi (lihat Revisi jurnal manual).
 - `ledger.periods` menyimpan status buka/tutup per PT dan bulan (GL-05); kunci per modul ditambahkan bersama modul penjualan, pembelian, dan persediaan. Posting ke periode tertutup ditolak, kecuali Manager membukanya dengan alasan yang tercatat di audit log. Baris periode dikunci `FOR SHARE` saat posting, sehingga periode tidak bisa ditutup di tengah posting yang sedang berjalan.
 
 **Kode akun dan jurnal penyesuaian (GL-01, GL-08, GL-11, GL-12)**
@@ -216,10 +216,13 @@ Semua angka di Lajur lewat satu fungsi, `ledger.Post`. Fungsi ini memvalidasi, m
 | Pelunasan dengan PPh 23 dipotong | Kas/bank; PPh 23 dibayar di muka | Piutang usaha |
 | Pelunasan dengan PPh final 4(2) | Kas/bank; beban PPh final | Piutang usaha |
 | Tagihan pemasok | Persediaan atau beban; PPN masukan | Utang usaha; utang PPh 23 atau 4(2) |
+| Faktur uang muka proyek | Piutang usaha | Uang muka proyek; PPN keluaran |
+| Pelepasan retensi | Piutang usaha | Piutang retensi |
 | Penjualan barang persediaan | HPP | Persediaan |
+| Pemakaian barang dan selisih stock opname | Biaya pemakaian atau selisih persediaan | Persediaan |
 | Rekap penjualan harian retail (IND-07) | Kas/bank | Penjualan; PPN keluaran digunggung |
 
-Aturan posting disimpan sebagai kode Go per jenis dokumen, dengan pemetaan akun yang dapat diatur per PT (akun default dari template CoA industri). Saat ini akun sistem (piutang usaha, PPN keluaran/masukan, PPh 23 dibayar di muka, utang PPh, beban PPh final) dicari dari kode defaultnya yang sama di semua template; layar pemetaan per PT menyusul. Jurnal dari dokumen modul memakai nomor dokumennya sendiri (mis. FJ/2026/10/0001), sehingga buku besar dan dokumen sumber mudah dicocokkan.
+Aturan posting disimpan sebagai kode Go per jenis dokumen, dengan pemetaan akun yang dapat diatur per PT (akun default dari template CoA industri). Saat ini akun sistem (piutang usaha, PPN keluaran/masukan, PPh 23 dibayar di muka, utang PPh, beban PPh final, piutang retensi 1-1202, uang muka proyek 2-1402 dengan cadangan 2-1401, uang muka pelanggan 2-1401, uang muka pembelian 1-1503) dicari dari kode defaultnya di template; layar pemetaan per PT menyusul. Jurnal dari dokumen modul memakai nomor dokumennya sendiri (mis. FJ/2026/10/0001), sehingga buku besar dan dokumen sumber mudah dicocokkan.
 
 ## Desain modul bisnis
 
@@ -229,7 +232,9 @@ Setiap dokumen bisnis mengikuti siklus status yang sama: draft → posted → (l
 
 - `sales.invoices` dan `sales.invoice_lines`; pelunasan di `sales.receipts`, dialokasikan ke banyak faktur lewat `receipt_allocations`. Potongan PPh 23 atau PPh final 4(2) dicatat per alokasi (AR-04). Faktur dikunci `FOR UPDATE` saat dialokasikan, sehingga dua pelunasan bersamaan tidak bisa melebihi sisa faktur.
 - PPN dihitung per baris: PPN = DPP × rasio DPP × tarif, dibulatkan ke bawah ke rupiah; qty × harga dan diskon dibulatkan ke rupiah terdekat. Perhitungan yang sama dipakai di server (Go) dan di formulir (TypeScript, BigInt).
-- Faktur termin (AR-08) dihitung modul proyek: nilai termin = % progres × nilai kontrak − termin sebelumnya; potongan uang muka proporsional; retensi = % retensi × nilai termin.
+- Faktur termin (AR-08) dihitung modul proyek: nilai termin = % progres × nilai kontrak − termin sebelumnya; potongan uang muka proporsional (termin 100% memotong sisa uang muka, supaya habis persis); retensi = % retensi × nilai termin. Modul proyek membuat draf faktur lewat service penjualan dengan jenis `uang_muka`, `termin`, atau `retensi`; endpoint HTTP penjualan hanya membuat faktur `biasa`, dan draf dari proyek tidak bisa diubah di sana.
+- Potongan uang muka disimpan sebagai diskon baris bernominal tetap (`discount_fixed`), sehingga PPN dihitung dari nilai termin setelah potongan. Jurnal termin: debit piutang usaha (total − retensi), piutang retensi, dan uang muka proyek; kredit pendapatan sebesar nilai progres (sebelum potongan) dan PPN keluaran. Faktur pelepasan retensi tanpa PPN: debit piutang usaha, kredit piutang retensi. Kolom `receivable` (total − retensi, kolom generated) menjadi dasar sisa tagihan, pelunasan, dan umur piutang.
+- Urutan void dijaga: uang muka yang sudah dipotong termin, atau termin yang retensinya sudah dilepas, tidak bisa di-void lebih dulu.
 - Umur piutang dihitung dari faktur yang belum lunas per tanggal laporan, bukan dari kolom saldo yang disimpan.
 
 **Pembelian (AP)**
@@ -238,35 +243,71 @@ Setiap dokumen bisnis mengikuti siklus status yang sama: draft → posted → (l
 - PPh yang dipotong dicatat sebagai utang PPh saat tagihan diposting, sehingga yang dibayar ke pemasok adalah total dikurangi PPh; draf bukti potong di modul pajak menyusul (TAX-08). Tagihan dengan pemasok dan nomor faktur pemasok yang sama memunculkan peringatan, bukan ditolak.
 - PT non-PKP tetap membayar PPN ke pemasok PKP, tetapi PPN itu tidak bisa dikreditkan: saat posting, PPN dibebankan ke akun baris tagihan, bukan ke PPN masukan.
 
+**Nota kredit, nota debit, dan retur (AR-05, AP-05, tahap 9C)**
+
+- `sales.credit_notes` (seri NK) dan `purchase.debit_notes` (seri ND), dengan barisnya. Setiap baris nota merujuk baris faktur atau tagihan asalnya. Nota langsung diposting saat disimpan dan dikoreksi lewat void.
+- Pengguna memilih baris, kuantitas, dan harga (paling tinggi harga asal). Diskon, akun, produk, proyek, dan kode pajak diambil dari baris asal. PPN dihitung dengan tarif pada tanggal dokumen asal. Batas per baris: total DPP semua nota ≤ DPP baris asal, dan barang yang diretur ≤ kuantitas baris.
+- Nota hanya untuk faktur biasa dan tagihan yang diposting. Faktur uang muka, termin, dan retensi proyek dikoreksi lewat void.
+- Penjualan: debit pendapatan per akun dan PPN keluaran. Kreditnya ke piutang usaha sebesar sisa faktur (`applied`), dan kelebihannya ke uang muka pelanggan 2-1401 bila faktur sudah lunas.
+- Barang yang dicentang "kembali ke stok" masuk lagi dengan biaya saat barang itu keluar. Pergerakannya memakai penilaian baru `ratio` (nilai pergerakan `cost_of` × qty / qty-nya), sehingga tetap ikut terhitung ulang bila HPP asalnya berubah. Jurnal HPP returnya bersumber `inventory.return`.
+- Pembelian: kredit akun baris (ditambah PPN bila PT non-PKP) dan PPN masukan. Debitnya ke utang usaha sebesar sisa tagihan, dan kelebihannya ke uang muka pembelian 1-1503 (akun sistem baru). PPh yang dipotong di tagihan ikut berkurang sebanding DPP nota (debit utang PPh).
+- Barang persediaan di tagihan selalu keluar dari stok dengan harga di tagihan, karena akun persediaan hanya boleh berubah lewat kartu stok.
+- Sisa faktur dan tagihan = total − pelunasan − nota (`PaidByInvoice`/`PaidByBill`). Rumus ini dipakai juga oleh umur piutang/utang, kartu kontak, rekap PPN per masa (nota mengurangi PPN di masa notanya), rekap PPh potong, ringkasan penjualan dan pembelian, serta eliminasi konsolidasi.
+- Faktur atau tagihan yang punya nota aktif tidak bisa di-void sebelum notanya di-void.
+- Antar-PT (ME-03): nota atas dokumen sumber otomatis membuat nota pasangan atas dokumen cerminannya, dengan DPP dan PPN yang sama. Baris cerminan selalu satu per baris sumber (qty 1, harga = DPP). Nota atas dokumen cerminan ditolak; retur dicatat dari dokumen aslinya. Void satu sisi ikut mem-void pasangannya.
+- Coretax: retur atas faktur pajak keluaran ke pembeli PKP dibuat pembeli di Coretax. Lajur mencatat dampak akuntansinya dan mengurangi rekap PPN masanya.
+
 **Kas dan bank (input manual)**
 
 - Penerimaan, pengeluaran, dan transfer disimpan di `cash.transactions`.
-- Rekonsiliasi: `cash.reconciliations` menyimpan saldo rekening koran per bulan; `cash.recon_items` menandai baris jurnal kas yang sudah dicentang. Rekonsiliasi hanya bisa ditutup bila selisihnya nol (CB-04).
+- Draf: staf boleh mencatat mutasi tanpa akun lawan (`status = 'draft'`, baris dengan `account_id` kosong). Draf belum punya nomor BKM/BKK/TRF dan jurnal, jadi saldo rekening di buku besar belum berubah. Akuntan melengkapi akun lalu memposting; nomor dan jurnal dibuat saat itu. Semua jalur posting lewat urutan yang sama: draf, tulis baris, lalu tandai diposting. Trigger DB menjaga baris hanya bisa diubah selama transaksinya draf, dan menolak posting bila masih ada baris tanpa akun. Draf diubah dengan cek `version`, dan dihapus oleh pembuatnya atau pemegang izin void kas. Jumlah draf tampil di halaman Kas dan di dashboard.
+- Rekonsiliasi bank (CB-04, CB-05, tahap 9D):
+  - `cash.reconciliations` menyimpan tanggal dan saldo rekening koran per rekening. `cash.recon_items` menandai baris buku besar (`journal_lines`) yang sudah dicentang; satu baris hanya bisa dicentang sekali.
+  - Saldo awal koran diambil dari saldo koran rekonsiliasi tertutup sebelumnya. Hanya rekonsiliasi pertama rekening itu yang saldo awalnya diisi pengguna.
+  - Kandidat centang: baris rekening itu sampai tanggal koran yang belum dicentang di rekonsiliasi lain. Pasangan jurnal void dan pembaliknya disembunyikan.
+  - Selisih = saldo koran − (saldo awal + mutasi dicentang). Rekonsiliasi hanya bisa ditutup bila selisihnya nol.
+  - Baris yang tidak dicentang terbawa ke rekonsiliasi berikutnya. Rekapnya: saldo buku − setoran dalam perjalanan + penarikan belum dicairkan = saldo koran. Rekap bisa diekspor ke XLSX/CSV.
+  - Satu rekening hanya boleh punya satu rekonsiliasi terbuka (indeks unik). Trigger DB menolak perubahan centang pada rekonsiliasi tertutup.
+  - Buka kembali hanya untuk rekonsiliasi tertutup terakhir, dengan izin void kas. Hapus hanya untuk yang masih terbuka. Tutup dan buka kembali tercatat di audit trail.
 
 **Persediaan dasar (HPP rata-rata tertimbang)**
 
-Setiap penerimaan barang menghitung ulang biaya rata-rata per PT dan produk; setiap pengeluaran membukukan HPP dengan biaya rata-rata saat itu.
+Master produk dan jasa ada di modul persediaan (`inventory.products`), karena barang membawa akun persediaan dan akun HPP-nya sendiri. Setiap penerimaan barang menghitung ulang biaya rata-rata per PT dan produk; setiap pengeluaran membukukan HPP dengan biaya rata-rata saat itu.
 
 ```latex
 \bar{c}_{baru} = \frac{q_{lama}\,\bar{c}_{lama} + q_{masuk}\,c_{masuk}}{q_{lama} + q_{masuk}}
 ```
 
-- Transaksi bertanggal mundur memicu job yang menghitung ulang HPP sejak tanggal itu dan membuat jurnal penyesuaian; tanggal sebelum periode persediaan yang ditutup ditolak.
-- Stock opname menyimpan hitungan fisik; selisihnya menjadi jurnal penyesuaian persediaan (INV-04).
+- Kartu stok (`inventory.movements`) berurutan (tanggal, urutan input). Setiap pergerakan punya cara penilaian: `fixed` (nilai dari dokumen: pembelian, penyesuaian masuk), `average` (keluar dengan biaya rata-rata: penjualan, pemakaian, penyesuaian keluar), atau `mirror` (kebalikan persis pergerakan lain, untuk void).
+- Pergerakan baru menghitung ulang produk itu sejak tanggal pergerakannya, di transaksi yang sama (belum lewat job; cukup untuk volume pelanggan MVP). Stok tidak boleh negatif di titik mana pun. Pergerakan yang nilainya dijurnal modul persediaan sendiri (HPP penjualan, penyesuaian, pemakaian) menyimpan `posted_value`; bila hitung ulang menghasilkan nilai lain, selisihnya dijurnal sebagai koreksi HPP bertanggal pergerakan itu. Tanggal di periode yang ditutup ditolak oleh kunci periode buku besar.
+- Pembelian barang dijurnal oleh tagihannya (debit akun persediaan produk); HPP penjualan dijurnal terpisah (seri HPP, sumber `inventory.cost`). Void dokumen = pergerakan `mirror` pada tanggal void, sehingga barang kembali dengan nilai yang sama persis.
+- Akun persediaan hanya boleh bertambah lewat produk: baris tagihan dan kas ke akun persediaan tanpa produk barang ditolak. Laporan stok mencocokkan nilai kartu stok dengan saldo akun persediaan per tanggal.
+- Saldo stok per produk (`inventory.stock`) sekaligus menjadi kunci baris: perubahan stok mengunci produk-produknya urut id, sehingga dua posting bersamaan tidak menghitung rata-rata yang sama.
+- Stock opname menyimpan stok sistem dan hitungan fisik; selisihnya dinilai dengan biaya rata-rata (atau HPP satuan yang diisi untuk barang masuk) dan dijurnal ke akun selisih persediaan (INV-04). Dokumen pemakaian mengeluarkan barang ke akun biaya dan boleh membawa proyek, mis. material ke proyek konstruksi.
 
 **Proyek**
 
 - `project.projects` menyimpan pemberi kerja, nilai kontrak, persen uang muka, persen retensi, tarif PPh final 4(2), dan status (IND-01).
-- `project.budget_lines` menyimpan RAB per pos biaya. Biaya aktual = baris jurnal ber-`project_id` pada akun biaya, sehingga laba per proyek dan biaya vs RAB (IND-03) dibaca dari `ledger.balances`.
+- `project.budget_lines` menyimpan RAB per pos biaya; satu pos = satu akun biaya. Biaya aktual = baris jurnal ber-`project_id` pada akun biaya, sehingga laba per proyek dan biaya vs RAB (IND-03) dibaca dari `ledger.project_balances`.
+- Proyek diisi di kepala faktur penjualan, per baris tagihan, per baris kas, per baris jurnal manual, dan di dokumen pemakaian. Pelunasan ikut menandai piutang dan PPh yang dipotong (termasuk beban PPh final 4(2)) dengan proyek fakturnya.
+- `ledger.journal_lines.project_id` memakai foreign key komposit ke `project.projects`. Pemeriksaan proyek (harus ada di PT ini dan tidak berstatus batal) dipasang ke `ledger.Post` sebagai fungsi saat perangkaian, supaya buku besar tidak bergantung pada modul proyek. Jurnal pembalik (void) tidak diperiksa, sehingga transaksi proyek yang dibatalkan tetap bisa di-void.
+
+**Laporan keuangan dan dashboard**
+
+- Modul `report` membaca tabel `ledger` dalam mode baca saja. Mutasi per akun untuk rentang tanggal mana pun = bulan penuh dari `ledger.balances` + hari sisanya di bulan awal dan akhir dari `journal_lines`, sehingga laporan per tanggal tetap membaca saldo agregat, bukan jutaan baris.
+- Neraca dan laba rugi disusun mengikuti pohon bagan akun: akun header menjadi kelompok dengan subtotal, header yang hanya punya satu anak berisi angka langsung digantikan anaknya, dan akun bersaldo nol di semua kolom disembunyikan. Laba yang belum ditutup ke laba ditahan tampil sebagai dua baris ekuitas: tahun-tahun lalu dan tahun berjalan. Laba rugi dan arus kas tidak memakai jurnal penutup.
+- Arus kas metode tidak langsung: laba bersih, lalu setiap perubahan akun neraca selain rekening kas/bank yang terdaftar dibalik. Akun di bawah kelompok X-1000 (lancar) masuk operasi, akun akumulasi penyusutan ditambahkan kembali sebagai pos nonkas, aset tidak lancar ke investasi, liabilitas jangka panjang dan ekuitas ke pendanaan. Karena setiap jurnal seimbang, kas awal + kenaikan bersih selalu sama dengan kas akhir; laporan menandai bila tidak.
+- Ringkasan penjualan, pembelian, dan kartu kontak dibaca lewat service penjualan dan pembelian; dokumen yang di-void tidak ikut. Kartu piutang memakai nilai yang ditagih (total − retensi).
+- Ekspor: setiap laporan punya bentuk tabel yang ditulis ke CSV (UTF-8 ber-BOM) atau XLSX oleh `platform/export` tanpa dependensi luar; angka ditulis sebagai angka. Route ekspor memakai mode lisensi Export dan izin `data.export` ditambah `report.view`. PDF lewat cetak browser dengan stylesheet cetak.
 
 **Pajak dan ekspor Coretax**
 
 - `tax.tax_codes` bertanggal berlaku: tarif, rasio DPP (mis. 11/12), dan akun. Perhitungan ada di fungsi murni `tax.Calculate(lines, tanggal)` sehingga mudah diuji.
 - Eksportir XML Coretax disimpan per versi template (saat ini `coretax-faktur-keluaran/v1`, struktur `TaxInvoiceBulk`) dengan struct `encoding/xml` dan tes golden. Versi v1 disusun dari struktur impor massal yang dipakai luas, belum dari TaxInvoice.xsd resmi; sebelum dipakai pelanggan, uji dengan file contoh resmi DJP dan satu unggahan percobaan di Coretax.
 - Status faktur pajak keluaran disimpan modul pajak (`tax.output_invoices`): siap → diekspor → terbit (nomor faktur tercatat) → dibatalkan atau diganti. Data fakturnya dibaca lewat service penjualan. Kode transaksi default 04 bila DPP nilai lain dipakai, selain itu 01. Faktur penjualan yang faktur pajaknya terbit tidak bisa di-void sampai faktur pajaknya ditandai dibatalkan (pengunci dipasang lewat hook di service penjualan, tanpa dependensi melingkar).
-- Rekap PPN per masa dihitung dari faktur dan tagihan yang diposting; lebih bayar otomatis dikompensasikan ke masa berikutnya. Restitusi, faktur pajak masukan (TAX-07), bukti potong (TAX-08), dan PPN digunggung retail (TAX-12) belum dibangun.
+- Rekap PPN per masa dihitung dari faktur dan tagihan yang diposting; lebih bayar otomatis dikompensasikan ke masa berikutnya. Rekap ini juga memuat nota kredit/debit (mengurangi PPN di masa notanya) dan PPN digunggung dari rekap penjualan harian. Restitusi, faktur pajak masukan (TAX-07), dan bukti potong (TAX-08) belum dibangun.
 - Nomor faktur yang terbit dicatat kembali dengan mengimpor file unduhan Coretax, dicocokkan lewat nomor referensi faktur Lajur (TAX-03).
-- Rekap PPN digunggung untuk retail (TAX-12) dihasilkan per masa dari rekap penjualan harian.
+- Rekap PPN digunggung untuk retail (TAX-12) dihasilkan per masa dari rekap penjualan harian, dengan ekspor XLSX/CSV (format v1; cocokkan dengan converter Coretax yang berlaku sebelum dipakai pelanggan).
 
 ## Multi-entitas, transaksi antar-perusahaan, dan konsolidasi
 
@@ -280,18 +321,19 @@ Semua PT dalam grup berbagi satu basis data, tetapi setiap baris data bisnis ter
 
 **Transaksi antar-perusahaan (ME-03)**
 
-- Kontak yang mewakili PT lain dalam grup ditandai `linked_company_id`.
-- Saat dokumen ke kontak itu diposting, Lajur membuat dokumen dan jurnal cerminan di PT lawan dalam transaksi yang sama. Contohnya, faktur PT A ke PT B menghasilkan tagihan di PT B; keduanya terhubung lewat `ic_link_id`.
-- Void di satu sisi otomatis mem-void sisi lainnya, sehingga saldo antar-PT tidak pernah timpang.
+- Kontak yang mewakili PT lain dalam grup ditandai `linked_company_id` (satu kontak per PT grup), beserta akun default dokumen cerminan di PT itu: akun beban/aset untuk tagihan cerminan dan akun pendapatan untuk faktur cerminan.
+- Saat faktur ke kontak itu diposting, modul `consol` membuat dan memposting tagihan di PT lawan dalam transaksi yang sama (lewat hook `AfterPost` di modul penjualan), dan sebaliknya untuk tagihan. Baris cerminan bernilai DPP baris asal dengan kode pajak yang sama, sehingga DPP, PPN, dan total kedua dokumen sama persis. Pasangan disimpan di `consol.ic_links`.
+- Void di satu sisi otomatis mem-void sisi lainnya pada tanggal yang sama (hook `AfterVoid`); bila pasangannya tidak bisa di-void (mis. sudah dibayar), seluruh void dibatalkan, sehingga saldo antar-PT tidak pernah timpang. Penanda di `context` mencegah dokumen cerminan memicu cerminan lagi.
+- Pelunasan dan pembayaran antar-PT dicatat masing-masing PT; faktur uang muka, termin, dan retensi ke PT grup belum didukung.
 
 **Konsolidasi (ME-04)**
 
-1. Pengguna memilih grup, periode, dan PT yang dikonsolidasi.
-2. Lajur mengambil neraca saldo tiap PT dari `ledger.balances`.
-3. Saldo dipetakan ke bagan akun grup.
-4. Saldo antar-PT (piutang–utang, pendapatan–beban) dieliminasi otomatis berdasarkan `ic_link_id`; selisih yang tidak bisa dieliminasi ditampilkan sebagai daftar yang harus dibereskan.
-5. Jurnal eliminasi disimpan di entitas khusus “Konsolidasi”, sehingga buku setiap PT tetap bersih.
-6. Laporan konsolidasi = jumlah semua PT + jurnal eliminasi, dan bisa ditelusuri sampai dokumen di tiap PT.
+1. Pengguna memilih PT (hanya PT tempat ia punya izin `consol.view`), tanggal neraca, dan periode laba rugi.
+2. Bagan akun grup = akun di `consol.group_accounts` ditambah kode akun PT yang belum tersimpan, dibaca langsung dari bagan akun PT. Akun PT masuk ke akun grup berkode sama, kecuali dipetakan lain di `consol.account_map`. Kode yang sama tetapi berisi lain antar-PT (mis. 4-1001 pendapatan jasa vs penjualan barang) ditandai, dan bisa dipisah dengan akun grup baru. Pemetaan harus ke akun grup detail berkelas sama; bila belum lengkap, laporan tidak disusun dan daftar masalahnya ditampilkan.
+3. Saldo tiap PT dibaca lewat modul `report` (saldo agregat + baris jurnal untuk hari sisa) lalu dipetakan ke akun grup.
+4. Eliminasi per pasangan PT yang saling bertaut: piutang penjual dengan utang pembeli per tanggal neraca (dari umur piutang/utang kontak tertaut), dan pendapatan penjual dengan beban pembeli dalam periode (dari baris faktur dan tagihan). Bagian yang berpasangan dieliminasi; selisihnya ditampilkan sebagai daftar yang harus dibereskan, mis. PPh yang dipotong pembeli tetapi belum dilunasi, atau pembelian yang dicatat sebagai aset (laba antar-PT di persediaan belum dieliminasi).
+5. Eliminasi tidak disimpan di buku besar PT mana pun; laporan konsolidasi dihitung saat dibuka, sehingga selalu sama dengan buku setiap PT.
+6. Laporan konsolidasi = satu kolom per PT + kolom eliminasi + kolom konsolidasi, memakai penyusun neraca dan laba rugi yang sama dengan laporan per PT, dan bisa diekspor ke Excel atau CSV.
 
 ## API
 
@@ -310,18 +352,19 @@ Frontend hanya bicara dengan backend lewat REST JSON di `/api/v1`, dengan kontra
 
 | Kelompok | Contoh endpoint |
 | --- | --- |
-| Autentikasi | `POST /auth/login`, `POST /auth/totp`, `POST /auth/logout` |
+| Autentikasi | `POST /auth/login`, `POST /auth/totp`, `POST /auth/logout`, `POST /auth/totp/setup`, `POST /auth/totp/enable`, `POST /auth/password` |
+| Setup dan admin | `GET/POST /setup`, `GET/POST /admin/users`, `PUT /admin/users/{id}/access`, `GET/POST/PUT/DELETE /admin/roles`, `POST /admin/companies` |
 | PT dan sesi | `GET /companies`, `POST /session/company` |
 | Buku besar | `POST /journals`, `POST /adjustments`, `POST /journals/{id}/void`, `GET /ledger/worksheet`, `GET /ledger/accounts/{id}/ledger`, `POST /ledger/periods/{bulan}/status` |
 | Penjualan | `POST /sales/invoices`, `POST /sales/invoices/{id}/post`, `POST /sales/receipts` |
 | Pembelian | `POST /purchase/bills`, `POST /purchase/payments` |
-| Kas dan bank | `POST /cash/transactions`, `PUT /cash/reconciliations/{id}` |
-| Persediaan | `POST /inventory/adjustments`, `POST /inventory/stock-counts` |
-| Proyek | `POST /projects`, `POST /projects/{id}/progress-claims` |
+| Kas dan bank | `POST /cash/transactions`, `POST /cash/drafts`, `PUT /cash/drafts/{id}`, `POST /cash/drafts/{id}/post`, `PUT /cash/reconciliations/{id}` |
+| Persediaan | `GET /inventory/products`, `GET /inventory/stock`, `GET /inventory/products/{id}/card`, `POST /inventory/adjustments` (penyesuaian, pemakaian, opname) |
+| Proyek | `POST /projects`, `PUT /projects/{id}/budget`, `GET /projects/{id}/report`, `POST /projects/{id}/billings` |
 | Pajak | `GET /tax/coretax/faktur-keluaran?period=2027-08`, `POST /tax/coretax/import-nomor` |
-| Konsolidasi | `POST /consol/runs`, `GET /consol/runs/{id}/report` |
-| Laporan | `GET /reports/balance-sheet`, `GET /reports/profit-loss?consolidated=true` |
-| Sistem | `GET /system/license`, `POST /system/license/recheck`, `POST /system/updates/apply`, `GET /system/backups` |
+| Konsolidasi | `GET /consol/report?companies=…&date=…&from=…&to=…`, `GET /consol/accounts`, `PUT /consol/accounts`, `PUT /consol/map`, `GET /consol/links/{jenis}/{id}` |
+| Laporan | `GET /reports/balance-sheet`, `GET /reports/profit-loss`, `GET /reports/cash-flow`, `GET /reports/trial-balance`, `GET /reports/summary`, `GET /reports/contact-card`, `GET /reports/dashboard`, `GET /reports/{nama}/export?format=xlsx\|csv` |
+| Sistem | `GET /system/license`, `GET /system/license/detail`, `POST /system/license/recheck`, `PUT /system/license`, `GET/POST /system/license/payment`, `POST /system/updates/apply`, `GET /system/backups` |
 
 ## Autentikasi dan otorisasi
 
@@ -332,6 +375,9 @@ Izin dinyatakan sebagai `modul.objek.aksi` (mis. `sales.invoice.create`), dikelo
 - Kata sandi di-hash dengan Argon2id. 2FA (TOTP) wajib untuk Pemilik, Manager, dan Admin pelanggan; opsional untuk peran lain.
 - Sesi disimpan di server (`platform.sessions`), dengan cookie HttpOnly, Secure, dan SameSite=Strict. Sesi berakhir setelah 30 menit tidak aktif atau 12 jam sejak login.
 - Lima kali salah kata sandi mengunci akun selama 15 menit. Menonaktifkan pengguna langsung mematikan semua sesinya.
+- 2FA mengikuti RFC 6238 (HMAC-SHA1, 6 digit, 30 detik, toleransi satu langkah). Rahasia disimpan terenkripsi AES-256-GCM dengan kunci aplikasi, dan langkah waktu terakhir yang dipakai disimpan supaya satu kode tidak bisa dipakai dua kali. Login pengguna ber-2FA terdiri dari dua tahap: kata sandi yang benar menghasilkan challenge (5 menit, maksimal 5 kode salah), lalu kode yang benar membuka sesi. Pengguna yang memegang izin kelola pengguna atau sistem di PT mana pun wajib 2FA. Sebelum memasangnya, sesinya hanya boleh dipakai untuk memasang 2FA. QR untuk aplikasi autentikator dibuat sendiri di browser (byte mode, level M, versi 1–10), tanpa layanan luar.
+- Pengelola pengguna hanya bisa memberi akses di PT tempat ia sendiri memegang izin kelola pengguna. Ia tidak bisa mengubah akses atau menonaktifkan akunnya sendiri, dan perubahan apa pun yang membuat instalasi tanpa pengelola pengguna aktif ditolak. Bila satu-satunya Pemilik kehilangan ponsel atau kata sandi, admin server menjalankan `lajur reset-2fa <email>` atau `lajur reset-password <email>`.
+- Setup wizard (PLT-02) hanya terbuka selama belum ada pengguna, dan diserialkan dengan advisory lock. Wizard mengaktifkan lisensi (mode remote), membuat PT pertama beserta bagan akun dari template industrinya, membuat akun Pemilik, lalu langsung meminta pemasangan 2FA.
 
 **Matriks izin enam persona bawaan**
 
@@ -340,6 +386,7 @@ Izin dinyatakan sebagai `modul.objek.aksi` (mis. `sales.invoice.create`), dikelo
 | Lihat transaksi dan laporan | Ya | Ya | Ya | Pajak saja | Ya | — |
 | Buat transaksi | Ya | Ya | Ya | Dokumen pajak | — | — |
 | Input dan posting jurnal penyesuaian | Ya | Ya | Ya | — | — | — |
+| Ubah jurnal manual sebelum periode dikunci | Ya | Ya | Ya | — | — | — |
 | Ubah, hapus, atau void transaksi | Ya | Ya | — | — | — | — |
 | Approval dan aturan approval | Ya | Ya | — | — | — | — |
 | Kunci dan buka periode | Ya | Ya | — | — | — | — |
@@ -349,7 +396,7 @@ Izin dinyatakan sebagai `modul.objek.aksi` (mis. `sales.invoice.create`), dikelo
 | Kelola pengguna dan persona kustom | Ya | Ya | — | — | — | Ya |
 | Backup, pembaruan, status lisensi | Ya | Ya | — | — | — | Ya |
 
-Persona kustom (PLT-12) dibuat Admin pelanggan dengan memilih izin dari katalog yang sama. Satu-satunya izin yang tidak pernah bisa diberikan adalah mengubah baris jurnal yang sudah diposting, karena tidak ada di katalog.
+Persona kustom (PLT-12) dibuat Admin pelanggan dengan memilih izin dari katalog yang sama. Mengubah jurnal yang sudah diposting hanya mungkin lewat izin `ledger.journal.edit`, dan hanya untuk jurnal manual di periode yang belum dikunci; jurnal dokumen dan periode terkunci tidak bisa diubah oleh siapa pun.
 
 ## Desain antarmuka dan animasi
 
@@ -430,6 +477,20 @@ Lajur menyimpan waktu tertinggi yang pernah dilihat, dari `iat` token maupun wak
 - Endpoint baru `activate` dan `checkin` untuk produk `lajur`; endpoint lama pos-app tidak diubah, sehingga client pos-app yang sudah berjalan tidak terdampak.
 - Fungsi penanda tangan JWS memakai `Utilities.computeRsaSha256Signature` di Apps Script.
 
+**Implementasi (tahap 8B)**
+
+- Console (`pos-app/owner/Lajur.js`): aksi `lajur.activate` dan `lajur.checkin` di `doPost`. Kolom baru di sheet Licenses: `product`, `installationId`, `minVersion`, dan `health`. License key POS dan Lajur tidak bisa dipakai lintas produk. Aksi console baru: `resetInstallation` (pindah server) dan `setMinVersion`. Kunci privat ada di Script Property `LAJUR_SIGNING_KEY` (PEM PKCS#8; baris baru yang hilang dipulihkan otomatis), dengan `LAJUR_SIGNING_KID` sebagai kid.
+- Lajur (`internal/platform/license/remote.go`): konfigurasi dan token tersimpan di `platform.license`; license key terenkripsi AES-256-GCM dengan kunci aplikasi. Status dihitung ulang di setiap request dari token di memori, yang dimuat ulang dari basis data paling lama tiap menit. Urutan pemeriksaannya:
+  1. kode tolak dari console (key salah, instalasi lain, salah produk) → INVALID_KEY;
+  2. tanda tangan dan isi token (produk, installationId, clientId);
+  3. umur token (`exp` = `iat` + 72 jam) → UNVERIFIED bila lewat;
+  4. jam mundur lebih dari 10 menit dari `high_water`, yaitu waktu tertinggi dari `iat`, check-in, penanda tiap 5 menit, dan audit terakhir → UNVERIFIED;
+  5. status dan `expiresAt` per zona waktu lisensi;
+  6. versi minimum → hanya baca (`updateRequired`).
+- Check-in berjalan tiap jam ditambah jitter sampai 5 menit; bila gagal, dicoba lagi 10 menit kemudian. Galat jaringan tidak menghapus token lama. Tombol "Cek ulang lisensi" dibatasi sekali per 30 detik.
+- Kunci publik ikut di binary lewat `go:embed`: build pengembangan mempercayai `keys/dev` dan `keys/release`, sedangkan build rilis hanya `keys/release`. Pasangan kunci dibuat dengan `lajur license-keygen`. License Console tiruan di http://localhost hanya diterima build pengembangan dengan `LAJUR_LICENSE_ALLOW_HTTP=true`.
+- Halaman Sistem (izin `platform.system.manage`, mode Status, sehingga tetap terbuka saat lisensi berakhir atau ditangguhkan) menampilkan detail lisensi, cek ulang, ganti license key, dan perpanjangan (LIC-07). Perpanjangan memakai aksi console `paymentInfo` dan `submitPayment`, dengan bukti bayar maksimal 6 MB. Banner lisensi tampil di semua halaman (LIC-08).
+
 ## Instalasi, pembaruan, dan backup
 
 Satu skrip menyiapkan seluruh instalasi; setelah itu pembaruan dan backup dijalankan dari UI admin tanpa perlu SSH ke server.
@@ -464,6 +525,21 @@ services:
 4. Menjalankan `docker compose up -d`; aplikasi memigrasi basis data lalu membuka setup wizard.
 5. Menampilkan alamat aplikasi dan file sertifikat CA untuk dipasang di PC pengguna.
 
+**Implementasi instalasi (tahap 8D)**
+
+- `deploy/install.sh` (Ubuntu 22.04+/Debian 12+) berjalan dalam urutan ini:
+  1. memeriksa OS, RAM, disk, dan port 80/443;
+  2. memasang Docker dari repositori resmi;
+  3. membuat CA lokal 10 tahun dan sertifikat server 825 hari (batas macOS/iOS untuk CA privat), dengan SAN hostname, hostname.local, localhost, dan semua IP LAN;
+  4. membuat `.env` (izin 600) berisi rahasia acak dan zona waktu server;
+  5. membuat kunci backup lewat image app, lalu menampilkan kunci privat sekali dan meminta konfirmasi;
+  6. menjalankan `docker compose up -d` dan menunggu `/healthz`.
+
+  Skrip aman dijalankan ulang. `install.sh renew-cert` menerbitkan ulang sertifikat dengan CA yang sama.
+- Aplikasi melayani HTTPS langsung (TLS ≥ 1.2) di :8443 (host 443). Listener HTTP :8080 (host 80) mengalihkan ke HTTPS dan menyajikan `/ca.crt` untuk dipasang di PC pengguna.
+- Image app (`Dockerfile`, multi-stage) berjalan non-root (uid 10001) dengan filesystem read-only, `cap_drop: ALL`, dan `no-new-privileges`. Image membawa `postgresql16-client` untuk backup. PostgreSQL hanya ada di jaringan internal (`internal: true`), tanpa port ke host.
+- Versi diisi lewat `-ldflags` (`lajur version`). Build rilis memakai tag `release`: tanpa provider lisensi local, tanpa `seed-dev`, dan hanya mempercayai kunci produksi.
+
 **Pembaruan (PLT-10)**
 
 - Update server menyajikan manifest rilis bertanda tangan: versi, digest image, catatan rilis, dan versi minimum.
@@ -471,12 +547,143 @@ services:
 - Unduhan pembaruan hanya dilayani untuk token lisensi yang aktif.
 - Migrasi ditulis dengan pola expand-then-contract, sehingga versi lama tetap bisa berjalan di atas skema versi baru selama satu rilis.
 
+**Implementasi pembaruan (tahap 8E)**
+
+- Manifest rilis adalah JWS RS256 yang ditandatangani kunci rilis (`lajur sign-manifest`). Kunci ini terpisah dari kunci lisensi, supaya kebocoran kunci lisensi tidak bisa dipakai menjalankan image lain. Manifest menyematkan image dengan digest `@sha256:…`, sehingga image yang ditarik persis yang ditandatangani; ini menggantikan verifikasi cosign di sisi server pelanggan. Manifest juga memuat `minFrom` untuk rilis yang tidak boleh dilompati.
+- Aplikasi mengambil manifest dari `LAJUR_UPDATE_URL` dengan token lisensi di header `Authorization`, supaya update server bisa menolak lisensi yang tidak aktif. Aplikasi sendiri hanya menawarkan pembaruan bila lisensi ACTIVE/WARNING (termasuk saat wajib update) dan backup sudah dikonfigurasi.
+- Updater (`cmd/lajur-updater`, image sendiri dengan Docker CLI) mendengarkan :9000 di jaringan internal, dengan token `LAJUR_UPDATER_TOKEN`, dan memverifikasi ulang manifest. Langkahnya:
+  1. `lajur backup --kind pre_update` di container app (bila gagal, pembaruan dibatalkan);
+  2. `docker pull` image@digest;
+  3. ganti `LAJUR_IMAGE` di `.env` secara atomik;
+  4. `docker compose up -d app`;
+  5. tunggu `/healthz` menjawab versi baru (maksimal 5 menit).
+  Bila gagal, updater kembali ke image lama.
+- Rollback tidak memulihkan basis data secara otomatis: server tidak memegang kunci privat backup, dan pola expand-then-contract menjamin versi lama tetap jalan di skema baru. Backup `pre_update` tersedia untuk pemulihan manual bila benar-benar dibutuhkan.
+- Updater tidak memperbarui dirinya sendiri. Image updater diperbarui dengan menjalankan ulang `install.sh` atau `docker compose pull updater && docker compose up -d updater`.
+
 **Backup (PLT-09)**
 
 - Job harian pukul 01.00: `pg_dump` format custom ditambah arsip lampiran, dienkripsi dengan age, lalu disalin ke folder lokal, NAS yang di-mount, atau penyimpanan S3-compatible. Disimpan 30 salinan terakhir.
 - Kunci dekripsi backup diserahkan ke Pemilik saat instalasi; tanpa kunci itu, file backup tidak bisa dibaca siapa pun.
 - Backup gagal atau tidak berjalan lebih dari 48 jam memunculkan banner di aplikasi dan email ke admin.
 - Setiap minggu backup terbaru dipulihkan otomatis ke basis data sementara untuk membuktikan file itu bisa dipakai. Pemulihan manual lewat `lajur restore <file>`.
+
+**Implementasi (tahap 8C)**
+
+- Enkripsi tanpa pustaka luar dengan format `lajur-backup v1`, mengikuti desain age:
+  - X25519 efemeral ke kunci publik penerima, lalu HKDF-SHA256, lalu AES-256-GCM per potongan 64 KiB.
+  - Nonce berisi nomor urut dan penanda potongan terakhir, jadi file yang terpotong atau potongan yang ditukar ketahuan.
+  - Header ikut diautentikasi.
+  - Kunci dibuat dengan `lajur backup-keygen`. Kunci publik ada di `LAJUR_BACKUP_PUBLIC_KEY`; kunci privat (`lajur-backup-key-1:…`) diserahkan ke Pemilik.
+- Isi arsip (tar): `manifest.json`, `db.dump` (pg_dump format custom, `--no-owner --no-privileges`), dan `files/…` (lampiran).
+- Tujuan backup: folder lokal (volume), folder lain atau NAS, dan S3-compatible. Klien S3 minimal memakai SigV4 path-style yang diuji dengan contoh resmi AWS. Pengaturannya diubah dari halaman Sistem, dan secret S3 terenkripsi kunci aplikasi.
+- Retensi menyimpan N backup sukses terbaru di setiap tujuan.
+- Uji pulih: server tidak memegang kunci privat, jadi file terenkripsi memang tidak bisa dibuka oleh server, dan itu disengaja. Sebagai gantinya, uji pulih mingguan memulihkan `db.dump` dari backup yang sama sebelum dump mentahnya dihapus, ke basis data `lajur_restore_check`, lalu memverifikasi rantai audit trail hasil pulih. Keutuhan file terenkripsi dijaga SHA-256 yang dicatat per backup.
+- Jadwal backup harian mengikuti `LAJUR_TIMEZONE`. Bila backup terlewat (mis. server mati jam 01.00), backup langsung dijalankan saat aplikasi hidup. Backup gagal dicoba lagi sejam kemudian. Halaman Sistem dan banner admin menandai backup yang gagal atau tidak ada backup sukses selama 48 jam; email peringatan menyusul bersama fitur SMTP (PLT-08).
+- `lajur backup --kind pre_update` dipakai updater sebelum pembaruan. `lajur restore [--key-file F] [--database-url URL] <file>` memulihkan basis data (`pg_restore --clean`) dan lampiran.
+- Unduhan backup lewat route stream (tanpa transaksi, tanpa ditahan di memori). File tetap terenkripsi.
+- Di laptop tanpa klien PostgreSQL, `LAJUR_PG_DOCKER` menjalankan pg_dump/pg_restore di container basis data lewat stdin/stdout.
+
+## Dimensi, penomoran dokumen, jurnal berulang, dan akses per cabang (tahap 9F)
+
+**Cabang dan departemen (GL-09)**
+
+- `core.branches` dan `core.departments` per PT, dengan kode `^[A-Z0-9-]{1,10}$` yang unik per PT. Dimensi nonaktif tidak bisa dipilih di dokumen baru, tetapi dokumen lama tetap sah.
+- Kepala faktur, tagihan, transaksi kas, dan dokumen persediaan menyimpan `branch_id` dan `department_id`; rekap penjualan harian hanya cabang. Saat diposting, dimensi kepala diwariskan ke setiap baris jurnal (`journal_lines.branch_id`/`department_id`), termasuk baris HPP.
+- `checkDimensions` di `ledger.Post` menolak dimensi milik PT lain atau yang nonaktif, sehingga semua modul memakai aturan yang sama.
+- Laba rugi menerima `?branch=&department=` (hanya baris jurnal dengan dimensi itu) dan `?per=cabang` (satu kolom per cabang, kolom "Tanpa cabang", dan kolom jumlah; paling banyak 12 kolom). Mode per cabang mengabaikan pembanding periode.
+
+**Penomoran dokumen (GL-07)**
+
+- `ledger.number_formats` per PT dan seri (FJ, NK, BKM, RPH, FB, ND, BKK, TRF, JU, JP, JB, JV, HPP, PS, SA, SAP, SAU) menyimpan awalan, siklus ulang (bulan, tahun, atau tidak pernah), jumlah digit (3–8), dan pilihan nomor per cabang. Seri tanpa baris memakai format bawaan `AWALAN/YYYY/MM/NNNN`.
+- Nomor per cabang memakai kunci urutan `seri@KODE` dan menyisipkan kode cabang: `FJ/JKT/2026/10/0001`. Dokumen tanpa cabang tetap memakai urutan seri biasa.
+- Awalan tidak boleh sama dengan awalan seri lain di PT yang sama. Mengubah format tidak menomori ulang dokumen lama; urutan berlanjut per seri dan periode, sehingga tidak ada nomor ganda.
+
+**Jurnal berulang (GL-08, GL-11)**
+
+- Template dibuat dari jurnal manual yang sudah diposting (`ledger.recurring_journals` dan `recurring_lines`). Baris disalin beserta proyek dan dimensinya; untuk mengubah akun atau nominal, template dihapus lalu dibuat lagi dari jurnal baru.
+- Jadwal: tanggal 1–28 atau akhir bulan (`day_of_month = 0`), bulan mulai, dan tanggal selesai opsional. `next_date` dihitung ulang setiap jadwal diubah.
+- Penjadwal di proses server memeriksa template jatuh tempo setiap jam. Jadwal yang terlewat (mis. server mati) dikejar satu per satu dengan tanggal aslinya, masing-masing dalam savepoint, dan dicatat di `recurring_runs`. Galat posting (mis. periode terkunci) disimpan di `last_error` tanpa menghentikan template lain.
+- Jurnal penyesuaian bertanda balik otomatis tetap dibalik awal bulan berikutnya. Keterangan jurnal hasil template berisi nama template dan bulannya.
+- Halaman Jurnal punya tab Berulang: daftar, detail baris, riwayat posting, ubah jadwal, hapus, dan "Jalankan sekarang" (Idempotency-Key) untuk jadwal yang sudah jatuh tempo.
+
+**Akses per cabang (PLT-12)**
+
+- `user_company_roles.branch_ids` membatasi pengguna ke cabang tertentu di satu PT; kosong berarti semua cabang. Diatur di halaman Pengguna (chip cabang per PT) dan dikirim di `/me` sebagai `branchIds`.
+- `rbac.BranchesFor` menyaring daftar dokumen, umur piutang/utang, pelunasan, nota, kas, dan rekap harian ke cabang pengguna. `rbac.CheckBranch` menolak (403 `branch.restricted`) dokumen tanpa cabang atau dengan cabang lain, sehingga pengguna terbatas wajib memilih cabangnya.
+- Route yang mencakup seluruh PT ditandai `Route.WholeCompany` (jurnal, buku besar, neraca lajur, periode, pengaturan buku, penomoran, jurnal berulang, pajak, konsolidasi, impor, rekonsiliasi bank, stok dan kartu persediaan, dan laporan) dan menolak pengguna terbatas. Pengecualian: laba rugi dan ekspornya (tersaring ke cabang pengguna), kode pajak (dibutuhkan formulir), dan GET pengaturan buku (awal tahun buku untuk pilihan periode).
+- Di antarmuka, pengguna terbatas tidak melihat menu Akuntansi, Pajak, Persediaan, Konsolidasi, dashboard beranda, rekonsiliasi bank, dan proyeksi kas. Laporan hanya menampilkan laba rugi cabangnya.
+
+## Revisi klien 16 Oktober 2026
+
+**Departemen per baris transaksi kas**
+
+- `cash.transaction_lines.department_id` (migrasi 00019). Saat posting, baris lawan memakai departemen barisnya; baris tanpa departemen, termasuk baris rekening kas, memakai departemen kepala transaksi. Cabang tetap di kepala.
+- Departemen diperiksa di modul kas (milik PT, masih aktif), sehingga pesan galat menunjuk baris kas yang benar (`lines.N.departmentId`), juga untuk draf.
+- Dialog kas menampilkan pilihan departemen di setiap baris dan tidak lagi di kepala. Draf lama yang punya departemen kepala menampilkannya di setiap baris.
+
+**Revisi jurnal manual**
+
+- Izin baru `ledger.journal.edit` (Pemilik, Manager, Staf akuntansi). Jurnal penyesuaian juga butuh `ledger.adjustment.post`. Route `PUT /api/v1/journals/{id}` dengan `revision` sebagai kunci optimis.
+- Hanya jurnal bersumber `manual` yang belum di-void. Periodenya harus mengizinkan posting jenis itu (umum: open; penyesuaian: open atau adjusting), termasuk periode pembalik otomatisnya. Tanggal hanya bisa digeser di bulan yang sama karena nomor jurnal memuat bulannya. Jurnal dari dokumen, saldo awal, pembalik, dan pembatalan tetap tidak bisa diubah.
+- Isi baru melewati pemeriksaan yang sama dengan posting (`ledger.check`: isi seimbang, akun detail aktif, proyek, dimensi, periode).
+- Versi yang digantikan disimpan utuh (tanggal, keterangan, total, baris dengan kode akun dan dimensi, alasan, siapa, kapan) di `ledger.journal_revisions`, yang append-only. Audit trail mencatat `ledger.journal.revise` dengan isi sebelum dan sesudah.
+- Di basis data (migrasi 00020), `guard_entry` dan `guard_line` hanya mengizinkan perubahan untuk jurnal yang ditandai `set_config('lajur.revise_entry', id, true)` di transaksi itu. Nomor, jenis, sumber, dan data posting tidak boleh berubah, dan versi harus naik satu. Baris lama dihapus lalu baris baru di-INSERT, sehingga trigger akun detail, saldo agregat, dan keseimbangan tetap berlaku.
+- Trigger `remove_line_from_balance` mengurangi `balances` dan `project_balances`, dan sel yang kembali nol dihapus.
+- Pembalik otomatis jurnal penyesuaian ikut direvisi dengan baris yang ditukar. Baris yang sudah dicentang di rekonsiliasi bank menolak revisi (`journal.reconciled`) sampai centangnya dihapus.
+- Detail jurnal mengembalikan `revision`, `revisedBy`, `revisions`, `editable`, dan `editBlock`. Halaman Jurnal menampilkan tombol Ubah jurnal, info "Diubah N×", dan riwayat perubahan berisi versi-versi lama. Formulir ubah ada di `/jurnal/:id/ubah`.
+
+## Uang muka, limit kredit, proyeksi kas, dan pelunasan antar-PT (tahap 9G)
+
+- Uang muka di luar proyek (AR-04, AP-02) memakai dokumen pelunasan dan pembayaran yang sama. `advance` adalah uang muka baru tanpa faktur/tagihan (kredit 2-1401, atau debit 1-1503 untuk pembelian). `from_advance` adalah saldo uang muka yang dipakai melunasi dokumen, sehingga uang yang berpindah bisa nol dan rekening kas menjadi opsional.
+- Pengembalian uang muka disimpan sebagai dokumen berjenis `pengembalian` (BKK untuk pelanggan, BKM dari pemasok).
+- Saldo uang muka per kontak = uang muka − dipakai/dikembalikan + kelebihan nota kredit/debit. Saldo dikunci dengan advisory lock per kontak saat dipakai. Void uang muka atau nota yang kelebihannya sudah terpakai ditolak.
+- AR-01: kontak punya limit kredit (opsional) dan kontak penagihan. Draf faktur yang membuat piutang pelanggan melewati limit diberi peringatan, tanpa memblokir (pemblokiran = AR-11, fase 2).
+- AP-06: proyeksi kas per minggu (`/reports/cash-projection`) dimulai dari saldo kas dan bank, lalu ditambah piutang dan dikurangi utang yang jatuh tempo. Dokumen lewat jatuh tempo dianggap segera; periode pertama dengan saldo negatif ditandai.
+- ME-03: pelunasan faktur antar-PT otomatis membayar tagihan cerminannya di PT pasangan (dan sebaliknya), lewat rekening pelunasan antar-PT di kontak tertaut. Void satu sisi ikut mem-void pasangannya. Pelunasan dengan PPh dipotong atau uang muka antar-PT ditolak, karena dokumen cerminan tidak memuat PPh.
+
+## Impor massal, saldo awal, dan penjualan harian (tahap 9E)
+
+**Impor Excel/CSV (PLT-07)**
+
+- `platform/sheet` membaca lembar pertama .xlsx (zip + XML, tanpa dependensi luar, dengan batas isi terurai) atau CSV (koma atau titik koma, BOM). Baris judul dicari di 30 baris pertama, sehingga template Lajur yang punya judul dan petunjuk di atasnya terbaca langsung.
+- Angka dibaca dengan kebiasaan Indonesia ("1.250.000,50"); angka mentah Excel ditulis ulang dengan koma desimal supaya "1.125" tidak tertukar dengan ribuan. Tanggal menerima 31/12/2026, 2026-12-31, dan nomor tanggal Excel.
+- Modul `imports` punya satu jenis per kebutuhan: kontak, produk, neraca saldo awal, saldo awal piutang, saldo awal utang, saldo awal stok, jurnal umum, dan penjualan harian. Setiap baris diterapkan lewat service modul pemiliknya, sehingga aturannya sama dengan input manual.
+- Setiap baris diproses di dalam savepoint, sehingga satu galat tidak menghentikan pemeriksaan baris lain. Bila ada galat, atau bila permintaan berupa pratinjau, seluruh berkas dibatalkan ke savepoint awal. Galat field dari service (mis. `lines.3.qty`) dipetakan kembali ke nomor baris dan nama kolom berkas.
+- Route per jenis memakai izin modul pemiliknya dan Idempotency-Key. Batas body route idempoten bisa dinaikkan per route (`Route.MaxBody`); impor menerima berkas sampai 5 MB.
+- Template XLSX per jenis diunduh dari `/imports/{jenis}/template`, berisi petunjuk dan contoh baris dengan kode akun PT itu.
+
+**Saldo awal (GL-06)**
+
+- Akun sistem baru: ekuitas saldo awal 3-3001.
+- Neraca saldo awal diposting sebagai satu jurnal bersumber `opening` (seri SA), yang bisa di-void seperti jurnal manual. Piutang usaha, utang usaha, dan akun persediaan dilewati karena saldonya harus berasal dari dokumen. Selisihnya masuk 3-3001.
+- Piutang awal menjadi faktur jenis `saldo_awal` (seri SAP) dan utang awal menjadi tagihan `opening` (seri SAU). Keduanya tanpa PPN dan melawan 3-3001, dengan tanggal dan jatuh tempo asli. Dokumen ini ikut umur piutang/utang dan bisa dilunasi, tetapi tidak masuk ringkasan penjualan/pembelian, ekspor Coretax, atau cerminan antar-PT.
+- Stok awal menjadi satu dokumen penyesuaian persediaan dengan biaya satuan dari berkas, melawan 3-3001.
+- Saldo 3-3001 menjadi nol setelah semua saldo awal selesai diimpor. Halaman impor menampilkannya sebagai pemeriksaan kelengkapan.
+
+**Rekap penjualan harian retail (IND-07)**
+
+- `sales.daily_sales` (seri RPH), dengan baris barang dan penerimaannya. Paling banyak satu rekap aktif per tanggal dan toko (indeks unik parsial).
+- Harga sudah termasuk PPN: DPP = harga / (1 + rasio DPP × tarif), dibulatkan ke rupiah, dan PPN = harga − DPP, sehingga uang yang diterima persis sama.
+- Jurnal: debit kas toko, bank, atau piutang kartu/QRIS; kredit pendapatan per akun dan PPN keluaran (PPN digunggung). Barang keluar dengan HPP rata-rata; jurnal HPP-nya bersumber `inventory.daily`.
+- Rekap diisi lewat impor (satu baris per barang per hari per toko) dan bisa di-void. Rekap harian ikut rekap PPN masa, ringkasan penjualan per produk, dan satu baris "penjualan eceran" di ringkasan per pelanggan.
+
+## Lampiran, email, dan dokumen PDF
+
+**Lampiran (PLT-08, GL-02, AP-04, tahap 9A)**
+
+- `platform.attachments` menyimpan metadata; berkasnya ada di `LAJUR_DATA_DIR/files/attachments/<pt>/<bulan>/<id>` dan ikut backup.
+- Jenis berkas ditentukan dari isinya: PDF, JPG/PNG/WEBP/GIF, .xlsx/.docx (zip), dan .csv. SVG dan HTML ditolak. Ukuran maksimal 10 MB.
+- Izin mengikuti dokumen induknya: lihat lampiran = izin lihat modul, tambah = izin buat. Menghapus hanya boleh pengunggahnya atau pemegang izin void.
+- Hapus hanya menyembunyikan lampiran. Berkas tetap ada dan aksinya tercatat di audit trail.
+- Unduhan lewat route stream. PDF dan gambar dibuka inline; jenis lain diunduh dengan CSP `sandbox`.
+
+**Email (PLT-08) dan PDF faktur (AR-03), tahap 9B**
+
+- Pengaturan SMTP ada di `platform.mail_settings`, dengan password terenkripsi kunci aplikasi. Mode koneksi: STARTTLS, SSL/TLS, atau relay tanpa enkripsi. Tombol email uji mengirim langsung, tidak lewat antrean.
+- Email masuk `platform.mail_outbox` di transaksi aksinya, lalu dikirim pekerja tiap 20 detik dengan `FOR UPDATE SKIP LOCKED`. Percobaan ulang setelah 1, 5, 15, dan 60 menit; setelah lima kali, email gagal. `dedupe_key` mencegah peringatan yang sama terkirim dua kali.
+- Peringatan ke admin (pemegang izin sistem) dikirim saat backup gagal, saat tidak ada backup sukses 48 jam, dan saat lisensi tidak aktif penuh. Peringatan harian mulai pukul 08.00.
+- PDF faktur dibuat generator PDF sendiri (`platform/pdf`): A4, Helvetica WinAnsi, dan logo JPEG. Isinya kop PT dengan logo (diunggah di Pajak → Pengaturan; PNG/JPEG dinormalkan menjadi JPEG ≤ 800 px), pelanggan, baris, DPP/DPP nilai lain/PPN, retensi, pembayaran, dan rekening bank PT. Faktur draf diberi tanda DRAF. Hanya faktur terposting yang bisa dikirim lewat email, dan endpoint kirim email idempoten.
 
 ## Keamanan dan audit trail
 
@@ -595,8 +802,8 @@ Risiko teknis terbesar adalah dua komponen yang tidak sepenuhnya kita kendalikan
 
 **Pertanyaan terbuka**
 
-- [ ] Di mana registry container dan update server di-hosting (mis. GitHub Container Registry dan object storage)?
+- [ ] Di mana registry container dan update server di-hosting (mis. GitHub Container Registry dan object storage)? Kode sudah siap untuk keduanya: image ditarik per digest dari registry mana pun, dan manifest adalah satu file statis (`stable.jws`) yang bisa diletakkan di object storage atau web server. Menolak lisensi yang tidak aktif butuh update server yang memeriksa header `Authorization`.
 - [ ] Apakah konsolidasi perlu mendukung kepemilikan sebagian (kepentingan nonpengendali) sejak MVP?
-- [ ] Siapa yang menyimpan cadangan kunci dekripsi backup bila Pemilik kehilangan kuncinya?
+- [ ] Siapa yang menyimpan cadangan kunci dekripsi backup bila Pemilik kehilangan kuncinya? Keputusan sementara: skrip instal menampilkan kunci privat sekali dan menyarankan dua salinan (pengelola kata sandi Pemilik dan cetakan di brankas); tidak ada salinan di owner atau server.
 - [ ] Apakah Staf akuntansi boleh mengubah draf miliknya sendiri yang belum diposting? Keputusan sementara: faktur dan tagihan draf boleh diubah dan dihapus oleh pembuatnya, serta oleh Manager dan Pemilik; jurnal manual tetap langsung diposting saat disimpan.
 - [ ] Apakah PRD diperbarui agar frontend memakai Vite, bukan Next.js?

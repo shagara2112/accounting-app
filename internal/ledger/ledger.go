@@ -32,6 +32,7 @@ const (
 	SourceManual       = "manual"        // diinput pengguna (jurnal umum dan penyesuaian)
 	SourceVoid         = "void"          // pembalik karena void
 	SourceAutoReversal = "auto_reversal" // pembalik otomatis jurnal penyesuaian
+	SourceOpening      = "opening"       // saldo awal dari impor neraca saldo (GL-06)
 )
 
 // Actor adalah pengguna yang melakukan aksi; dicatat di jurnal dan audit trail.
@@ -42,6 +43,10 @@ type LineDraft struct {
 	Debit     money.Amount `json:"debit"`
 	Credit    money.Amount `json:"credit"`
 	Memo      string       `json:"memo"`
+	ProjectID *uuid.UUID   `json:"projectId,omitempty"` // dimensi proyek (IND-02)
+	// Dimensi cabang dan departemen (GL-09).
+	BranchID     *uuid.UUID `json:"branchId,omitempty"`
+	DepartmentID *uuid.UUID `json:"departmentId,omitempty"`
 }
 
 // EntryDraft adalah jurnal yang akan diposting.
@@ -155,6 +160,12 @@ type EntryLine struct {
 	Debit       money.Amount `json:"debit"`
 	Credit      money.Amount `json:"credit"`
 	Memo        string       `json:"memo"`
+	ProjectID   *uuid.UUID   `json:"projectId,omitempty"`
+	// Dimensi cabang dan departemen (GL-09) beserta kodenya.
+	BranchID       *uuid.UUID `json:"branchId,omitempty"`
+	DepartmentID   *uuid.UUID `json:"departmentId,omitempty"`
+	BranchCode     string     `json:"branchCode,omitempty"`
+	DepartmentCode string     `json:"departmentCode,omitempty"`
 }
 
 type RelatedEntry struct {
@@ -175,6 +186,14 @@ type EntryDetail struct {
 	Lines         []EntryLine    `json:"lines"`
 	ReversalOfRef *Ref           `json:"reversalOfRef,omitempty"`
 	Reversals     []RelatedEntry `json:"reversals"`
+	// Revisi jurnal manual: berapa kali diubah, oleh siapa terakhir, dan versi-versi lamanya.
+	Revision  int        `json:"revision"`
+	RevisedAt *time.Time `json:"revisedAt,omitempty"`
+	RevisedBy *string    `json:"revisedBy,omitempty"`
+	Revisions []Revision `json:"revisions"`
+	// Editable: jurnal manual yang periodenya masih terbuka. EditBlock menjelaskan kenapa tidak.
+	Editable  bool   `json:"editable"`
+	EditBlock string `json:"editBlock,omitempty"`
 }
 
 // Pair adalah satu pasang kolom debit dan kredit di neraca lajur.
@@ -216,15 +235,40 @@ type Worksheet struct {
 }
 
 type LedgerLine struct {
-	EntryID uuid.UUID    `json:"entryId"`
-	Number  string       `json:"number"`
-	Kind    Kind         `json:"kind"`
-	Status  string       `json:"status"`
-	Date    civil.Date   `json:"date"`
-	Memo    string       `json:"memo"`
-	Debit   money.Amount `json:"debit"`
-	Credit  money.Amount `json:"credit"`
-	Balance money.Amount `json:"balance"` // saldo berjalan menurut sisi normal
+	EntryID   uuid.UUID    `json:"entryId"`
+	Number    string       `json:"number"`
+	Kind      Kind         `json:"kind"`
+	Status    string       `json:"status"`
+	Date      civil.Date   `json:"date"`
+	Memo      string       `json:"memo"`
+	Debit     money.Amount `json:"debit"`
+	Credit    money.Amount `json:"credit"`
+	Balance   money.Amount `json:"balance"` // saldo berjalan menurut sisi normal
+	ProjectID *uuid.UUID   `json:"projectId,omitempty"`
+}
+
+// ProjectBalance adalah mutasi satu akun untuk satu proyek dalam rentang bulan.
+type ProjectBalance struct {
+	ProjectID uuid.UUID
+	AccountID uuid.UUID
+	Debit     money.Amount
+	Credit    money.Amount
+}
+
+// ProjectLine adalah satu baris jurnal berdimensi proyek.
+type ProjectLine struct {
+	EntryID     uuid.UUID    `json:"entryId"`
+	Number      string       `json:"number"`
+	Status      string       `json:"status"`
+	SourceType  string       `json:"sourceType"`
+	SourceID    *uuid.UUID   `json:"sourceId,omitempty"`
+	Date        civil.Date   `json:"date"`
+	Memo        string       `json:"memo"`
+	AccountID   uuid.UUID    `json:"accountId"`
+	AccountCode string       `json:"accountCode"`
+	AccountName string       `json:"accountName"`
+	Debit       money.Amount `json:"debit"`
+	Credit      money.Amount `json:"credit"`
 }
 
 // AccountLedger adalah buku besar satu akun untuk rentang tanggal (GL-04).
@@ -247,15 +291,36 @@ type Service interface {
 	Void(ctx context.Context, companyID, entryID uuid.UUID, date civil.Date, reason string, actor Actor) (Voided, error)
 	// VoidSource membatalkan jurnal milik dokumen modul; sourceType harus cocok dengan jurnalnya.
 	VoidSource(ctx context.Context, companyID, entryID uuid.UUID, sourceType string, date civil.Date, reason string, actor Actor) (Voided, error)
+	// Revise mengubah jurnal manual yang periodenya belum dikunci; versi lama disimpan di riwayat.
+	Revise(ctx context.Context, companyID, entryID uuid.UUID, in ReviseInput, actor Actor) (Ref, error)
 	// NextNumber mengambil nomor dokumen tanpa celah, mis. FJ/2026/10/0001 (GL-07).
 	NextNumber(ctx context.Context, companyID uuid.UUID, series string, date civil.Date) (string, error)
+	// NextNumberFor sama dengan NextNumber untuk dokumen bercabang: bila seri diatur bernomor per
+	// cabang, kode cabangnya masuk ke nomor dan urutannya terpisah (GL-07).
+	NextNumberFor(ctx context.Context, companyID uuid.UUID, series string, date civil.Date, branch *uuid.UUID) (string, error)
+	NumberFormats(ctx context.Context, companyID uuid.UUID, today civil.Date) ([]NumberFormat, error)
+	SaveNumberFormat(ctx context.Context, companyID uuid.UUID, in NumberFormat, actor Actor) (NumberFormat, error)
+
+	// Jurnal berulang (GL-08): dibuat dari jurnal manual, diposting otomatis tiap bulan.
+	RecurringJournals(ctx context.Context, companyID uuid.UUID) ([]Recurring, error)
+	RecurringJournal(ctx context.Context, companyID, id uuid.UUID) (Recurring, error)
+	CreateRecurring(ctx context.Context, companyID uuid.UUID, in RecurringInput, actor Actor) (Recurring, error)
+	UpdateRecurring(ctx context.Context, companyID, id uuid.UUID, in RecurringInput, actor Actor) (Recurring, error)
+	DeleteRecurring(ctx context.Context, companyID, id uuid.UUID, actor Actor) error
+	RunRecurring(ctx context.Context, companyID, id uuid.UUID, today civil.Date, actor Actor) (int, error)
+	RunDueRecurring(ctx context.Context, today civil.Date) (int, error)
 	// RoleAccount mengembalikan akun sistem, mis. piutang usaha untuk faktur penjualan.
 	RoleAccount(ctx context.Context, companyID uuid.UUID, role Role) (Account, error)
 	Entry(ctx context.Context, companyID, entryID uuid.UUID) (EntryDetail, error)
 	Entries(ctx context.Context, companyID uuid.UUID, f EntryFilter) (EntryPage, error)
+	// EntriesBySource mengembalikan jurnal diposting dari satu sumber, mis. saldo awal.
+	EntriesBySource(ctx context.Context, companyID uuid.UUID, sourceType string) ([]EntrySummary, error)
+	// AccountNet adalah saldo debit − kredit sebuah akun dari semua jurnal.
+	AccountNet(ctx context.Context, companyID, accountID uuid.UUID) (money.Amount, error)
 
 	Accounts(ctx context.Context, companyID uuid.UUID) ([]Account, error)
 	AccountByCode(ctx context.Context, companyID uuid.UUID, code string) (Account, error)
+	CheckAccount(ctx context.Context, companyID, accountID uuid.UUID, classes []int) error
 	CreateAccount(ctx context.Context, companyID uuid.UUID, a NewAccount, actor Actor) (Account, error)
 	UpdateAccount(ctx context.Context, companyID, accountID uuid.UUID, c AccountChange, actor Actor) (Account, error)
 	ApplyTemplate(ctx context.Context, companyID uuid.UUID, template string, actor Actor) (int, error)
@@ -268,15 +333,34 @@ type Service interface {
 	Worksheet(ctx context.Context, companyID uuid.UUID, month civil.Date) (Worksheet, error)
 	AccountLedger(ctx context.Context, companyID, accountID uuid.UUID, from, to civil.Date) (AccountLedger, error)
 	VerifyBalances(ctx context.Context, companyID uuid.UUID) (int64, error)
+
+	// ProjectBalances mengembalikan mutasi per proyek dan akun untuk bulan from s.d. to;
+	// projectID kosong = semua proyek. Dasar laba per proyek dan biaya vs RAB (IND-03).
+	ProjectBalances(ctx context.Context, companyID uuid.UUID, projectID *uuid.UUID, from, to civil.Date) ([]ProjectBalance, error)
+	// ProjectLines mengembalikan baris jurnal satu proyek, opsional untuk satu akun saja.
+	ProjectLines(ctx context.Context, companyID, projectID uuid.UUID, accountID *uuid.UUID, from, to civil.Date) ([]ProjectLine, bool, error)
 }
 
-func New(pool *pgxpool.Pool) Service {
-	return &ledger{pool: pool, today: func() civil.Date { return civil.Today(civil.Jakarta) }}
+// ProjectCheck memeriksa proyek di baris jurnal baru (mis. menolak proyek yang dibatalkan).
+// Diisi modul proyek saat perangkaian, sehingga buku besar tidak bergantung padanya.
+type ProjectCheck func(ctx context.Context, companyID uuid.UUID, projectIDs []uuid.UUID) error
+
+type Option func(*ledger)
+
+func WithProjectCheck(fn ProjectCheck) Option { return func(l *ledger) { l.projectCheck = fn } }
+
+func New(pool *pgxpool.Pool, opts ...Option) Service {
+	l := &ledger{pool: pool, today: func() civil.Date { return civil.Today(civil.Jakarta) }}
+	for _, o := range opts {
+		o(l)
+	}
+	return l
 }
 
 type ledger struct {
-	pool  *pgxpool.Pool
-	today func() civil.Date
+	pool         *pgxpool.Pool
+	today        func() civil.Date
+	projectCheck ProjectCheck
 }
 
 func (l *ledger) q(ctx context.Context) *store.Queries { return store.New(db.Conn(ctx, l.pool)) }

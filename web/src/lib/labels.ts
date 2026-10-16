@@ -21,9 +21,17 @@ const sources: Record<string, string> = {
   auto_reversal: 'Balik otomatis',
   'sales.invoice': 'Faktur penjualan',
   'sales.receipt': 'Pelunasan piutang',
+  'sales.credit_note': 'Nota kredit',
   'purchase.bill': 'Tagihan pemasok',
   'purchase.payment': 'Pembayaran utang',
+  'purchase.debit_note': 'Nota debit',
   'cash.transaction': 'Kas dan bank',
+  'inventory.cost': 'HPP penjualan',
+  'inventory.return': 'HPP retur penjualan',
+  'inventory.daily': 'HPP penjualan harian',
+  'sales.daily': 'Penjualan harian',
+  opening: 'Saldo awal',
+  'inventory.adjustment': 'Dokumen persediaan',
 }
 
 /** Asal jurnal selain input manual, mis. "Pembatalan" untuk pembalik karena void. */
@@ -43,8 +51,20 @@ export function sourceLink(source: string, id?: string): string | null {
       return `/pembelian?id=${id}`
     case 'purchase.payment':
       return `/pembelian?tab=pembayaran&pid=${id}`
+    case 'sales.credit_note':
+    case 'inventory.return':
+      return `/penjualan?tab=retur&nid=${id}`
+    case 'purchase.debit_note':
+      return `/pembelian?tab=retur&nid=${id}`
+    case 'sales.daily':
+    case 'inventory.daily':
+      return `/penjualan?tab=harian&hid=${id}`
     case 'cash.transaction':
       return `/kas?id=${id}`
+    case 'inventory.cost':
+      return `/penjualan?id=${id}`
+    case 'inventory.adjustment':
+      return `/persediaan?tab=dokumen&doc=${id}`
     default:
       return null
   }
@@ -67,9 +87,12 @@ export const tradeText = {
     settle: 'Pelunasan',
     settle_: 'pelunasan',
     settleAction: 'Terima pembayaran',
+    note: 'Nota kredit',
+    note_: 'nota kredit',
+    notes: 'Retur & nota kredit',
     aging: 'Umur piutang',
     base: '/penjualan',
-    tabs: { docs: 'faktur', settle: 'pelunasan', aging: 'umur' },
+    tabs: { docs: 'faktur', settle: 'pelunasan', notes: 'retur', aging: 'umur' },
     perm: { view: 'sales.view', create: 'sales.create', void: 'sales.void' },
     accountClasses: [4, 7],
     accountHint: 'akun pendapatan (kepala 4 atau 7)',
@@ -83,9 +106,12 @@ export const tradeText = {
     settle: 'Pembayaran',
     settle_: 'pembayaran',
     settleAction: 'Bayar tagihan',
+    note: 'Nota debit',
+    note_: 'nota debit',
+    notes: 'Retur & nota debit',
     aging: 'Umur utang',
     base: '/pembelian',
-    tabs: { docs: 'tagihan', settle: 'pembayaran', aging: 'umur' },
+    tabs: { docs: 'tagihan', settle: 'pembayaran', notes: 'retur', aging: 'umur' },
     perm: { view: 'purchase.view', create: 'purchase.create', void: 'purchase.void' },
     accountClasses: [1, 5, 6, 8],
     accountHint: 'akun aset, beban pokok, atau beban',

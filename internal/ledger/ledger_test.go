@@ -602,3 +602,99 @@ func TestRandomPostingsKeepInvariants(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// Revisi klien: jurnal manual bisa diubah selama periodenya belum dikunci. Nomor tetap, versi
+// lama tersimpan, saldo agregat ikut, dan pembalik otomatis jurnal penyesuaian ikut berubah.
+func TestReviseManualJournal(t *testing.T) {
+	f := setup(t)
+	p := f.mustPost(ledger.General, "2026-10-05", f.line("6-2002", "100000", "0"), f.line("1-1101", "0", "100000"))
+	revise := func(id uuid.UUID, date string, rev int, lines ...ledger.LineDraft) error {
+		_, err := f.svc.Revise(f.ctx, f.company, id, ledger.ReviseInput{
+			Date: day(date), Memo: "Listrik kantor (koreksi)", Lines: lines, Reason: "Salah akun", Revision: rev,
+		}, f.actor)
+		return err
+	}
+	if err := revise(p.ID, "2026-10-07", 0, f.line("6-2005", "150000", "0"), f.line("1-1101", "0", "150000")); err != nil {
+		t.Fatal(err)
+	}
+	e, err := f.svc.Entry(f.ctx, f.company, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Number != p.Number || e.Revision != 1 || e.Date.String() != "2026-10-07" || !e.Total.Equal(money.FromInt(150_000)) ||
+		e.Lines[0].AccountCode != "6-2005" || e.RevisedBy == nil || !e.Editable {
+		t.Fatalf("jurnal setelah diubah = %+v", e)
+	}
+	if len(e.Revisions) != 1 || e.Revisions[0].Revision != 0 || e.Revisions[0].Lines[0].AccountCode != "6-2002" ||
+		!e.Revisions[0].Total.Equal(money.FromInt(100_000)) || e.Revisions[0].Reason != "Salah akun" {
+		t.Fatalf("riwayat versi = %+v", e.Revisions)
+	}
+	oct := f.worksheet("2026-10")
+	if !adjusted(oct, "6-2002").IsZero() || !adjusted(oct, "6-2005").Equal(money.FromInt(150_000)) {
+		t.Fatal("neraca lajur belum mengikuti isi jurnal yang baru")
+	}
+	f.verifyBalances()
+
+	expectCode(t, revise(p.ID, "2026-10-07", 0, f.line("6-2005", "1", "0"), f.line("1-1101", "0", "1")), "conflict.version")
+	expectCode(t, revise(p.ID, "2026-11-02", 1, f.line("6-2005", "1", "0"), f.line("1-1101", "0", "1")), "journal.edit_month")
+	expectCode(t, revise(p.ID, "2026-10-07", 1, f.line("6-2005", "1", "0"), f.line("1-1101", "0", "2")), "ledger.unbalanced")
+
+	// Penyesuaian dengan balik otomatis: pembaliknya di November ikut berubah.
+	adj, err := f.svc.Post(f.ctx, ledger.EntryDraft{
+		CompanyID: f.company, Kind: ledger.Adjustment, Date: day("2026-10-31"), Memo: "Akrual listrik",
+		AutoReverse: true, Actor: f.actor, Lines: []ledger.LineDraft{f.line("6-2002", "3500000", "0"), f.line("2-1302", "0", "3500000")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := revise(adj.ID, "2026-10-31", 0, f.line("6-2002", "4000000", "0"), f.line("2-1302", "0", "4000000")); err != nil {
+		t.Fatal(err)
+	}
+	rev, err := f.svc.Entry(f.ctx, f.company, adj.AutoReversal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rev.Revision != 1 || !rev.Total.Equal(money.FromInt(4_000_000)) || !rev.Lines[0].Credit.Equal(money.FromInt(4_000_000)) {
+		t.Fatalf("pembalik otomatis setelah diubah = %+v", rev)
+	}
+	expectCode(t, revise(adj.AutoReversal.ID, "2026-11-01", 1, f.line("6-2002", "1", "0"), f.line("2-1302", "0", "1")), "journal.edit_auto_reversal")
+	if !adjusted(f.worksheet("2026-11"), "2-1302").IsZero() {
+		t.Fatal("akrual seharusnya tetap nol setelah dibalik di November")
+	}
+	f.verifyBalances()
+
+	// Periode ditutup untuk transaksi: jurnal umum terkunci, penyesuaian masih boleh.
+	if err := f.svc.SetPeriodStatus(f.ctx, f.company, day("2026-10-01"), "adjusting", "", f.actor); err != nil {
+		t.Fatal(err)
+	}
+	expectCode(t, revise(p.ID, "2026-10-07", 1, f.line("6-2005", "1", "0"), f.line("1-1101", "0", "1")), "period.adjusting")
+	if e, err := f.svc.Entry(f.ctx, f.company, p.ID); err != nil || e.Editable || !strings.Contains(e.EditBlock, "Oktober 2026") {
+		t.Fatalf("jurnal umum di periode penyesuaian seharusnya tidak bisa diubah: %+v %v", e.EditBlock, err)
+	}
+	if err := revise(adj.ID, "2026-10-31", 1, f.line("6-2002", "4200000", "0"), f.line("2-1302", "0", "4200000")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.SetPeriodStatus(f.ctx, f.company, day("2026-10-01"), "locked", "", f.actor); err != nil {
+		t.Fatal(err)
+	}
+	expectCode(t, revise(adj.ID, "2026-10-31", 2, f.line("6-2002", "1", "0"), f.line("2-1302", "0", "1")), "period.locked")
+
+	// Jurnal yang sudah di-void tidak bisa diubah, dan basis data tetap menolak perubahan langsung.
+	if err := f.svc.SetPeriodStatus(f.ctx, f.company, day("2026-10-01"), "open", "Koreksi dari auditor", f.actor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Void(f.ctx, f.company, p.ID, day("2026-10-08"), "Dobel input", f.actor); err != nil {
+		t.Fatal(err)
+	}
+	expectCode(t, revise(p.ID, "2026-10-07", 1, f.line("6-2005", "1", "0"), f.line("1-1101", "0", "1")), "journal.edit_void")
+	for _, sql := range []string{
+		"UPDATE ledger.journal_entries SET memo = 'diubah'",
+		"DELETE FROM ledger.journal_lines",
+		"DELETE FROM ledger.journal_revisions",
+	} {
+		if _, err := f.pool.Exec(f.ctx, sql); err == nil {
+			t.Errorf("%q seharusnya ditolak basis data", sql)
+		}
+	}
+	f.verifyBalances()
+}

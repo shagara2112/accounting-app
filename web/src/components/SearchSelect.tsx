@@ -41,6 +41,7 @@ export function SearchSelect({
   invalid,
   label,
   empty = 'Tidak ada yang cocok.',
+  clearLabel,
 }: {
   id?: string
   options: Option[]
@@ -50,6 +51,8 @@ export function SearchSelect({
   invalid?: boolean
   label?: string
   empty?: string
+  /** Bila diisi, pilihan ini (bernilai kosong) muncul paling atas untuk mengosongkan isian. */
+  clearLabel?: string
 }) {
   const listId = useId()
   const input = useRef<HTMLInputElement>(null)
@@ -62,11 +65,12 @@ export function SearchSelect({
   const shown = useMemo(() => {
     const q = text.trim().toLowerCase()
     const list = q ? options.filter((o) => o.label.toLowerCase().includes(q) || o.detail?.toLowerCase().includes(q)) : options
-    return list.slice(0, MAX)
-  }, [options, text])
+    const clear: Option[] = clearLabel && value && !q ? [{ id: '', label: clearLabel }] : []
+    return [...clear, ...list.slice(0, MAX)]
+  }, [options, text, clearLabel, value])
 
   function choose(o: Option | undefined) {
-    if (o) onChange(o.id)
+    if (o && o.id !== value) onChange(o.id)
     setOpen(false)
     setText('')
   }
@@ -105,7 +109,7 @@ export function SearchSelect({
         onFocus={() => {
           setOpen(true)
           setText('')
-          setActive(Math.max(0, options.findIndex((o) => o.id === value)))
+          setActive(Math.max(0, options.findIndex((o) => o.id === value) + (clearLabel && value ? 1 : 0)))
         }}
         onBlur={() => {
           setOpen(false)

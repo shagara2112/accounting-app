@@ -3,14 +3,14 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ApiError, newIdempotencyKey, type Me } from '../lib/api'
 import { formatDate, monthOf, todayISO } from '../lib/dates'
 import { useCashAccounts, useContacts } from '../lib/cash'
-import { useCreateSettlement, useOpenDocs, useTaxCodes, type Doc, type TradeKind } from '../lib/docs'
+import { useAdvanceBalance, useCreateSettlement, useOpenDocs, useRefundAdvance, useTaxCodes, type Doc, type TradeKind } from '../lib/docs'
 import { tradeText } from '../lib/labels'
 import { formatAmount, formatRp, fromUnits, parseInput, toUnits } from '../lib/money'
 import { can } from '../lib/session'
 import { withholding } from '../lib/trade'
 import { SearchSelect } from '../components/SearchSelect'
 import { useToast } from '../components/Toast'
-import { Alert, Badge, Button, Card, EmptyState, Field, SelectField, Skeleton, inputClass } from '../components/ui'
+import { Alert, Badge, Button, Card, Dialog, EmptyState, Field, SelectField, Skeleton, inputClass } from '../components/ui'
 
 type Alloc = { checked: boolean; amount: string; whCode: string; wh: string }
 
@@ -31,10 +31,14 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
   const [cashAccountId, setCashAccountId] = useState('')
   const [memo, setMemo] = useState('')
   const [allocs, setAllocs] = useState<Record<string, Alloc>>({})
+  const [advance, setAdvance] = useState('')
+  const [fromAdvance, setFromAdvance] = useState('')
+  const [refunding, setRefunding] = useState(false)
   const [key] = useState(newIdempotencyKey)
   const [attempt, setAttempt] = useState(0)
 
   const open = useOpenDocs(kind, companyId, contactId)
+  const balance = toUnits(useAdvanceBalance(kind, companyId, contactId).data ?? '0')
   const pph = (useTaxCodes(companyId, date || todayISO()).data ?? []).filter((c) => c.kind === 'pph')
   const docs = open.data ?? []
   const activeCash = (cashAccounts.data ?? []).filter((a) => a.active)
@@ -58,7 +62,10 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
     allocated += amt ?? 0n
     withheld += wh ?? 0n
   }
-  const cash = allocated - withheld
+  const advanceU = advance.trim() ? parseInput(advance) : 0n
+  const fromAdvanceU = fromAdvance.trim() ? parseInput(fromAdvance) : 0n
+  if (advanceU === null || fromAdvanceU === null) unreadable = true
+  const cash = allocated - withheld + (advanceU ?? 0n) - (fromAdvanceU ?? 0n)
   const err = create.error instanceof ApiError ? create.error : null
 
   function submit() {
@@ -71,6 +78,8 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
           date,
           cashAccountId,
           memo: memo.trim(),
+          advance: fromUnits(advanceU ?? 0n),
+          fromAdvance: fromUnits(fromAdvanceU ?? 0n),
           allocations: chosen.map((d) => {
             const a = alloc(d)
             return {
@@ -138,6 +147,53 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
         </div>
         <Field id="catatan" label="Catatan" value={memo} maxLength={500} onChange={(e) => setMemo(e.target.value)} />
       </Card>
+
+      {contactId && (
+        <Card
+          title="Uang muka"
+          subtitle={
+            kind === 'sales'
+              ? 'Uang muka pelanggan dicatat sebagai kewajiban sampai dipakai melunasi faktur atau dikembalikan.'
+              : 'Uang muka ke pemasok dicatat sebagai aset sampai dipakai melunasi tagihan atau dikembalikan pemasok.'
+          }
+          actions={
+            balance > 0n && (
+              <Button variant="ghost" size="sm" onClick={() => setRefunding(true)}>
+                {kind === 'sales' ? 'Kembalikan uang muka…' : 'Catat pengembalian…'}
+              </Button>
+            )
+          }
+        >
+          <p className="text-sm">
+            Saldo uang muka {kind === 'sales' ? 'dari' : 'ke'} {t.contact.toLowerCase()} ini: <span className="num font-semibold">Rp {formatAmount(balance)}</span>
+          </p>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-4">
+            {balance > 0n && (
+              <Field
+                id="pakai-um"
+                label={`Pakai saldo uang muka`}
+                inputMode="decimal"
+                className="num text-right"
+                hint={`Paling banyak Rp ${formatAmount(balance)}; mengurangi uang yang ${kind === 'sales' ? 'diterima' : 'dibayar'}.`}
+                value={fromAdvance}
+                onChange={(e) => setFromAdvance(e.target.value)}
+                error={err?.fields.fromAdvance}
+              />
+            )}
+            <Field
+              id="um-baru"
+              label={kind === 'sales' ? 'Uang muka diterima (tanpa faktur)' : 'Uang muka dibayar (tanpa tagihan)'}
+              inputMode="decimal"
+              className="num text-right"
+              hint="Boleh tanpa memilih dokumen."
+              value={advance}
+              onChange={(e) => setAdvance(e.target.value)}
+              error={err?.fields.advance}
+            />
+          </div>
+        </Card>
+      )}
+      {refunding && <RefundDialog kind={kind} companyId={companyId} contactId={contactId} balance={balance} onClose={() => setRefunding(false)} />}
 
       {!contactId && <EmptyState title={`Pilih ${t.contact.toLowerCase()} dulu`} body={`${t.doc} yang belum lunas akan muncul di sini.`} />}
       {contactId && open.isPending && <Skeleton className="h-40" />}
@@ -255,7 +311,7 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
 
       {err && <Alert shakeKey={attempt}>{err.message}</Alert>}
 
-      <div className="sticky bottom-0 z-10 -mx-8 flex flex-wrap items-center gap-x-8 gap-y-3 border-t border-line bg-surface/95 px-8 py-4 backdrop-blur">
+      <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap items-center gap-x-8 gap-y-3 border-t border-line bg-surface/95 px-4 py-4 backdrop-blur sm:-mx-8 sm:px-8">
         <Sum label={kind === 'sales' ? 'Piutang dilunasi' : 'Utang dibayar'} value={allocated} />
         {kind === 'sales' && <Sum label="PPh dipotong" value={withheld} />}
         <Sum label={kind === 'sales' ? 'Uang diterima' : 'Uang keluar'} value={cash} strong />
@@ -263,7 +319,11 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
           <Button variant="secondary" onClick={() => navigate(t.base)}>
             Batal
           </Button>
-          <Button busy={create.isPending} disabled={chosen.length === 0 || !cashAccountId || unreadable || cash <= 0n} onClick={submit}>
+          <Button
+            busy={create.isPending}
+            disabled={(chosen.length === 0 && (advanceU ?? 0n) <= 0n) || (cash > 0n && !cashAccountId) || unreadable || cash < 0n || (cash === 0n && (fromAdvanceU ?? 0n) === 0n)}
+            onClick={submit}
+          >
             Posting {t.settle_}
           </Button>
         </div>
@@ -278,5 +338,58 @@ function Sum({ label, value, strong }: { label: string; value: bigint; strong?: 
       <span className="text-[12.5px] text-muted">{label}</span>
       <span className={`num font-semibold ${strong ? 'text-xl' : 'text-lg'}`}>{formatAmount(value)}</span>
     </div>
+  )
+}
+
+/** Pengembalian uang muka: ke pelanggan (kas keluar) atau dari pemasok (kas masuk). */
+function RefundDialog({ kind, companyId, contactId, balance, onClose }: { kind: TradeKind; companyId: string | null; contactId: string; balance: bigint; onClose: () => void }) {
+  const refund = useRefundAdvance(kind, companyId)
+  const toast = useToast()
+  const accounts = (useCashAccounts(companyId).data ?? []).filter((a) => a.active)
+  const [key] = useState(newIdempotencyKey)
+  const [v, setV] = useState({ date: todayISO(), cashAccountId: '', amount: formatAmount(balance), memo: '' })
+  const amount = parseInput(v.amount)
+  const err = refund.error instanceof ApiError ? refund.error : null
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={kind === 'sales' ? 'Kembalikan uang muka pelanggan' : 'Catat pengembalian uang muka dari pemasok'}
+      description={`Saldo uang muka Rp ${formatAmount(balance)}.`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Batal
+          </Button>
+          <Button
+            busy={refund.isPending}
+            disabled={!v.cashAccountId || amount === null || amount <= 0n}
+            onClick={() =>
+              refund.mutate(
+                { contactId, date: v.date, cashAccountId: v.cashAccountId, amount: fromUnits(amount ?? 0n), memo: v.memo, idempotencyKey: key },
+                { onSuccess: (r) => (toast(`${r.number} diposting`), onClose()) },
+              )
+            }
+          >
+            Posting
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <Field id="ref-tanggal" label="Tanggal" type="date" value={v.date} onChange={(e) => setV({ ...v, date: e.target.value })} error={err?.fields.date} />
+        <SelectField id="ref-rekening" label={kind === 'sales' ? 'Dibayar dari rekening' : 'Masuk ke rekening'} value={v.cashAccountId} onChange={(e) => setV({ ...v, cashAccountId: e.target.value })} error={err?.fields.cashAccountId}>
+          <option value="">Pilih rekening</option>
+          {accounts.map((a) => (
+            <option key={a.accountId} value={a.accountId}>
+              {a.name}
+            </option>
+          ))}
+        </SelectField>
+        <Field id="ref-nominal" label="Nominal" inputMode="decimal" className="num text-right" value={v.amount} onChange={(e) => setV({ ...v, amount: e.target.value })} error={err?.fields.amount} />
+        <Field id="ref-catatan" label="Catatan" value={v.memo} maxLength={500} onChange={(e) => setV({ ...v, memo: e.target.value })} />
+        {err && Object.keys(err.fields).length === 0 && <Alert>{err.message}</Alert>}
+      </div>
+    </Dialog>
   )
 }

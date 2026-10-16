@@ -10,6 +10,7 @@ import (
 	"lajur/internal/platform/api"
 	"lajur/internal/platform/auth"
 	"lajur/internal/platform/civil"
+	"lajur/internal/platform/export"
 	"lajur/internal/platform/httpx"
 	"lajur/internal/platform/license"
 	"lajur/internal/platform/rbac"
@@ -37,6 +38,8 @@ func Routes(svc Service) []api.Route {
 		route(http.MethodGet, "/api/v1/tax/exports/{id}", rbac.TaxExport, license.ModeExport, h.download),
 		route(http.MethodGet, "/api/v1/tax/vat-recap", rbac.TaxView, license.ModeRead, h.vatRecap),
 		route(http.MethodGet, "/api/v1/tax/withholding", rbac.TaxView, license.ModeRead, h.withholding),
+		route(http.MethodGet, "/api/v1/tax/digunggung", rbac.TaxView, license.ModeRead, h.digunggung),
+		route(http.MethodGet, "/api/v1/tax/digunggung/export", rbac.TaxExport, license.ModeExport, h.digunggungExport),
 	}
 }
 
@@ -254,4 +257,37 @@ func (h handlers) withholding(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return httpx.WriteJSON(w, http.StatusOK, rec)
+}
+
+func (h handlers) digunggung(w http.ResponseWriter, r *http.Request) error {
+	m, err := month(r)
+	if err != nil {
+		return err
+	}
+	d, err := h.svc.Digunggung(r.Context(), api.CompanyID(r), m)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, d)
+}
+
+func (h handlers) digunggungExport(w http.ResponseWriter, r *http.Request) error {
+	m, err := month(r)
+	if err != nil {
+		return err
+	}
+	d, err := h.svc.Digunggung(r.Context(), api.CompanyID(r), m)
+	if err != nil {
+		return err
+	}
+	t := DigunggungTable(d, m)
+	file := "ppn-digunggung-" + d.Month
+	if r.URL.Query().Get("format") == "csv" {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+file+`.csv"`)
+		return export.WriteCSV(w, t)
+	}
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+file+`.xlsx"`)
+	return export.WriteXLSX(w, t)
 }

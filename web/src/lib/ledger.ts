@@ -92,6 +92,17 @@ export function usePostJournal(companyId: string | null) {
   })
 }
 
+export type ReviseInput = { date: string; memo: string; lines: LineInput[]; reason: string; revision: number }
+
+/** Mengubah jurnal manual yang periodenya belum dikunci; versi lama disimpan di riwayat. */
+export function useReviseJournal(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({
+    mutationFn: ({ id, ...input }: ReviseInput & { id: string }) => api<EntryDetail>('PUT', `/journals/${id}`, input),
+    onSuccess: invalidate,
+  })
+}
+
 export function useVoidJournal(companyId: string | null) {
   const invalidate = useInvalidateLedger(companyId)
   return useMutation({

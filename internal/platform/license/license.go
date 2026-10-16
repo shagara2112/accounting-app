@@ -34,6 +34,10 @@ type Status struct {
 	ExpiresAt string `json:"expiresAt,omitempty"`
 	DaysLeft  *int   `json:"daysLeft,omitempty"`
 	Message   string `json:"message"`
+	// UpdateRequired: versi aplikasi di bawah versi minimum dari console (LIC-10);
+	// data tetap bisa dibaca dan diekspor, tetapi tidak bisa diubah sampai diperbarui.
+	UpdateRequired bool   `json:"updateRequired,omitempty"`
+	MinVersion     string `json:"minVersion,omitempty"`
 }
 
 // Allows menerapkan tabel "Perilaku aplikasi per kondisi lisensi" di PRD.
@@ -44,7 +48,7 @@ func (s Status) Allows(m Mode) bool {
 	case ModeRead:
 		return s.State != Suspended && s.State != InvalidKey
 	case ModeWrite:
-		return s.State == Active || s.State == Warning
+		return (s.State == Active || s.State == Warning) && !s.UpdateRequired
 	}
 	return false
 }

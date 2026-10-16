@@ -2,14 +2,18 @@ import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import type { AgingBucket, Me } from '../lib/api'
 import { formatDate, monthEnd, monthLabel, monthOf, monthStart, todayISO } from '../lib/dates'
-import { useAging, useDocs, useSettlements, type TradeKind } from '../lib/docs'
+import { useAging, useDocs, useNotes, useSettlements, type TradeKind } from '../lib/docs'
 import { useDebounced } from '../lib/hooks'
 import { docState, tradeText } from '../lib/labels'
-import { formatAmount } from '../lib/money'
+import { formatAmount, toUnits } from '../lib/money'
 import { can } from '../lib/session'
+import { isRestricted } from '../lib/dimensions'
 import { MonthNav } from '../components/MonthNav'
-import { DocDrawer, SettlementDrawer } from '../components/TradeDrawers'
-import { Badge, Button, EmptyState, Field, PageHeader, Segmented, Skeleton, TableShell, Tabs, inputClass, td, th } from '../components/ui'
+import { DocDrawer, NoteDrawer, SettlementDrawer } from '../components/TradeDrawers'
+import { DailySaleDrawer } from '../components/DailySaleDrawer'
+import { useCashProjection } from '../lib/reports'
+import { useDailySales } from '../lib/daily'
+import { Alert, Badge, Button, Card, EmptyState, Field, PageHeader, Segmented, Skeleton, TableShell, Tabs, inputClass, td, th } from '../components/ui'
 
 const states = [
   { value: '', label: 'Semua' },
@@ -35,6 +39,8 @@ export function TradePage({ me, kind }: { me: Me; kind: TradeKind }) {
   const tab = params.get('tab') ?? t.tabs.docs
   const docId = params.get('id')
   const settlementId = params.get('pid')
+  const noteId = params.get('nid')
+  const dailyId = params.get('hid')
 
   function update(next: Record<string, string | null>) {
     const p = new URLSearchParams(params)
@@ -73,15 +79,28 @@ export function TradePage({ me, kind }: { me: Me; kind: TradeKind }) {
         tabs={[
           { value: t.tabs.docs, label: kind === 'sales' ? 'Faktur' : 'Tagihan' },
           { value: t.tabs.settle, label: t.settle },
+          { value: t.tabs.notes, label: t.notes },
+          ...(kind === 'sales' ? [{ value: 'harian', label: 'Penjualan harian' }] : []),
           { value: t.tabs.aging, label: t.aging },
         ]}
       />
       {tab === t.tabs.docs && <DocList me={me} kind={kind} onOpen={(id) => update({ id })} />}
       {tab === t.tabs.settle && <SettlementList me={me} kind={kind} onOpen={(id) => update({ pid: id })} />}
+      {tab === t.tabs.notes && <NoteList me={me} kind={kind} onOpen={(id) => update({ nid: id })} />}
+      {tab === 'harian' && kind === 'sales' && <DailyList me={me} onOpen={(id) => update({ hid: id })} />}
       {tab === t.tabs.aging && <AgingTable me={me} kind={kind} onContact={(id) => update({ tab: null, kontak: id, status: 'open' })} />}
 
-      <DocDrawer me={me} kind={kind} id={docId} onClose={() => update({ id: null })} onOpenSettlement={(id) => update({ id: null, pid: id })} />
+      <DocDrawer
+        me={me}
+        kind={kind}
+        id={docId}
+        onClose={() => update({ id: null })}
+        onOpenSettlement={(id) => update({ id: null, pid: id })}
+        onOpenNote={(id) => update({ id: null, nid: id })}
+      />
       <SettlementDrawer me={me} kind={kind} id={settlementId} onClose={() => update({ pid: null })} onOpenDoc={(id) => update({ pid: null, id })} />
+      <NoteDrawer me={me} kind={kind} id={noteId} onClose={() => update({ nid: null })} onOpenDoc={(id) => update({ nid: null, id })} />
+      {kind === 'sales' && <DailySaleDrawer me={me} id={dailyId} onClose={() => update({ hid: null })} />}
     </div>
   )
 }
@@ -225,7 +244,12 @@ function SettlementList({ me, kind, onOpen }: { me: Me; kind: TradeKind; onOpen:
           {items.map((s) => (
             <tr key={s.id} onClick={() => onOpen(s.id)} className={`cursor-pointer border-t border-line transition-colors duration-150 hover:bg-hover ${s.id === flash ? 'flash' : ''} ${s.status === 'void' ? 'text-muted' : ''}`}>
               <td className={`${td} num whitespace-nowrap`}>{formatDate(s.date)}</td>
-              <td className={`${td} num font-semibold whitespace-nowrap ${s.status === 'void' ? 'line-through' : 'text-accent'}`}>{s.number}</td>
+              <td className={`${td} num font-semibold whitespace-nowrap ${s.status === 'void' ? 'line-through' : 'text-accent'}`}>
+                {s.number}
+                {(s.kind === 'pengembalian' || toUnits(s.advance) > 0n) && (
+                  <span className="block text-xs font-normal text-muted">{s.kind === 'pengembalian' ? 'Pengembalian uang muka' : 'Uang muka'}</span>
+                )}
+              </td>
               <td className={`${td} max-w-[240px] truncate`}>{s.contactName}</td>
               <td className={td}>{s.cashAccount}</td>
               <td className={`${td} num text-right`}>{formatAmount(s.amount)}</td>
@@ -235,6 +259,137 @@ function SettlementList({ me, kind, onOpen }: { me: Me; kind: TradeKind; onOpen:
         </tbody>
       </TableShell>
       {list.isSuccess && items.length === 0 && <EmptyState title={`Belum ada ${t.settle_} di ${monthLabel(month)}`} />}
+    </>
+  )
+}
+
+function NoteList({ me, kind, onOpen }: { me: Me; kind: TradeKind; onOpen: (id: string) => void }) {
+  const t = tradeText[kind]
+  const [params, setParams] = useSearchParams()
+  const month = params.get('bulan') ?? monthOf(todayISO())
+  const list = useNotes(kind, me.activeCompanyId, { from: monthStart(month), to: monthEnd(month) })
+  const items = list.data ?? []
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-3">
+        <MonthNav
+          value={month}
+          onChange={(m) => {
+            const p = new URLSearchParams(params)
+            p.set('bulan', m)
+            setParams(p, { replace: true })
+          }}
+        />
+        <p className="text-sm text-muted">
+          Buat {t.note_} dari {t.doc_} yang diposting: buka {t.doc_}nya, lalu pilih “{t.note} / retur”.
+        </p>
+      </div>
+      <TableShell minWidth={820}>
+        <thead className="bg-hover/60">
+          <tr>
+            <th className={th}>Tanggal</th>
+            <th className={th}>Nomor</th>
+            <th className={th}>{t.contact}</th>
+            <th className={th}>{t.doc} asal</th>
+            <th className={`${th} text-right`}>Total</th>
+            <th className={th}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.isPending &&
+            [0, 1, 2].map((i) => (
+              <tr key={i} className="border-t border-line">
+                <td colSpan={6} className={td}>
+                  <Skeleton className="h-5" />
+                </td>
+              </tr>
+            ))}
+          {items.map((n) => (
+            <tr key={n.id} onClick={() => onOpen(n.id)} className={`cursor-pointer border-t border-line transition-colors duration-150 hover:bg-hover ${n.status === 'void' ? 'text-muted' : ''}`}>
+              <td className={`${td} num whitespace-nowrap`}>{formatDate(n.date)}</td>
+              <td className={`${td} num font-semibold whitespace-nowrap ${n.status === 'void' ? 'line-through' : 'text-accent'}`}>{n.number}</td>
+              <td className={`${td} max-w-[240px] truncate`}>{n.contactName}</td>
+              <td className={`${td} num`}>{n.docNumber}</td>
+              <td className={`${td} num text-right`}>{formatAmount(n.total)}</td>
+              <td className={td}>{n.status === 'void' ? <Badge tone="bad">Void</Badge> : <Badge tone="good">Diposting</Badge>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </TableShell>
+      {list.isSuccess && items.length === 0 && <EmptyState title={`Belum ada ${t.note_} di ${monthLabel(month)}`} />}
+    </>
+  )
+}
+
+/** Rekap penjualan harian retail (IND-07), diisi lewat impor Excel atau CSV. */
+function DailyList({ me, onOpen }: { me: Me; onOpen: (id: string) => void }) {
+  const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
+  const month = params.get('bulan') ?? monthOf(todayISO())
+  const list = useDailySales(me.activeCompanyId, { from: monthStart(month), to: monthEnd(month) })
+  const items = list.data ?? []
+  const posted = items.filter((d) => d.status === 'posted')
+  const sum = (k: 'dpp' | 'vat' | 'total') => posted.reduce((a, d) => a + toUnits(d[k]), 0n)
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-3">
+        <MonthNav
+          value={month}
+          onChange={(m) => {
+            const p = new URLSearchParams(params)
+            p.set('bulan', m)
+            setParams(p, { replace: true })
+          }}
+        />
+        {can(me, 'sales.create') && (
+          <Button variant="secondary" size="sm" onClick={() => navigate('/impor?jenis=penjualan-harian')}>
+            Impor rekap harian
+          </Button>
+        )}
+        {posted.length > 0 && (
+          <p className="text-sm text-muted">
+            {posted.length} rekap · penjualan <span className="num font-semibold text-ink">Rp {formatAmount(sum('total'))}</span> · PPN digunggung{' '}
+            <span className="num font-semibold text-ink">Rp {formatAmount(sum('vat'))}</span>
+          </p>
+        )}
+      </div>
+      <TableShell minWidth={760}>
+        <thead className="bg-hover/60">
+          <tr>
+            <th className={th}>Tanggal</th>
+            <th className={th}>Nomor</th>
+            <th className={th}>Toko</th>
+            <th className={`${th} text-right`}>DPP</th>
+            <th className={`${th} text-right`}>PPN</th>
+            <th className={`${th} text-right`}>Total</th>
+            <th className={th}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.isPending &&
+            [0, 1, 2].map((i) => (
+              <tr key={i} className="border-t border-line">
+                <td colSpan={7} className={td}>
+                  <Skeleton className="h-5" />
+                </td>
+              </tr>
+            ))}
+          {items.map((d) => (
+            <tr key={d.id} onClick={() => onOpen(d.id)} className={`cursor-pointer border-t border-line transition-colors duration-150 hover:bg-hover ${d.status === 'void' ? 'text-muted' : ''}`}>
+              <td className={`${td} num whitespace-nowrap`}>{formatDate(d.date)}</td>
+              <td className={`${td} num font-semibold whitespace-nowrap ${d.status === 'void' ? 'line-through' : 'text-accent'}`}>{d.number}</td>
+              <td className={td}>{d.store || '—'}</td>
+              <td className={`${td} num text-right`}>{formatAmount(d.dpp)}</td>
+              <td className={`${td} num text-right`}>{formatAmount(d.vat)}</td>
+              <td className={`${td} num text-right`}>{formatAmount(d.total)}</td>
+              <td className={td}>{d.status === 'void' ? <Badge tone="bad">Void</Badge> : <Badge tone="good">Diposting</Badge>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </TableShell>
+      {list.isSuccess && items.length === 0 && (
+        <EmptyState title={`Belum ada rekap penjualan harian di ${monthLabel(month)}`} body="Impor rekap dari kasir atau spreadsheet toko; satu rekap per tanggal dan toko." />
+      )}
     </>
   )
 }
@@ -306,6 +461,63 @@ function AgingTable({ me, kind, onContact }: { me: Me; kind: TradeKind; onContac
         </TableShell>
       </div>
       {a && a.rows.length === 0 && <EmptyState title={`Tidak ada ${kind === 'sales' ? 'piutang' : 'utang'} yang belum lunas per ${formatDate(date)}`} />}
+      {kind === 'purchase' && can(me, 'report.view') && !isRestricted(me) && <CashProjectionCard me={me} date={date} />}
     </>
+  )
+}
+
+/** AP-06: saldo kas proyeksi per minggu dari piutang dan utang yang jatuh tempo. */
+function CashProjectionCard({ me, date }: { me: Me; date: string }) {
+  const q = useCashProjection(me.activeCompanyId, date)
+  const p = q.data
+  return (
+    <Card
+      title="Proyeksi kebutuhan kas"
+      subtitle="Saldo kas dan bank hari ini, ditambah piutang dan dikurangi utang yang jatuh tempo per minggu. Dokumen lewat jatuh tempo dianggap diterima atau dibayar segera."
+    >
+      {!p && <Skeleton className="h-32" />}
+      {p && (
+        <>
+          <p className="text-sm">
+            Saldo kas dan bank: <span className="num font-semibold">Rp {formatAmount(p.cash)}</span>
+          </p>
+          {p.firstShortfall && <Alert tone="warn">Saldo proyeksi negatif mulai {p.firstShortfall.toLowerCase()}. Siapkan dana tambahan atau jadwalkan ulang pembayaran.</Alert>}
+          <TableShell minWidth={640}>
+            <thead className="bg-hover/60">
+              <tr>
+                <th className={th}>Periode</th>
+                <th className={`${th} text-right`}>Piutang jatuh tempo</th>
+                <th className={`${th} text-right`}>Utang jatuh tempo</th>
+                <th className={`${th} text-right`}>Saldo proyeksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {p.buckets.map((b) => (
+                <tr key={b.label} className="border-t border-line">
+                  <td className={td}>
+                    <span className="font-medium">{b.label}</span>
+                    {b.from && (
+                      <span className="block text-xs text-muted">
+                        {formatDate(b.from)}
+                        {b.to ? ` – ${formatDate(b.to)}` : ' dan seterusnya'}
+                      </span>
+                    )}
+                  </td>
+                  <td className={`${td} num text-right`}>
+                    {formatAmount(b.in, { blankZero: true })}
+                    {b.invoices.length > 0 && <span className="block text-xs text-muted">{b.invoices.length} faktur</span>}
+                  </td>
+                  <td className={`${td} num text-right`}>
+                    {formatAmount(b.out, { blankZero: true })}
+                    {b.bills.length > 0 && <span className="block text-xs text-muted">{b.bills.length} tagihan</span>}
+                  </td>
+                  <td className={`${td} num text-right font-semibold ${toUnits(b.balance) < 0n ? 'text-bad' : ''}`}>{formatAmount(b.balance, { parens: true })}</td>
+                </tr>
+              ))}
+            </tbody>
+          </TableShell>
+        </>
+      )}
+    </Card>
   )
 }

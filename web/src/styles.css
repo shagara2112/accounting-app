@@ -95,3 +95,33 @@
     transition-duration: 1ms !important;
   }
 }
+
+/* Cetak laporan (Cetak / PDF dari browser): selalu terang, tanpa menu, tabel tidak terpotong. */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  :root {
+    color-scheme: light;
+    --color-canvas: #ffffff;
+    --color-surface: #ffffff;
+    --color-ink: #111827;
+    --color-ink-2: #3f4756;
+    --color-muted: #5b6474;
+    --color-line: #e4e7ec;
+    --color-line-2: #b0b7c3;
+    --color-hover: #f4f5f8;
+    --color-accent: #3355e0;
+    --color-good: #0f6b4c;
+    --color-bad: #b42318;
+  }
+  body {
+    background: #ffffff;
+  }
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
+  tr {
+    break-inside: avoid;
+  }
+}

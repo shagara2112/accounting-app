@@ -1,20 +1,23 @@
 import { useMemo, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { Link, useNavigate, useSearchParams } from 'react-router'
-import { ApiError, newIdempotencyKey, type Me } from '../lib/api'
-import { addMonths, formatDate, monthEnd, monthLabel, monthOf, todayISO } from '../lib/dates'
-import { useAccounts, usePeriods, usePostJournal } from '../lib/ledger'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { ApiError, newIdempotencyKey, type EntryDetail, type Me } from '../lib/api'
+import { addMonths, formatDate, monthEnd, monthLabel, monthOf, monthStart, todayISO } from '../lib/dates'
+import { useAccounts, useEntry, usePeriods, usePostJournal, useReviseJournal } from '../lib/ledger'
 import { periodStatus } from '../lib/labels'
 import { formatAmount, formatRp, fromUnits, parseInput } from '../lib/money'
+import { useProjectOptions } from '../lib/projects'
 import { can } from '../lib/session'
 import { AccountPicker } from '../components/AccountPicker'
+import { SearchSelect } from '../components/SearchSelect'
 import { useToast } from '../components/Toast'
 import { Alert, Badge, Button, Card, Checkbox, EmptyState, Field, Skeleton, ease, inputClass } from '../components/ui'
 
-type Row = { key: string; accountId: string; memo: string; debit: string; credit: string }
+// branchId dan departmentId hanya dibawa dari jurnal yang sedang diubah, supaya dimensinya tidak hilang.
+type Row = { key: string; accountId: string; memo: string; debit: string; credit: string; projectId: string; branchId?: string; departmentId?: string }
 type RowErrors = Record<string, { account?: string; amount?: string; memo?: string }>
 
-const blankRow = (): Row => ({ key: newIdempotencyKey(), accountId: '', memo: '', debit: '', credit: '' })
+const blankRow = (): Row => ({ key: newIdempotencyKey(), accountId: '', memo: '', debit: '', credit: '', projectId: '' })
 const isEmpty = (r: Row) => !r.accountId && !r.memo.trim() && !r.debit.trim() && !r.credit.trim()
 
 export function JournalForm({ me }: { me: Me }) {
@@ -24,22 +27,63 @@ export function JournalForm({ me }: { me: Me }) {
   return <JournalFormFor key={kind} me={me} kind={kind} />
 }
 
-function JournalFormFor({ me, kind }: { me: Me; kind: 'umum' | 'penyesuaian' }) {
+/** Mengubah jurnal manual yang sudah diposting selama periodenya belum dikunci (revisi klien). */
+export function JournalEdit({ me }: { me: Me }) {
+  const { id = '' } = useParams()
+  const navigate = useNavigate()
+  const entry = useEntry(me.activeCompanyId, id)
+  const e = entry.data && entry.data.id === id ? entry.data : undefined
+  if (entry.isError) return <EmptyState title="Jurnal tidak ditemukan" body={entry.error.message} />
+  if (!e) return <Skeleton className="h-96" />
+  if (!e.editable || (e.kind !== 'umum' && e.kind !== 'penyesuaian')) {
+    return (
+      <EmptyState
+        title={`${e.number} tidak bisa diubah`}
+        body={e.editBlock ?? 'Hanya jurnal manual yang belum di-void dan periodenya belum dikunci yang bisa diubah. Jurnal dari dokumen dikoreksi lewat dokumennya.'}
+        action={
+          <Button variant="secondary" onClick={() => navigate(`/jurnal?bulan=${monthOf(e.date)}&id=${e.id}`)}>
+            Kembali ke jurnal
+          </Button>
+        }
+      />
+    )
+  }
+  return <JournalFormFor key={`${e.id}-${e.revision}`} me={me} kind={e.kind} existing={e} />
+}
+
+function JournalFormFor({ me, kind, existing }: { me: Me; kind: 'umum' | 'penyesuaian'; existing?: EntryDetail }) {
   const adjusting = kind === 'penyesuaian'
+  const editing = existing !== undefined
   const companyId = me.activeCompanyId
   const navigate = useNavigate()
   const toast = useToast()
 
   const accounts = useAccounts(companyId)
   const post = usePostJournal(companyId)
+  const revise = useReviseJournal(companyId)
   // Penyesuaian biasanya untuk bulan lalu, bertanggal akhir bulan.
-  const [date, setDate] = useState(() => (adjusting ? monthEnd(addMonths(monthOf(todayISO()), -1)) : todayISO()))
-  const [memo, setMemo] = useState('')
-  const [autoReverse, setAutoReverse] = useState(false)
-  const [rows, setRows] = useState<Row[]>(() => [blankRow(), blankRow()])
+  const [date, setDate] = useState(() => existing?.date ?? (adjusting ? monthEnd(addMonths(monthOf(todayISO()), -1)) : todayISO()))
+  const [memo, setMemo] = useState(existing?.memo ?? '')
+  const [autoReverse, setAutoReverse] = useState(existing?.autoReverse ?? false)
+  const [reason, setReason] = useState('')
+  const [rows, setRows] = useState<Row[]>(() =>
+    existing
+      ? existing.lines.map((l) => ({
+          key: newIdempotencyKey(),
+          accountId: l.accountId,
+          memo: l.memo,
+          debit: formatAmount(l.debit, { blankZero: true }),
+          credit: formatAmount(l.credit, { blankZero: true }),
+          projectId: l.projectId ?? '',
+          branchId: l.branchId,
+          departmentId: l.departmentId,
+        }))
+      : [blankRow(), blankRow()],
+  )
   const [idempotencyKey] = useState(newIdempotencyKey)
   const [attempt, setAttempt] = useState(0)
   const [rowErrors, setRowErrors] = useState<RowErrors>({})
+  const projectOptions = useProjectOptions(companyId, can(me, 'project.view'), rows.map((r) => r.projectId))
 
   const year = Number(date.slice(0, 4)) || new Date().getFullYear()
   const periods = usePeriods(companyId, year)
@@ -103,42 +147,51 @@ function JournalFormFor({ me, kind }: { me: Me; kind: 'umum' | 'penyesuaian' }) 
 
   function submit(e?: FormEvent) {
     e?.preventDefault()
-    if (!ready || post.isPending) return
+    if (!ready || post.isPending || revise.isPending) return
     setAttempt((n) => n + 1)
     const submitted = rows.filter((r) => !isEmpty(r))
-    post.mutate(
-      {
-        kind,
-        idempotencyKey,
-        input: {
-          date,
-          memo: memo.trim(),
-          autoReverse: adjusting && autoReverse,
-          lines: submitted.map((r) => ({
-            accountId: r.accountId,
-            debit: fromUnits(parseInput(r.debit) ?? 0n),
-            credit: fromUnits(parseInput(r.credit) ?? 0n),
-            memo: r.memo.trim(),
-          })),
+    const lines = submitted.map((r) => ({
+      accountId: r.accountId,
+      debit: fromUnits(parseInput(r.debit) ?? 0n),
+      credit: fromUnits(parseInput(r.credit) ?? 0n),
+      memo: r.memo.trim(),
+      projectId: r.projectId || undefined,
+      branchId: r.branchId,
+      departmentId: r.departmentId,
+    }))
+    const onError = (err: Error) => {
+      if (!(err instanceof ApiError)) return
+      const errs: RowErrors = {}
+      for (const [field, msg] of Object.entries(err.fields)) {
+        const m = /^lines\.(\d+)\.(accountId|amount|memo)$/.exec(field)
+        const row = m && submitted[Number(m[1])]
+        if (!row) continue
+        const slot = m[2] === 'accountId' ? 'account' : m[2]
+        errs[row.key] = { ...errs[row.key], [slot]: msg }
+      }
+      setRowErrors(errs)
+    }
+    if (existing) {
+      revise.mutate(
+        { id: existing.id, date, memo: memo.trim(), lines, reason: reason.trim(), revision: existing.revision },
+        {
+          onSuccess: (x) => {
+            toast(`${x.number} diubah · versi lama tersimpan di riwayat`)
+            navigate(`/jurnal?bulan=${monthOf(x.date)}&id=${x.id}&baru=${x.id}`)
+          },
+          onError,
         },
-      },
+      )
+      return
+    }
+    post.mutate(
+      { kind, idempotencyKey, input: { date, memo: memo.trim(), autoReverse: adjusting && autoReverse, lines } },
       {
         onSuccess: (p) => {
           toast(`${p.number} diposting · jurnal seimbang${p.autoReversal ? ` · pembalik ${p.autoReversal.number}` : ''}`)
           navigate(`/jurnal?bulan=${monthOf(date)}&baru=${p.id}`)
         },
-        onError: (err) => {
-          if (!(err instanceof ApiError)) return
-          const errs: RowErrors = {}
-          for (const [field, msg] of Object.entries(err.fields)) {
-            const m = /^lines\.(\d+)\.(accountId|amount|memo)$/.exec(field)
-            const row = m && submitted[Number(m[1])]
-            if (!row) continue
-            const slot = m[2] === 'accountId' ? 'account' : m[2]
-            errs[row.key] = { ...errs[row.key], [slot]: msg }
-          }
-          setRowErrors(errs)
-        },
+        onError,
       },
     )
   }
@@ -150,25 +203,33 @@ function JournalFormFor({ me, kind }: { me: Me; kind: 'umum' | 'penyesuaian' }) 
     }
   }
 
-  if (!can(me, adjusting ? 'ledger.adjustment.post' : 'ledger.journal.create')) {
-    return <EmptyState title="Anda tidak punya izin membuat jurnal ini" body="Peran Anda di PT ini tidak mengizinkannya." />
+  const allowed = editing
+    ? can(me, 'ledger.journal.edit') && (!adjusting || can(me, 'ledger.adjustment.post'))
+    : can(me, adjusting ? 'ledger.adjustment.post' : 'ledger.journal.create')
+  if (!allowed) {
+    return <EmptyState title={`Anda tidak punya izin ${editing ? 'mengubah' : 'membuat'} jurnal ini`} body="Peran Anda di PT ini tidak mengizinkannya." />
   }
   const accountList = accounts.data?.items ?? []
-  const serverError = post.error instanceof ApiError ? post.error : null
+  const failure = editing ? revise.error : post.error
+  const serverError = failure instanceof ApiError ? failure : null
   const nextMonthStart = `${addMonths(monthOf(date || todayISO()), 1)}-01`
 
   return (
     <form onSubmit={submit} onKeyDown={onFormKeyDown} className="flex flex-col gap-5" noValidate>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <Link to="/jurnal" className="text-sm font-medium text-muted hover:text-ink">
+          <Link to={existing ? `/jurnal?bulan=${monthOf(existing.date)}&id=${existing.id}` : '/jurnal'} className="text-sm font-medium text-muted hover:text-ink">
             ← Jurnal
           </Link>
-          <h1 className="mt-1 text-[26px] font-bold tracking-tight">{adjusting ? 'Jurnal penyesuaian baru' : 'Jurnal umum baru'}</h1>
+          <h1 className="mt-1 text-[26px] font-bold tracking-tight">
+            {existing ? `Ubah ${existing.number}` : adjusting ? 'Jurnal penyesuaian baru' : 'Jurnal umum baru'}
+          </h1>
           <p className="mt-1.5 max-w-2xl text-sm text-muted">
-            {adjusting
-              ? 'Seri JP, biasanya bertanggal akhir bulan. Boleh masuk saat periode sudah ditutup untuk transaksi, selama belum dikunci final.'
-              : 'Seri JU. Setelah diposting, jurnal tidak bisa diubah; koreksi dilakukan dengan void oleh Manager atau Pemilik.'}
+            {existing
+              ? 'Nomor jurnal tetap. Isi sebelumnya disimpan di riwayat perubahan dan audit trail, sehingga perubahan ini tetap bisa ditelusuri.'
+              : adjusting
+                ? 'Seri JP, biasanya bertanggal akhir bulan. Boleh masuk saat periode sudah ditutup untuk transaksi, selama belum dikunci final.'
+                : 'Seri JU. Setelah diposting, jurnal masih bisa diubah selama periodenya belum dikunci; setiap perubahan tercatat di riwayat.'}
           </p>
         </div>
       </div>
@@ -181,10 +242,14 @@ function JournalFormFor({ me, kind }: { me: Me; kind: 'umum' | 'penyesuaian' }) 
             type="date"
             required
             value={date}
+            min={existing ? monthStart(monthOf(existing.date)) : undefined}
+            max={existing ? monthEnd(monthOf(existing.date)) : undefined}
             onChange={(e) => setDate(e.target.value)}
             error={serverError?.fields.date}
             hint={
-              period && period.status !== 'open' ? (
+              existing ? (
+                `Hanya dalam ${monthLabel(monthOf(existing.date))}, sesuai nomornya.`
+              ) : period && period.status !== 'open' ? (
                 <span className={blockedByPeriod ? 'text-bad' : 'text-warn'}>
                   {monthLabel(period.month)}: {periodStatus[period.status].help}
                 </span>
@@ -203,12 +268,24 @@ function JournalFormFor({ me, kind }: { me: Me; kind: 'umum' | 'penyesuaian' }) 
             />
           </div>
         </div>
-        {adjusting && (
+        {adjusting && !existing && (
           <Checkbox
             checked={autoReverse}
             onChange={setAutoReverse}
             label={`Balik otomatis pada ${formatDate(nextMonthStart)}`}
             hint="Untuk akrual: Lajur langsung membuat jurnal pembalik (seri JB) di awal bulan berikutnya, sehingga transaksi aslinya bisa dicatat normal."
+          />
+        )}
+        {existing?.autoReverse && <p className="text-sm text-muted">Jurnal pembalik otomatisnya di awal bulan berikutnya ikut berubah mengikuti isi baru.</p>}
+        {existing && (
+          <Field
+            id="alasan"
+            label="Alasan perubahan (opsional)"
+            placeholder="Mis. salah akun, nominal salah ketik"
+            value={reason}
+            maxLength={300}
+            onChange={(e) => setReason(e.target.value)}
+            error={serverError?.fields.reason}
           />
         )}
       </Card>
@@ -260,6 +337,18 @@ function JournalFormFor({ me, kind }: { me: Me; kind: 'umum' | 'penyesuaian' }) 
                           />
                         )}
                         {err?.account && <p className="mt-1 text-[13px] text-bad">{err.account}</p>}
+                        {projectOptions.length > 0 && (
+                          <div className="mt-1.5">
+                            <SearchSelect
+                              label={`Proyek baris ${i + 1}`}
+                              options={projectOptions}
+                              value={r.projectId}
+                              onChange={(p) => setRow(r.key, { projectId: p })}
+                              placeholder="Proyek (opsional)"
+                              clearLabel="Tanpa proyek"
+                            />
+                          </div>
+                        )}
                       </td>
                       <td className="min-w-[180px] px-2 py-2">
                         <input
@@ -339,17 +428,17 @@ function JournalFormFor({ me, kind }: { me: Me; kind: 'umum' | 'penyesuaian' }) 
 
       {serverError && Object.keys(rowErrors).length === 0 && !serverError.fields.date && <Alert shakeKey={attempt}>{serverError.message}</Alert>}
 
-      <div className="sticky bottom-0 z-10 -mx-8 border-t border-line bg-surface/95 px-8 py-4 backdrop-blur">
+      <div className="sticky bottom-0 z-10 -mx-4 border-t border-line bg-surface/95 px-4 py-4 backdrop-blur sm:-mx-8 sm:px-8">
         <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
           <Total label="Total debit" value={totals.debit} />
           <Total label="Total kredit" value={totals.credit} />
           <BalanceBadge diff={totals.diff} empty={totals.debit === 0n && totals.credit === 0n} unreadable={totals.unreadable} />
           <div className="ml-auto flex gap-2.5">
-            <Button variant="secondary" onClick={() => navigate('/jurnal')}>
+            <Button variant="secondary" onClick={() => navigate(existing ? `/jurnal?bulan=${monthOf(existing.date)}&id=${existing.id}` : '/jurnal')}>
               Batal
             </Button>
-            <Button type="submit" busy={post.isPending} disabled={!ready}>
-              Posting jurnal
+            <Button type="submit" busy={post.isPending || revise.isPending} disabled={!ready}>
+              {existing ? 'Simpan perubahan' : 'Posting jurnal'}
             </Button>
           </div>
         </div>

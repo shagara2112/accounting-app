@@ -49,6 +49,13 @@ func URL(t testing.TB) string {
 // Pool membuat basis data sementara yang sudah dimigrasi dan berisi peran bawaan.
 func Pool(t testing.TB) *pgxpool.Pool {
 	t.Helper()
+	pool, _ := PoolURL(t)
+	return pool
+}
+
+// PoolURL seperti Pool, ditambah alamat basis datanya (mis. untuk pg_dump di tes backup).
+func PoolURL(t testing.TB) (*pgxpool.Pool, string) {
+	t.Helper()
 	dbURL := URL(t)
 	ctx := context.Background()
 	if err := migrate.Up(ctx, dbURL); err != nil {
@@ -62,5 +69,5 @@ func Pool(t testing.TB) *pgxpool.Pool {
 	if err := rbac.SyncBuiltinRoles(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	return pool
+	return pool, dbURL
 }

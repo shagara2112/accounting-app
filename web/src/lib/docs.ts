@@ -7,6 +7,10 @@ import {
   type Aging,
   type Bill,
   type BillDetail,
+  type CreditNote,
+  type CreditNoteDetail,
+  type DebitNote,
+  type DebitNoteDetail,
   type Invoice,
   type InvoiceDetail,
   type Payment,
@@ -20,21 +24,30 @@ import { useInvalidateCompany } from './invalidate'
 
 export type TradeKind = 'sales' | 'purchase'
 
-export type Doc = Omit<Invoice, 'customerId' | 'customerName' | 'dpp'> & {
-  dpp?: string // hanya penjualan
-  contactId: string
-  contactName: string
-  supplierInvoiceNo: string
-  payable: string // penjualan: sama dengan total
-}
+type SalesOnly = 'dpp' | 'kind' | 'projectId' | 'progressPct' | 'subtotal' | 'discount' | 'retention' | 'receivable'
+
+export type Doc = Omit<Invoice, 'customerId' | 'customerName' | 'credited' | SalesOnly> &
+  Partial<Pick<Invoice, SalesOnly>> & {
+    contactId: string
+    contactName: string
+    supplierInvoiceNo: string
+    payable: string // penjualan: total − retensi (yang ditagih sekarang)
+    noted: string // nota kredit (penjualan) atau nota debit (pembelian) yang mengurangi sisa
+    opening?: boolean // tagihan saldo awal (pembelian); faktur saldo awal memakai kind
+  }
 
 export type DocPayment = { id: string; number: string; date: string; status: string; amount: string; withholding: string; withholdingCode?: string }
 
+export type DocNote = { id: string; number: string; date: string; status: 'posted' | 'void'; total: string; applied: string }
+
 export type DocDetail = Doc &
-  Pick<InvoiceDetail, 'totals' | 'lines' | 'journalEntryId' | 'createdById' | 'createdBy' | 'postedBy' | 'postedAt' | 'voidedBy' | 'voidedAt' | 'voidReason' | 'version'> & {
+  Pick<InvoiceDetail, 'totals' | 'journalEntryId' | 'createdById' | 'createdBy' | 'postedBy' | 'postedAt' | 'voidedBy' | 'voidedAt' | 'voidReason' | 'version'> & {
+    creditWarning?: string
+    lines: (InvoiceDetail['lines'][number] & { notedNet: string })[]
     withholdingCode?: string
     withholding: string
     payments: DocPayment[]
+    notes: DocNote[]
     duplicates: BillDetail['duplicates']
   }
 
@@ -56,12 +69,25 @@ export type DocInput = {
   dueDate: string
   memo: string
   withholdingCode: string
+  projectId: string // hanya penjualan; tagihan memakai proyek per baris
+  branchId: string
+  departmentId: string
   lines: TradeLineInput[]
   version: number
 }
 
 export type AllocationInput = { docId: string; amount: string; withholdingCode: string; withholding: string }
-export type SettlementInput = { contactId: string; date: string; cashAccountId: string; memo: string; allocations: AllocationInput[] }
+export type SettlementInput = {
+  contactId: string
+  date: string
+  cashAccountId: string
+  memo: string
+  allocations: AllocationInput[]
+  /** Uang muka baru di luar dokumen (AR-04, AP-02). */
+  advance: string
+  /** Saldo uang muka yang dipakai melunasi dokumen. */
+  fromAdvance: string
+}
 
 const paths = {
   sales: { docs: '/sales/invoices', open: '/sales/open-invoices', settle: '/sales/receipts', aging: '/sales/aging', contact: 'customer' },
@@ -70,11 +96,11 @@ const paths = {
 
 function toDoc(d: Invoice | Bill): Doc {
   if ('customerId' in d) {
-    const { customerId, customerName, ...rest } = d
-    return { ...rest, contactId: customerId, contactName: customerName, supplierInvoiceNo: '', payable: d.total }
+    const { customerId, customerName, credited, ...rest } = d
+    return { ...rest, contactId: customerId, contactName: customerName, supplierInvoiceNo: '', payable: d.receivable ?? d.total, noted: credited ?? '0' }
   }
-  const { supplierId, supplierName, ...rest } = d
-  return { ...rest, contactId: supplierId, contactName: supplierName }
+  const { supplierId, supplierName, debited, ...rest } = d
+  return { ...rest, contactId: supplierId, contactName: supplierName, noted: debited ?? '0' }
 }
 
 function toDocDetail(d: InvoiceDetail | BillDetail): DocDetail {
@@ -82,15 +108,19 @@ function toDocDetail(d: InvoiceDetail | BillDetail): DocDetail {
     return {
       ...d,
       ...toDoc(d),
+      lines: d.lines.map((l) => ({ ...l, notedNet: l.creditedNet ?? '0' })),
       withholding: '0',
       duplicates: [],
       payments: d.payments.map((p) => ({ id: p.receiptId, number: p.number, date: p.date, status: p.status, amount: p.amount, withholding: p.withholding, withholdingCode: p.withholdingCode })),
+      notes: (d.creditNotes ?? []).map((n) => ({ id: n.creditNoteId, number: n.number, date: n.date, status: n.status, total: n.total, applied: n.applied })),
     }
   }
   return {
     ...d,
     ...toDoc(d),
+    lines: d.lines.map((l) => ({ ...l, notedNet: l.debitedNet ?? '0' })),
     payments: d.payments.map((p) => ({ id: p.paymentId, number: p.number, date: p.date, status: p.status, amount: p.amount, withholding: '0' })),
+    notes: (d.debitNotes ?? []).map((n) => ({ id: n.debitNoteId, number: n.number, date: n.date, status: n.status, total: n.total, applied: n.applied })),
   }
 }
 
@@ -127,14 +157,22 @@ function toSettlementDetail(s: ReceiptDetail | PaymentDetail): SettlementDetail 
 }
 
 function docBody(kind: TradeKind, v: DocInput) {
-  const common = { date: v.date, dueDate: v.dueDate || undefined, memo: v.memo, lines: v.lines, version: v.version }
+  const common = {
+    date: v.date,
+    dueDate: v.dueDate || undefined,
+    memo: v.memo,
+    branchId: v.branchId || undefined,
+    departmentId: v.departmentId || undefined,
+    lines: v.lines,
+    version: v.version,
+  }
   return kind === 'sales'
-    ? { customerId: v.contactId, ...common }
+    ? { customerId: v.contactId, projectId: v.projectId || undefined, ...common }
     : { supplierId: v.contactId, supplierInvoiceNo: v.supplierInvoiceNo, withholdingCode: v.withholdingCode, ...common }
 }
 
 function settlementBody(kind: TradeKind, v: SettlementInput) {
-  const common = { date: v.date, cashAccountId: v.cashAccountId, memo: v.memo }
+  const common = { date: v.date, cashAccountId: v.cashAccountId || undefined, memo: v.memo, advance: v.advance, fromAdvance: v.fromAdvance }
   return kind === 'sales'
     ? {
         customerId: v.contactId,
@@ -266,5 +304,154 @@ export function useTaxCodes(companyId: string | null, date: string) {
     enabled: companyId !== null && date !== '',
     staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
+  })
+}
+
+// PDF dan email faktur (AR-03) -------------------------------------------------------
+
+export type InvoiceEmail = { to: string[]; cc: string[]; subject: string; message: string }
+
+export function useInvoiceEmailDraft(companyId: string | null, id: string | null) {
+  return useQuery({
+    queryKey: ['sales', companyId, 'invoice-email', id],
+    queryFn: () => api<InvoiceEmail>('GET', `/sales/invoices/${id}/email`),
+    enabled: companyId !== null && id !== null,
+  })
+}
+
+export function useEmailInvoice() {
+  return useMutation({
+    mutationFn: ({ id, idempotencyKey, ...v }: InvoiceEmail & { id: string; idempotencyKey: string }) =>
+      api('POST', `/sales/invoices/${id}/email`, v, { idempotencyKey }),
+  })
+}
+
+// Nota kredit/retur penjualan (AR-05) dan nota debit/retur pembelian (AP-05) --------------
+
+export type Note = {
+  id: string
+  number: string
+  status: 'posted' | 'void'
+  contactId: string
+  contactName: string
+  docId: string
+  docNumber: string
+  date: string
+  memo: string
+  dpp: string
+  vat: string
+  withholding: string
+  total: string
+  /** Total − PPh batal dipotong (pembelian); sama dengan total untuk penjualan. */
+  payable: string
+  applied: string
+  excess: string
+}
+
+export type NoteLine = InvoiceDetail['lines'][number] & { docLineId: string; restock: boolean }
+
+export type NoteDetail = Note & {
+  supplierInvoiceNo: string
+  totals: InvoiceDetail['totals']
+  lines: NoteLine[]
+  journalEntryId: string
+  createdAt: string
+  createdBy?: string
+  voidedBy?: string
+  voidedAt?: string
+  voidReason?: string
+}
+
+export type NoteLineInput = { docLineId: string; qty: string; unitPrice?: string; restock: boolean }
+export type NoteInput = { docId: string; date: string; memo: string; lines: NoteLineInput[] }
+
+const notePath = { sales: '/sales/credit-notes', purchase: '/purchase/debit-notes' }
+
+function toNote(n: CreditNote | DebitNote): Note {
+  if ('customerId' in n) {
+    const { customerId, customerName, invoiceId, invoiceNumber, ...rest } = n
+    return { ...rest, contactId: customerId, contactName: customerName, docId: invoiceId, docNumber: invoiceNumber, withholding: '0', payable: n.total }
+  }
+  const { supplierId, supplierName, billId, billNumber, ...rest } = n
+  return { ...rest, contactId: supplierId, contactName: supplierName, docId: billId, docNumber: billNumber }
+}
+
+function toNoteDetail(n: CreditNoteDetail | DebitNoteDetail): NoteDetail {
+  if ('customerId' in n) {
+    return { ...n, ...toNote(n), supplierInvoiceNo: '', lines: n.lines.map((l) => ({ ...l, docLineId: l.invoiceLineId })) }
+  }
+  return { ...n, ...toNote(n), lines: n.lines.map((l) => ({ ...l, docLineId: l.billLineId, restock: Boolean(l.productId) })) }
+}
+
+function noteBody(kind: TradeKind, v: NoteInput) {
+  const common = { date: v.date, memo: v.memo }
+  return kind === 'sales'
+    ? { invoiceId: v.docId, ...common, lines: v.lines.map((l) => ({ invoiceLineId: l.docLineId, qty: l.qty, unitPrice: l.unitPrice, restock: l.restock })) }
+    : { billId: v.docId, ...common, lines: v.lines.map((l) => ({ billLineId: l.docLineId, qty: l.qty, unitPrice: l.unitPrice })) }
+}
+
+export function useNotes(kind: TradeKind, companyId: string | null, f: { from: string; to: string }) {
+  return useQuery({
+    queryKey: [kind, companyId, 'notes', f],
+    queryFn: async () => (await api<{ items: (CreditNote | DebitNote)[] }>('GET', notePath[kind] + query(f))).items.map(toNote),
+    enabled: companyId !== null,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useNote(kind: TradeKind, companyId: string | null, id: string | null) {
+  return useQuery({
+    queryKey: [kind, companyId, 'note', id],
+    queryFn: async () => toNoteDetail(await api<CreditNoteDetail | DebitNoteDetail>('GET', `${notePath[kind]}/${id}`)),
+    enabled: companyId !== null && id !== null,
+  })
+}
+
+export function useCreateNote(kind: TradeKind, companyId: string | null) {
+  const invalidate = useInvalidateCompany(companyId)
+  return useMutation({
+    mutationFn: async ({ input, idempotencyKey }: { input: NoteInput; idempotencyKey: string }) =>
+      toNoteDetail(await api<CreditNoteDetail | DebitNoteDetail>('POST', notePath[kind], noteBody(kind, input), { idempotencyKey })),
+    onSuccess: invalidate,
+  })
+}
+
+export function useVoidNote(kind: TradeKind, companyId: string | null) {
+  const invalidate = useInvalidateCompany(companyId)
+  return useMutation({
+    mutationFn: async ({ id, date, reason, idempotencyKey }: { id: string; date: string; reason: string; idempotencyKey: string }) =>
+      toNoteDetail(await api<CreditNoteDetail | DebitNoteDetail>('POST', `${notePath[kind]}/${id}/void`, { date, reason }, { idempotencyKey })),
+    onSuccess: invalidate,
+  })
+}
+
+// Uang muka pelanggan dan pemasok (AR-04, AP-02) ---------------------------------------
+
+const advancePath = { sales: { list: '/sales/advances', refund: '/sales/advance-refunds' }, purchase: { list: '/purchase/advances', refund: '/purchase/advance-refunds' } }
+
+export function useAdvanceBalance(kind: TradeKind, companyId: string | null, contactId: string) {
+  return useQuery({
+    queryKey: [kind, companyId, 'advance', contactId],
+    queryFn: async () => {
+      const r = await api<{ items: { contactId: string; balance: string }[] }>('GET', advancePath[kind].list + query({ [paths[kind].contact]: contactId }))
+      return r.items[0]?.balance ?? '0'
+    },
+    enabled: companyId !== null && contactId !== '',
+  })
+}
+
+export function useRefundAdvance(kind: TradeKind, companyId: string | null) {
+  const invalidate = useInvalidateCompany(companyId)
+  return useMutation({
+    mutationFn: async ({ contactId, idempotencyKey, ...v }: { contactId: string; date: string; cashAccountId: string; amount: string; memo: string; idempotencyKey: string }) =>
+      toSettlementDetail(
+        await api<ReceiptDetail | PaymentDetail>(
+          'POST',
+          advancePath[kind].refund,
+          { [kind === 'sales' ? 'customerId' : 'supplierId']: contactId, ...v },
+          { idempotencyKey },
+        ),
+      ),
+    onSuccess: invalidate,
   })
 }

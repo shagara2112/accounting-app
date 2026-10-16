@@ -1,12 +1,15 @@
-import { useState } from 'react'
-import { useSearchParams } from 'react-router'
-import { ApiError, type CompanyProfile, type Me, type OutputInvoice, type TaxSettings, type TaxStatus } from '../lib/api'
+import { useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router'
+import { useDigunggung } from '../lib/daily'
+import { ApiError, download, type CompanyProfile, type Me, type OutputInvoice, type TaxSettings, type TaxStatus } from '../lib/api'
 import { formatDate, formatDateTime, monthLabel, monthOf, todayISO } from '../lib/dates'
 import { formatAmount, toUnits } from '../lib/money'
 import { can } from '../lib/session'
 import {
   useBatches,
   useCompanyProfile,
+  useLogoVersion,
+  useSetLogo,
   useOutputs,
   useSaveCompanyProfile,
   useSaveTaxSettings,
@@ -45,12 +48,14 @@ export function TaxPage({ me }: { me: Me }) {
           { value: 'faktur', label: 'Faktur keluaran' },
           { value: 'ppn', label: 'Rekap PPN' },
           { value: 'pph', label: 'PPh dipotong' },
+          { value: 'digunggung', label: 'PPN digunggung' },
           { value: 'pengaturan', label: 'Pengaturan' },
         ]}
       />
       {tab === 'faktur' && <Outputs me={me} />}
       {tab === 'ppn' && <VATRecapTab me={me} />}
       {tab === 'pph' && <WithholdingTab me={me} />}
+      {tab === 'digunggung' && <DigunggungTab me={me} />}
       {tab === 'pengaturan' && <SettingsTab me={me} />}
     </div>
   )
@@ -515,6 +520,88 @@ function VATRecapTab({ me }: { me: Me }) {
   )
 }
 
+/** Rekap PPN digunggung (TAX-12): penjualan eceran per hari dan toko dari rekap harian. */
+function DigunggungTab({ me }: { me: Me }) {
+  const [month, setMonth] = useState(monthOf(todayISO()))
+  const q = useDigunggung(me.activeCompanyId, month)
+  const d = q.data
+  const toast = useToast()
+  const canExport = can(me, 'tax.export')
+  const save = (format: string) => void download('GET', `/tax/digunggung/export?month=${month}${format === 'csv' ? '&format=csv' : ''}`).catch((e: Error) => toast(e.message))
+  return (
+    <>
+      <MonthNav label="Masa pajak" value={month} onChange={setMonth} />
+      <Card
+        title={`PPN digunggung ${monthLabel(month)}`}
+        subtitle="Penjualan eceran ke konsumen akhir tanpa faktur pajak per pembeli. Jumlahnya dilaporkan di SPT Masa PPN; sumbernya rekap penjualan harian di menu Penjualan."
+        actions={
+          canExport &&
+          d &&
+          d.rows.length > 0 && (
+            <span className="flex gap-2">
+              <Button variant="secondary" size="sm" onClick={() => save('xlsx')}>
+                Ekspor Excel
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => save('csv')}>
+                CSV
+              </Button>
+            </span>
+          )
+        }
+      >
+        {d && !d.pkp && <Alert tone="warn">PT ini bukan PKP, sehingga tidak memungut PPN.</Alert>}
+        {!d && <Skeleton className="h-24" />}
+        {d && d.rows.length === 0 && (
+          <p className="text-sm text-muted">
+            Belum ada rekap penjualan harian di {monthLabel(month)}.{' '}
+            <Link to="/impor?jenis=penjualan-harian" className="font-semibold text-accent hover:underline">
+              Impor rekap harian
+            </Link>
+          </p>
+        )}
+        {d && d.rows.length > 0 && (
+          <TableShell minWidth={680}>
+            <thead className="bg-hover/60">
+              <tr>
+                <th className={th}>Tanggal</th>
+                <th className={th}>Rekap</th>
+                <th className={th}>Toko</th>
+                <th className={`${th} text-right`}>DPP</th>
+                <th className={`${th} text-right`}>PPN</th>
+                <th className={`${th} text-right`}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.rows.map((r) => (
+                <tr key={r.id} className="border-t border-line">
+                  <td className={`${td} num whitespace-nowrap`}>{formatDate(r.date)}</td>
+                  <td className={td}>
+                    <Link to={`/penjualan?tab=harian&bulan=${month}&hid=${r.id}`} className="num font-semibold text-accent hover:underline">
+                      {r.number}
+                    </Link>
+                  </td>
+                  <td className={td}>{r.store || '—'}</td>
+                  <td className={`${td} num text-right`}>{formatAmount(r.dpp)}</td>
+                  <td className={`${td} num text-right`}>{formatAmount(r.vat)}</td>
+                  <td className={`${td} num text-right`}>{formatAmount(r.total)}</td>
+                </tr>
+              ))}
+              <tr className="border-t border-line-2 bg-hover/40 font-semibold">
+                <td className={td} colSpan={3}>
+                  Jumlah masa ini
+                </td>
+                <td className={`${td} num text-right`}>{formatAmount(d.totals.dpp)}</td>
+                <td className={`${td} num text-right`}>{formatAmount(d.totals.vat)}</td>
+                <td className={`${td} num text-right`}>{formatAmount(d.totals.total)}</td>
+              </tr>
+            </tbody>
+          </TableShell>
+        )}
+      </Card>
+    </>
+  )
+}
+
 function WithholdingTab({ me }: { me: Me }) {
   const [month, setMonth] = useState(monthOf(todayISO()))
   const w = useWithholding(me.activeCompanyId, month).data
@@ -610,6 +697,7 @@ function SettingsTab({ me }: { me: Me }) {
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(340px,1fr))] gap-4">
       <ProfileCard key={`p-${profile.data.version}`} me={me} profile={profile.data} />
+      <LogoCard me={me} />
       <CoretaxCard key={`s-${settings.data.unitCode}-${settings.data.goodsCode}-${settings.data.goodsOpt}`} me={me} initial={settings.data} />
     </div>
   )
@@ -638,6 +726,61 @@ function ProfileCard({ me, profile }: { me: Me; profile: CompanyProfile }) {
       ) : (
         <p className="text-[13px] text-muted">Hanya Pemilik dan Manager yang bisa mengubah profil pajak PT.</p>
       )}
+    </Card>
+  )
+}
+
+/** Logo PT di kop faktur PDF (AR-03). */
+function LogoCard({ me }: { me: Me }) {
+  const companyId = me.activeCompanyId
+  const version = useLogoVersion(companyId)
+  const set = useSetLogo(companyId)
+  const toast = useToast()
+  const [missing, setMissing] = useState(false)
+  const editable = can(me, 'core.company.edit')
+  const input = useRef<HTMLInputElement>(null)
+  return (
+    <Card title="Logo di faktur" subtitle="Tampil di kop faktur PDF yang dikirim ke pelanggan. PNG atau JPEG; diperkecil otomatis.">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex h-20 w-44 items-center justify-center rounded-[10px] border border-line bg-white p-2">
+          {!missing ? (
+            <img
+              key={version.data}
+              src={`/api/v1/company/logo?v=${version.data ?? 0}`}
+              alt="Logo PT"
+              className="max-h-full max-w-full object-contain"
+              onError={() => setMissing(true)}
+              onLoad={() => setMissing(false)}
+            />
+          ) : (
+            <span className="text-[12.5px] text-muted">Belum ada logo</span>
+          )}
+        </div>
+        {editable && (
+          <div className="flex flex-col gap-2">
+            <Button variant="secondary" size="sm" busy={set.isPending} onClick={() => input.current?.click()}>
+              {missing ? 'Unggah logo' : 'Ganti logo'}
+            </Button>
+            {!missing && (
+              <Button variant="ghost" size="sm" onClick={() => set.mutate(null, { onSuccess: () => (setMissing(true), toast('Logo dihapus')) })}>
+                Hapus logo
+              </Button>
+            )}
+            <input
+              ref={input}
+              type="file"
+              accept="image/png,image/jpeg"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                e.target.value = ''
+                if (f) set.mutate(f, { onSuccess: () => (setMissing(false), toast('Logo disimpan')) })
+              }}
+            />
+          </div>
+        )}
+      </div>
+      {set.error && <Alert>{set.error.message}</Alert>}
     </Card>
   )
 }

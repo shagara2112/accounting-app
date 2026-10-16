@@ -146,3 +146,34 @@ func TestPayablesAging(t *testing.T) {
 		t.Fatalf("umur utang = %+v", a.Totals)
 	}
 }
+
+// AP-02: uang muka ke pemasok dibayar tanpa tagihan lalu dipakai melunasi tagihan.
+func TestSupplierAdvances(t *testing.T) {
+	e := fixture.New(t)
+	if _, err := e.Purchase.CreatePayment(e.Ctx, e.Company, purchase.PaymentInput{SupplierID: e.Supplier, Date: day("2026-10-01"), CashAccountID: e.Bank, Advance: rp(2_000_000)}, e.Actor); err != nil {
+		t.Fatal(err)
+	}
+	if !e.Net("1-1503", day("2026-10-31")).Equal(rp(2_000_000)) {
+		t.Fatalf("uang muka pembelian = %s", e.Net("1-1503", day("2026-10-31")))
+	}
+	b, err := e.Purchase.CreateBill(e.Ctx, e.Company, bill(e, "2026-10-03", "INV-1", "", line(e, "6-2008", "3000000", "PPN")), e.Actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err = e.Purchase.PostBill(e.Ctx, e.Company, b.ID, e.Actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := e.Purchase.CreatePayment(e.Ctx, e.Company, purchase.PaymentInput{SupplierID: e.Supplier, Date: day("2026-10-05"), CashAccountID: e.Bank, FromAdvance: rp(2_000_000),
+		Allocations: []purchase.AllocationInput{{BillID: b.ID, Amount: b.Payable}}}, e.Actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Amount.Equal(b.Payable.Sub(rp(2_000_000))) || !e.Net("1-1503", day("2026-10-31")).IsZero() {
+		t.Fatalf("pembayaran = %+v, uang muka %s", p.Payment, e.Net("1-1503", day("2026-10-31")))
+	}
+	if d, _ := e.Purchase.Bill(e.Ctx, e.Company, b.ID); d.State != "paid" {
+		t.Fatalf("tagihan harus lunas: %+v", d.Bill)
+	}
+	e.VerifyLedger()
+}

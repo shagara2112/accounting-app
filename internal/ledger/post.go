@@ -93,24 +93,54 @@ func (l *ledger) Post(ctx context.Context, d EntryDraft) (Posted, error) {
 	return out, err
 }
 
-// post menulis satu jurnal lengkap. Harus berjalan di dalam transaksi (lihat db.Run).
-func (l *ledger) post(ctx context.Context, e entry) (Ref, error) {
+// check menjalankan semua pemeriksaan jurnal sebelum ditulis (isi, akun, proyek, dimensi, dan
+// periode) dan mengembalikan totalnya. Dipakai posting baru maupun revisi.
+func (l *ledger) check(ctx context.Context, q *store.Queries, e entry) (money.Amount, error) {
 	total, err := validate(e.EntryDraft)
 	if err != nil {
-		return Ref{}, err
+		return money.Amount{}, err
 	}
-	q := l.q(ctx)
 	if err := checkAccounts(ctx, q, e.CompanyID, e.Lines); err != nil {
-		return Ref{}, err
+		return money.Amount{}, err
 	}
-	month := e.Date.MonthStart()
-	if err := checkPeriod(ctx, q, e.CompanyID, month, e.Kind); err != nil {
+	if err := l.checkProjects(ctx, e); err != nil {
+		return money.Amount{}, err
+	}
+	if err := checkDimensions(ctx, q, e); err != nil {
+		return money.Amount{}, err
+	}
+	if err := checkPeriod(ctx, q, e.CompanyID, e.Date.MonthStart(), e.Kind); err != nil {
+		return money.Amount{}, err
+	}
+	return total, nil
+}
+
+// insertLines menulis baris jurnal; trigger basis data memastikan akun detail, saldo agregat,
+// dan jurnal seimbang saat commit.
+func insertLines(ctx context.Context, q *store.Queries, companyID, entryID uuid.UUID, date civil.Date, lines []LineDraft) error {
+	rows := make([]store.InsertLinesParams, len(lines))
+	for i, ln := range lines {
+		rows[i] = store.InsertLinesParams{
+			ID: uuid.Must(uuid.NewV7()), CompanyID: companyID, EntryID: entryID, EntryDate: date,
+			LineNo: int16(i + 1), AccountID: ln.AccountID, Debit: ln.Debit, Credit: ln.Credit,
+			Memo: strings.TrimSpace(ln.Memo), ProjectID: ln.ProjectID, BranchID: ln.BranchID, DepartmentID: ln.DepartmentID,
+		}
+	}
+	_, err := q.InsertLines(ctx, rows)
+	return err
+}
+
+// post menulis satu jurnal lengkap. Harus berjalan di dalam transaksi (lihat db.Run).
+func (l *ledger) post(ctx context.Context, e entry) (Ref, error) {
+	q := l.q(ctx)
+	total, err := l.check(ctx, q, e)
+	if err != nil {
 		return Ref{}, err
 	}
 
 	ref := Ref{ID: uuid.Must(uuid.NewV7()), Number: e.Number}
 	if ref.Number == "" {
-		if ref.Number, err = nextNumber(ctx, q, e.CompanyID, e.series, month); err != nil {
+		if ref.Number, err = nextNumber(ctx, q, e.CompanyID, e.series, e.Date, nil); err != nil {
 			return Ref{}, err
 		}
 	}
@@ -121,15 +151,7 @@ func (l *ledger) post(ctx context.Context, e entry) (Ref, error) {
 	}); err != nil {
 		return Ref{}, err
 	}
-	rows := make([]store.InsertLinesParams, len(e.Lines))
-	for i, ln := range e.Lines {
-		rows[i] = store.InsertLinesParams{
-			ID: uuid.Must(uuid.NewV7()), CompanyID: e.CompanyID, EntryID: ref.ID, EntryDate: e.Date,
-			LineNo: int16(i + 1), AccountID: ln.AccountID, Debit: ln.Debit, Credit: ln.Credit,
-			Memo: strings.TrimSpace(ln.Memo),
-		}
-	}
-	if _, err := q.InsertLines(ctx, rows); err != nil {
+	if err := insertLines(ctx, q, e.CompanyID, ref.ID, e.Date, e.Lines); err != nil {
 		return Ref{}, err
 	}
 
@@ -228,6 +250,26 @@ func checkAccounts(ctx context.Context, q *store.Queries, companyID uuid.UUID, l
 	return nil
 }
 
+// checkProjects menjalankan pemeriksaan proyek untuk jurnal baru. Jurnal pembalik (void dan
+// balik otomatis) tidak diperiksa: pembatalan harus selalu bisa, apa pun status proyeknya.
+func (l *ledger) checkProjects(ctx context.Context, e entry) error {
+	if l.projectCheck == nil || e.reversalOf != nil {
+		return nil
+	}
+	var ids []uuid.UUID
+	seen := map[uuid.UUID]bool{}
+	for _, ln := range e.Lines {
+		if ln.ProjectID != nil && !seen[*ln.ProjectID] {
+			seen[*ln.ProjectID] = true
+			ids = append(ids, *ln.ProjectID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return l.projectCheck(ctx, e.CompanyID, ids)
+}
+
 // checkPeriod menolak posting ke periode yang sudah ditutup. Baris periode dikunci FOR SHARE,
 // sehingga periode tidak bisa ditutup selagi posting ini belum selesai.
 func checkPeriod(ctx context.Context, q *store.Queries, companyID uuid.UUID, month civil.Date, kind Kind) error {
@@ -257,7 +299,7 @@ func checkPeriod(ctx context.Context, q *store.Queries, companyID uuid.UUID, mon
 func (l *ledger) Void(ctx context.Context, companyID, entryID uuid.UUID, date civil.Date, reason string, actor Actor) (Voided, error) {
 	return l.void(ctx, companyID, entryID, date, reason, actor, func(ctx context.Context, q *store.Queries, e store.LedgerJournalEntry) error {
 		switch e.SourceType {
-		case SourceManual:
+		case SourceManual, SourceOpening:
 			return nil
 		case SourceAutoReversal:
 			origin := "jurnal penyesuaiannya"
@@ -379,7 +421,8 @@ func (l *ledger) reverse(ctx context.Context, q *store.Queries, e store.LedgerJo
 	}
 	drafts := make([]LineDraft, len(lines))
 	for i, ln := range lines {
-		drafts[i] = LineDraft{AccountID: ln.AccountID, Debit: ln.Credit, Credit: ln.Debit, Memo: ln.Memo}
+		drafts[i] = LineDraft{AccountID: ln.AccountID, Debit: ln.Credit, Credit: ln.Debit, Memo: ln.Memo, ProjectID: ln.ProjectID,
+			BranchID: ln.BranchID, DepartmentID: ln.DepartmentID}
 	}
 	if utf8.RuneCountInString(memo) > maxMemo {
 		memo = string([]rune(memo)[:maxMemo])
@@ -407,7 +450,8 @@ func markVoid(ctx context.Context, q *store.Queries, e store.LedgerJournalEntry,
 func swap(lines []LineDraft) []LineDraft {
 	out := make([]LineDraft, len(lines))
 	for i, ln := range lines {
-		out[i] = LineDraft{AccountID: ln.AccountID, Debit: ln.Credit, Credit: ln.Debit, Memo: ln.Memo}
+		out[i] = LineDraft{AccountID: ln.AccountID, Debit: ln.Credit, Credit: ln.Debit, Memo: ln.Memo, ProjectID: ln.ProjectID,
+			BranchID: ln.BranchID, DepartmentID: ln.DepartmentID}
 	}
 	return out
 }
@@ -415,21 +459,6 @@ func swap(lines []LineDraft) []LineDraft {
 func userRef(a Actor) *uuid.UUID { return a.UserRef() }
 
 var seriesPattern = regexp.MustCompile(`^[A-Z]{2,4}$`)
-
-func nextNumber(ctx context.Context, q *store.Queries, companyID uuid.UUID, series string, month civil.Date) (string, error) {
-	if !seriesPattern.MatchString(series) {
-		return "", fmt.Errorf("seri nomor %q tidak valid", series)
-	}
-	n, err := q.NextNumber(ctx, store.NextNumberParams{CompanyID: companyID, Series: series, Month: month})
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s/%04d/%02d/%04d", series, month.Year(), int(month.Month()), n), nil
-}
-
-func (l *ledger) NextNumber(ctx context.Context, companyID uuid.UUID, series string, date civil.Date) (string, error) {
-	return nextNumber(ctx, l.q(ctx), companyID, series, date.MonthStart())
-}
 
 // firstMessage mengambil pesan field pertama (urut kunci) sebagai ringkasan problem.
 func firstMessage(fields map[string]string) string {
@@ -452,3 +481,53 @@ func fieldOrder(k string) string {
 }
 
 func isNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
+
+// checkDimensions memastikan cabang dan departemen di baris jurnal ada di PT ini dan aktif.
+// Jurnal pembalik tidak diperiksa keaktifannya: pembatalan harus selalu bisa.
+func checkDimensions(ctx context.Context, q *store.Queries, e entry) error {
+	var branches, departments []uuid.UUID
+	for _, ln := range e.Lines {
+		if ln.BranchID != nil {
+			branches = append(branches, *ln.BranchID)
+		}
+		if ln.DepartmentID != nil {
+			departments = append(departments, *ln.DepartmentID)
+		}
+	}
+	if len(branches) == 0 && len(departments) == 0 {
+		return nil
+	}
+	rows, err := q.Dimensions(ctx, store.DimensionsParams{CompanyID: e.CompanyID, BranchIds: branches, DepartmentIds: departments})
+	if err != nil {
+		return err
+	}
+	type dim struct {
+		code   string
+		active bool
+	}
+	found := map[uuid.UUID]dim{}
+	for _, r := range rows {
+		found[r.ID] = dim{r.Code, r.Active}
+	}
+	fields := map[string]string{}
+	check := func(i int, id *uuid.UUID, field, label string) {
+		if id == nil {
+			return
+		}
+		d, ok := found[*id]
+		switch {
+		case !ok:
+			fields[fmt.Sprintf("lines.%d.%s", i, field)] = label + " tidak ditemukan di PT ini."
+		case !d.active && e.reversalOf == nil:
+			fields[fmt.Sprintf("lines.%d.%s", i, field)] = fmt.Sprintf("%s %s nonaktif.", label, d.code)
+		}
+	}
+	for i, ln := range e.Lines {
+		check(i, ln.BranchID, "branchId", "Cabang")
+		check(i, ln.DepartmentID, "departmentId", "Departemen")
+	}
+	if len(fields) > 0 {
+		return httpx.Unprocessable("journal.dimension", firstMessage(fields)).WithFields(fields)
+	}
+	return nil
+}

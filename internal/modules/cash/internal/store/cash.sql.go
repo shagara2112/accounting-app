@@ -14,6 +14,154 @@ import (
 	"lajur/internal/platform/money"
 )
 
+const bookBalanceAt = `-- name: BookBalanceAt :one
+SELECT COALESCE(sum(l.debit - l.credit), 0)::numeric AS balance
+FROM ledger.journal_lines l
+WHERE l.company_id = $1 AND l.account_id = $2 AND l.entry_date <= $3
+`
+
+type BookBalanceAtParams struct {
+	CompanyID uuid.UUID
+	AccountID uuid.UUID
+	EntryDate civil.Date
+}
+
+func (q *Queries) BookBalanceAt(ctx context.Context, arg BookBalanceAtParams) (money.Amount, error) {
+	row := q.db.QueryRow(ctx, bookBalanceAt, arg.CompanyID, arg.AccountID, arg.EntryDate)
+	var balance money.Amount
+	err := row.Scan(&balance)
+	return balance, err
+}
+
+const clearLine = `-- name: ClearLine :exec
+INSERT INTO cash.recon_items (reconciliation_id, company_id, journal_line_id) VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type ClearLineParams struct {
+	ReconciliationID uuid.UUID
+	CompanyID        uuid.UUID
+	JournalLineID    uuid.UUID
+}
+
+func (q *Queries) ClearLine(ctx context.Context, arg ClearLineParams) error {
+	_, err := q.db.Exec(ctx, clearLine, arg.ReconciliationID, arg.CompanyID, arg.JournalLineID)
+	return err
+}
+
+const clearedTotal = `-- name: ClearedTotal :one
+SELECT COALESCE(sum(l.debit - l.credit), 0)::numeric AS total
+FROM cash.recon_items ri JOIN ledger.journal_lines l ON l.id = ri.journal_line_id
+WHERE ri.reconciliation_id = $1
+`
+
+func (q *Queries) ClearedTotal(ctx context.Context, reconciliationID uuid.UUID) (money.Amount, error) {
+	row := q.db.QueryRow(ctx, clearedTotal, reconciliationID)
+	var total money.Amount
+	err := row.Scan(&total)
+	return total, err
+}
+
+const deleteDraft = `-- name: DeleteDraft :execrows
+DELETE FROM cash.transactions WHERE company_id = $1 AND id = $2 AND status = 'draft'
+`
+
+type DeleteDraftParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) DeleteDraft(ctx context.Context, arg DeleteDraftParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteDraft, arg.CompanyID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteLines = `-- name: DeleteLines :exec
+DELETE FROM cash.transaction_lines WHERE company_id = $1 AND transaction_id = $2
+`
+
+type DeleteLinesParams struct {
+	CompanyID     uuid.UUID
+	TransactionID uuid.UUID
+}
+
+func (q *Queries) DeleteLines(ctx context.Context, arg DeleteLinesParams) error {
+	_, err := q.db.Exec(ctx, deleteLines, arg.CompanyID, arg.TransactionID)
+	return err
+}
+
+const deleteReconciliation = `-- name: DeleteReconciliation :execrows
+DELETE FROM cash.reconciliations WHERE company_id = $1 AND id = $2 AND status = 'open'
+`
+
+type DeleteReconciliationParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) DeleteReconciliation(ctx context.Context, arg DeleteReconciliationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteReconciliation, arg.CompanyID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const departmentsByID = `-- name: DepartmentsByID :many
+SELECT id, code, active FROM core.departments WHERE company_id = $1 AND id = ANY($2::uuid[])
+`
+
+type DepartmentsByIDParams struct {
+	CompanyID uuid.UUID
+	Ids       []uuid.UUID
+}
+
+type DepartmentsByIDRow struct {
+	ID     uuid.UUID
+	Code   string
+	Active bool
+}
+
+func (q *Queries) DepartmentsByID(ctx context.Context, arg DepartmentsByIDParams) ([]DepartmentsByIDRow, error) {
+	rows, err := q.db.Query(ctx, departmentsByID, arg.CompanyID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DepartmentsByIDRow
+	for rows.Next() {
+		var i DepartmentsByIDRow
+		if err := rows.Scan(&i.ID, &i.Code, &i.Active); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const draftSummary = `-- name: DraftSummary :one
+SELECT count(*) AS drafts, coalesce(sum(amount), 0)::numeric AS amount
+FROM cash.transactions WHERE company_id = $1 AND status = 'draft'
+`
+
+type DraftSummaryRow struct {
+	Drafts int64
+	Amount money.Amount
+}
+
+func (q *Queries) DraftSummary(ctx context.Context, companyID uuid.UUID) (DraftSummaryRow, error) {
+	row := q.db.QueryRow(ctx, draftSummary, companyID)
+	var i DraftSummaryRow
+	err := row.Scan(&i.Drafts, &i.Amount)
+	return i, err
+}
+
 const getCashAccount = `-- name: GetCashAccount :one
 SELECT company_id, account_id, kind, bank_name, account_number, active, created_at FROM cash.accounts WHERE company_id = $1 AND account_id = $2
 `
@@ -38,10 +186,40 @@ func (q *Queries) GetCashAccount(ctx context.Context, arg GetCashAccountParams) 
 	return i, err
 }
 
+const getReconciliation = `-- name: GetReconciliation :one
+SELECT id, company_id, account_id, statement_date, statement_balance, opening_balance, status, created_by, created_at, closed_by, closed_at, version FROM cash.reconciliations WHERE company_id = $1 AND id = $2
+`
+
+type GetReconciliationParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) GetReconciliation(ctx context.Context, arg GetReconciliationParams) (CashReconciliation, error) {
+	row := q.db.QueryRow(ctx, getReconciliation, arg.CompanyID, arg.ID)
+	var i CashReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.AccountID,
+		&i.StatementDate,
+		&i.StatementBalance,
+		&i.OpeningBalance,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ClosedBy,
+		&i.ClosedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
 const getTransaction = `-- name: GetTransaction :one
-SELECT t.id, t.company_id, t.number, t.kind, t.trx_date, t.cash_account_id, t.to_account_id, t.amount, t.memo, t.reference, t.status, t.journal_entry_id, t.created_at, t.created_by, t.voided_at, t.voided_by, t.void_reason, u.name AS created_by_name
+SELECT t.id, t.company_id, t.number, t.kind, t.trx_date, t.cash_account_id, t.to_account_id, t.amount, t.memo, t.reference, t.status, t.journal_entry_id, t.created_at, t.created_by, t.voided_at, t.voided_by, t.void_reason, t.posted_at, t.posted_by, t.version, t.branch_id, t.department_id, u.name AS created_by_name, pu.name AS posted_by_name
 FROM cash.transactions t
 LEFT JOIN platform.users u ON u.id = t.created_by
+LEFT JOIN platform.users pu ON pu.id = t.posted_by
 WHERE t.company_id = $1 AND t.id = $2
 `
 
@@ -53,7 +231,7 @@ type GetTransactionParams struct {
 type GetTransactionRow struct {
 	ID             uuid.UUID
 	CompanyID      uuid.UUID
-	Number         string
+	Number         *string
 	Kind           string
 	TrxDate        civil.Date
 	CashAccountID  uuid.UUID
@@ -62,13 +240,19 @@ type GetTransactionRow struct {
 	Memo           string
 	Reference      string
 	Status         string
-	JournalEntryID uuid.UUID
+	JournalEntryID *uuid.UUID
 	CreatedAt      time.Time
 	CreatedBy      *uuid.UUID
 	VoidedAt       *time.Time
 	VoidedBy       *uuid.UUID
 	VoidReason     *string
+	PostedAt       *time.Time
+	PostedBy       *uuid.UUID
+	Version        int32
+	BranchID       *uuid.UUID
+	DepartmentID   *uuid.UUID
 	CreatedByName  *string
+	PostedByName   *string
 }
 
 func (q *Queries) GetTransaction(ctx context.Context, arg GetTransactionParams) (GetTransactionRow, error) {
@@ -92,13 +276,19 @@ func (q *Queries) GetTransaction(ctx context.Context, arg GetTransactionParams) 
 		&i.VoidedAt,
 		&i.VoidedBy,
 		&i.VoidReason,
+		&i.PostedAt,
+		&i.PostedBy,
+		&i.Version,
+		&i.BranchID,
+		&i.DepartmentID,
 		&i.CreatedByName,
+		&i.PostedByName,
 	)
 	return i, err
 }
 
 const getTransactionForUpdate = `-- name: GetTransactionForUpdate :one
-SELECT id, company_id, number, kind, trx_date, cash_account_id, to_account_id, amount, memo, reference, status, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason FROM cash.transactions WHERE company_id = $1 AND id = $2 FOR UPDATE
+SELECT id, company_id, number, kind, trx_date, cash_account_id, to_account_id, amount, memo, reference, status, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason, posted_at, posted_by, version, branch_id, department_id FROM cash.transactions WHERE company_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetTransactionForUpdateParams struct {
@@ -127,37 +317,41 @@ func (q *Queries) GetTransactionForUpdate(ctx context.Context, arg GetTransactio
 		&i.VoidedAt,
 		&i.VoidedBy,
 		&i.VoidReason,
+		&i.PostedAt,
+		&i.PostedBy,
+		&i.Version,
+		&i.BranchID,
+		&i.DepartmentID,
 	)
 	return i, err
 }
 
-const insertTransaction = `-- name: InsertTransaction :exec
+const insertDraft = `-- name: InsertDraft :exec
 INSERT INTO cash.transactions
-  (id, company_id, number, kind, trx_date, cash_account_id, to_account_id, amount, memo, reference,
-   journal_entry_id, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+  (id, company_id, kind, trx_date, cash_account_id, to_account_id, amount, memo, reference, created_by, status,
+   branch_id, department_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'draft', $11, $12)
 `
 
-type InsertTransactionParams struct {
-	ID             uuid.UUID
-	CompanyID      uuid.UUID
-	Number         string
-	Kind           string
-	TrxDate        civil.Date
-	CashAccountID  uuid.UUID
-	ToAccountID    *uuid.UUID
-	Amount         money.Amount
-	Memo           string
-	Reference      string
-	JournalEntryID uuid.UUID
-	CreatedBy      *uuid.UUID
+type InsertDraftParams struct {
+	ID            uuid.UUID
+	CompanyID     uuid.UUID
+	Kind          string
+	TrxDate       civil.Date
+	CashAccountID uuid.UUID
+	ToAccountID   *uuid.UUID
+	Amount        money.Amount
+	Memo          string
+	Reference     string
+	CreatedBy     *uuid.UUID
+	BranchID      *uuid.UUID
+	DepartmentID  *uuid.UUID
 }
 
-func (q *Queries) InsertTransaction(ctx context.Context, arg InsertTransactionParams) error {
-	_, err := q.db.Exec(ctx, insertTransaction,
+func (q *Queries) InsertDraft(ctx context.Context, arg InsertDraftParams) error {
+	_, err := q.db.Exec(ctx, insertDraft,
 		arg.ID,
 		arg.CompanyID,
-		arg.Number,
 		arg.Kind,
 		arg.TrxDate,
 		arg.CashAccountID,
@@ -165,15 +359,44 @@ func (q *Queries) InsertTransaction(ctx context.Context, arg InsertTransactionPa
 		arg.Amount,
 		arg.Memo,
 		arg.Reference,
-		arg.JournalEntryID,
+		arg.CreatedBy,
+		arg.BranchID,
+		arg.DepartmentID,
+	)
+	return err
+}
+
+const insertReconciliation = `-- name: InsertReconciliation :exec
+INSERT INTO cash.reconciliations (id, company_id, account_id, statement_date, statement_balance, opening_balance, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`
+
+type InsertReconciliationParams struct {
+	ID               uuid.UUID
+	CompanyID        uuid.UUID
+	AccountID        uuid.UUID
+	StatementDate    civil.Date
+	StatementBalance money.Amount
+	OpeningBalance   money.Amount
+	CreatedBy        *uuid.UUID
+}
+
+func (q *Queries) InsertReconciliation(ctx context.Context, arg InsertReconciliationParams) error {
+	_, err := q.db.Exec(ctx, insertReconciliation,
+		arg.ID,
+		arg.CompanyID,
+		arg.AccountID,
+		arg.StatementDate,
+		arg.StatementBalance,
+		arg.OpeningBalance,
 		arg.CreatedBy,
 	)
 	return err
 }
 
 const insertTransactionLine = `-- name: InsertTransactionLine :exec
-INSERT INTO cash.transaction_lines (id, company_id, transaction_id, line_no, account_id, amount, memo)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO cash.transaction_lines (id, company_id, transaction_id, line_no, account_id, amount, memo, project_id, department_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertTransactionLineParams struct {
@@ -181,9 +404,11 @@ type InsertTransactionLineParams struct {
 	CompanyID     uuid.UUID
 	TransactionID uuid.UUID
 	LineNo        int16
-	AccountID     uuid.UUID
+	AccountID     *uuid.UUID
 	Amount        money.Amount
 	Memo          string
+	ProjectID     *uuid.UUID
+	DepartmentID  *uuid.UUID
 }
 
 func (q *Queries) InsertTransactionLine(ctx context.Context, arg InsertTransactionLineParams) error {
@@ -195,8 +420,97 @@ func (q *Queries) InsertTransactionLine(ctx context.Context, arg InsertTransacti
 		arg.AccountID,
 		arg.Amount,
 		arg.Memo,
+		arg.ProjectID,
+		arg.DepartmentID,
 	)
 	return err
+}
+
+const lastClosedReconciliation = `-- name: LastClosedReconciliation :one
+SELECT id, company_id, account_id, statement_date, statement_balance, opening_balance, status, created_by, created_at, closed_by, closed_at, version FROM cash.reconciliations
+WHERE company_id = $1 AND account_id = $2 AND status = 'closed'
+ORDER BY statement_date DESC LIMIT 1
+`
+
+type LastClosedReconciliationParams struct {
+	CompanyID uuid.UUID
+	AccountID uuid.UUID
+}
+
+func (q *Queries) LastClosedReconciliation(ctx context.Context, arg LastClosedReconciliationParams) (CashReconciliation, error) {
+	row := q.db.QueryRow(ctx, lastClosedReconciliation, arg.CompanyID, arg.AccountID)
+	var i CashReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.AccountID,
+		&i.StatementDate,
+		&i.StatementBalance,
+		&i.OpeningBalance,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ClosedBy,
+		&i.ClosedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const latestReconciliation = `-- name: LatestReconciliation :one
+SELECT id, company_id, account_id, statement_date, statement_balance, opening_balance, status, created_by, created_at, closed_by, closed_at, version FROM cash.reconciliations
+WHERE company_id = $1 AND account_id = $2
+ORDER BY statement_date DESC LIMIT 1
+`
+
+type LatestReconciliationParams struct {
+	CompanyID uuid.UUID
+	AccountID uuid.UUID
+}
+
+func (q *Queries) LatestReconciliation(ctx context.Context, arg LatestReconciliationParams) (CashReconciliation, error) {
+	row := q.db.QueryRow(ctx, latestReconciliation, arg.CompanyID, arg.AccountID)
+	var i CashReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.AccountID,
+		&i.StatementDate,
+		&i.StatementBalance,
+		&i.OpeningBalance,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ClosedBy,
+		&i.ClosedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const lineOnAccount = `-- name: LineOnAccount :one
+SELECT EXISTS (
+  SELECT 1 FROM ledger.journal_lines WHERE company_id = $1 AND id = $2 AND account_id = $3 AND entry_date <= $4
+)::boolean
+`
+
+type LineOnAccountParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+	AccountID uuid.UUID
+	EntryDate civil.Date
+}
+
+func (q *Queries) LineOnAccount(ctx context.Context, arg LineOnAccountParams) (bool, error) {
+	row := q.db.QueryRow(ctx, lineOnAccount,
+		arg.CompanyID,
+		arg.ID,
+		arg.AccountID,
+		arg.EntryDate,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const listCashAccounts = `-- name: ListCashAccounts :many
@@ -231,28 +545,99 @@ func (q *Queries) ListCashAccounts(ctx context.Context, companyID uuid.UUID) ([]
 	return items, nil
 }
 
+const listReconciliations = `-- name: ListReconciliations :many
+SELECT r.id, r.company_id, r.account_id, r.statement_date, r.statement_balance, r.opening_balance, r.status, r.created_by, r.created_at, r.closed_by, r.closed_at, r.version, (SELECT count(*) FROM cash.recon_items i WHERE i.reconciliation_id = r.id)::int AS items
+FROM cash.reconciliations r
+WHERE r.company_id = $1 AND ($2::uuid IS NULL OR r.account_id = $2)
+ORDER BY r.statement_date DESC
+LIMIT 100
+`
+
+type ListReconciliationsParams struct {
+	CompanyID uuid.UUID
+	AccountID *uuid.UUID
+}
+
+type ListReconciliationsRow struct {
+	ID               uuid.UUID
+	CompanyID        uuid.UUID
+	AccountID        uuid.UUID
+	StatementDate    civil.Date
+	StatementBalance money.Amount
+	OpeningBalance   money.Amount
+	Status           string
+	CreatedBy        *uuid.UUID
+	CreatedAt        time.Time
+	ClosedBy         *uuid.UUID
+	ClosedAt         *time.Time
+	Version          int32
+	Items            int32
+}
+
+func (q *Queries) ListReconciliations(ctx context.Context, arg ListReconciliationsParams) ([]ListReconciliationsRow, error) {
+	rows, err := q.db.Query(ctx, listReconciliations, arg.CompanyID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReconciliationsRow
+	for rows.Next() {
+		var i ListReconciliationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.AccountID,
+			&i.StatementDate,
+			&i.StatementBalance,
+			&i.OpeningBalance,
+			&i.Status,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.ClosedBy,
+			&i.ClosedAt,
+			&i.Version,
+			&i.Items,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTransactions = `-- name: ListTransactions :many
-SELECT id, company_id, number, kind, trx_date, cash_account_id, to_account_id, amount, memo, reference, status, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason FROM cash.transactions
-WHERE company_id = $1 AND trx_date >= $2 AND trx_date <= $3
-  AND ($4::uuid IS NULL
-       OR cash_account_id = $4::uuid OR to_account_id = $4::uuid)
+SELECT id, company_id, number, kind, trx_date, cash_account_id, to_account_id, amount, memo, reference, status, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason, posted_at, posted_by, version, branch_id, department_id FROM cash.transactions
+WHERE company_id = $1
+  AND (CASE WHEN $2::boolean THEN status = 'draft'
+            ELSE trx_date >= $3 AND trx_date <= $4 END)
+  AND ($5::uuid IS NULL
+       OR cash_account_id = $5::uuid OR to_account_id = $5::uuid)
+  AND (coalesce(cardinality($6::uuid[]), 0) = 0 OR branch_id = ANY($6::uuid[]))
 ORDER BY trx_date DESC, id DESC
 LIMIT 500
 `
 
 type ListTransactionsParams struct {
-	CompanyID uuid.UUID
-	FromDate  civil.Date
-	ToDate    civil.Date
-	AccountID *uuid.UUID
+	CompanyID  uuid.UUID
+	DraftsOnly bool
+	FromDate   civil.Date
+	ToDate     civil.Date
+	AccountID  *uuid.UUID
+	Branches   []uuid.UUID
 }
 
+// drafts_only menampilkan semua draf tanpa batas tanggal, supaya tidak ada yang terlewat.
 func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsParams) ([]CashTransaction, error) {
 	rows, err := q.db.Query(ctx, listTransactions,
 		arg.CompanyID,
+		arg.DraftsOnly,
 		arg.FromDate,
 		arg.ToDate,
 		arg.AccountID,
+		arg.Branches,
 	)
 	if err != nil {
 		return nil, err
@@ -279,6 +664,11 @@ func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsPara
 			&i.VoidedAt,
 			&i.VoidedBy,
 			&i.VoidReason,
+			&i.PostedAt,
+			&i.PostedBy,
+			&i.Version,
+			&i.BranchID,
+			&i.DepartmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -290,8 +680,170 @@ func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsPara
 	return items, nil
 }
 
+const lockReconciliation = `-- name: LockReconciliation :one
+SELECT id, company_id, account_id, statement_date, statement_balance, opening_balance, status, created_by, created_at, closed_by, closed_at, version FROM cash.reconciliations WHERE company_id = $1 AND id = $2 FOR UPDATE
+`
+
+type LockReconciliationParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) LockReconciliation(ctx context.Context, arg LockReconciliationParams) (CashReconciliation, error) {
+	row := q.db.QueryRow(ctx, lockReconciliation, arg.CompanyID, arg.ID)
+	var i CashReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.AccountID,
+		&i.StatementDate,
+		&i.StatementBalance,
+		&i.OpeningBalance,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ClosedBy,
+		&i.ClosedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const markPosted = `-- name: MarkPosted :execrows
+UPDATE cash.transactions
+SET status = 'posted', number = $1, journal_entry_id = $2, posted_at = now(),
+    posted_by = $3, version = version + 1
+WHERE company_id = $4 AND id = $5 AND status = 'draft'
+`
+
+type MarkPostedParams struct {
+	Number         *string
+	JournalEntryID *uuid.UUID
+	PostedBy       *uuid.UUID
+	CompanyID      uuid.UUID
+	ID             uuid.UUID
+}
+
+func (q *Queries) MarkPosted(ctx context.Context, arg MarkPostedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markPosted,
+		arg.Number,
+		arg.JournalEntryID,
+		arg.PostedBy,
+		arg.CompanyID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const reconCandidates = `-- name: ReconCandidates :many
+SELECT l.id, l.entry_id, l.entry_date, l.line_no, l.debit, l.credit, l.memo,
+       e.number, e.memo AS entry_memo, e.source_type, e.source_id,
+       (ri.reconciliation_id IS NOT NULL)::boolean AS cleared
+FROM ledger.journal_lines l
+JOIN ledger.journal_entries e ON e.id = l.entry_id
+LEFT JOIN cash.recon_items ri ON ri.company_id = l.company_id AND ri.journal_line_id = l.id
+WHERE l.company_id = $1 AND l.account_id = $2 AND l.entry_date <= $3
+  AND (ri.reconciliation_id IS NULL OR ri.reconciliation_id = $4)
+  AND NOT (e.status = 'void' AND ri.reconciliation_id IS NULL)
+  AND NOT (e.source_type = 'void' AND ri.reconciliation_id IS NULL AND NOT EXISTS (
+        SELECT 1 FROM cash.recon_items r2
+        JOIN ledger.journal_lines ol ON ol.id = r2.journal_line_id
+        WHERE ol.entry_id = e.reversal_of AND ol.account_id = l.account_id))
+ORDER BY l.entry_date, e.number, l.line_no
+`
+
+type ReconCandidatesParams struct {
+	CompanyID        uuid.UUID
+	AccountID        uuid.UUID
+	Until            civil.Date
+	ReconciliationID uuid.UUID
+}
+
+type ReconCandidatesRow struct {
+	ID         uuid.UUID
+	EntryID    uuid.UUID
+	EntryDate  civil.Date
+	LineNo     int16
+	Debit      money.Amount
+	Credit     money.Amount
+	Memo       string
+	Number     string
+	EntryMemo  string
+	SourceType string
+	SourceID   *uuid.UUID
+	Cleared    bool
+}
+
+// Baris buku besar rekening ini sampai tanggal rekening koran yang belum dicocokkan di
+// rekonsiliasi lain. Jurnal void dan pembaliknya saling meniadakan dan tidak pernah muncul di
+// rekening koran, jadi disembunyikan, kecuali baris aslinya sudah terlanjur dicocokkan.
+func (q *Queries) ReconCandidates(ctx context.Context, arg ReconCandidatesParams) ([]ReconCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, reconCandidates,
+		arg.CompanyID,
+		arg.AccountID,
+		arg.Until,
+		arg.ReconciliationID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReconCandidatesRow
+	for rows.Next() {
+		var i ReconCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntryID,
+			&i.EntryDate,
+			&i.LineNo,
+			&i.Debit,
+			&i.Credit,
+			&i.Memo,
+			&i.Number,
+			&i.EntryMemo,
+			&i.SourceType,
+			&i.SourceID,
+			&i.Cleared,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setReconciliationStatus = `-- name: SetReconciliationStatus :exec
+UPDATE cash.reconciliations
+SET status = $3, closed_at = CASE WHEN $3 = 'closed' THEN now() END, closed_by = CASE WHEN $3 = 'closed' THEN $4::uuid END,
+    version = version + 1
+WHERE company_id = $1 AND id = $2
+`
+
+type SetReconciliationStatusParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+	Status    string
+	Actor     *uuid.UUID
+}
+
+func (q *Queries) SetReconciliationStatus(ctx context.Context, arg SetReconciliationStatusParams) error {
+	_, err := q.db.Exec(ctx, setReconciliationStatus,
+		arg.CompanyID,
+		arg.ID,
+		arg.Status,
+		arg.Actor,
+	)
+	return err
+}
+
 const transactionLines = `-- name: TransactionLines :many
-SELECT id, company_id, transaction_id, line_no, account_id, amount, memo FROM cash.transaction_lines WHERE company_id = $1 AND transaction_id = $2 ORDER BY line_no
+SELECT id, company_id, transaction_id, line_no, account_id, amount, memo, project_id, department_id FROM cash.transaction_lines WHERE company_id = $1 AND transaction_id = $2 ORDER BY line_no
 `
 
 type TransactionLinesParams struct {
@@ -316,6 +868,8 @@ func (q *Queries) TransactionLines(ctx context.Context, arg TransactionLinesPara
 			&i.AccountID,
 			&i.Amount,
 			&i.Memo,
+			&i.ProjectID,
+			&i.DepartmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -325,6 +879,93 @@ func (q *Queries) TransactionLines(ctx context.Context, arg TransactionLinesPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const unclearLine = `-- name: UnclearLine :exec
+DELETE FROM cash.recon_items WHERE reconciliation_id = $1 AND journal_line_id = $2
+`
+
+type UnclearLineParams struct {
+	ReconciliationID uuid.UUID
+	JournalLineID    uuid.UUID
+}
+
+func (q *Queries) UnclearLine(ctx context.Context, arg UnclearLineParams) error {
+	_, err := q.db.Exec(ctx, unclearLine, arg.ReconciliationID, arg.JournalLineID)
+	return err
+}
+
+const updateDraft = `-- name: UpdateDraft :execrows
+UPDATE cash.transactions
+SET kind = $1, trx_date = $2, cash_account_id = $3, to_account_id = $4,
+    amount = $5, memo = $6, reference = $7, branch_id = $8,
+    department_id = $9, version = version + 1
+WHERE company_id = $10 AND id = $11 AND status = 'draft' AND version = $12
+`
+
+type UpdateDraftParams struct {
+	Kind          string
+	TrxDate       civil.Date
+	CashAccountID uuid.UUID
+	ToAccountID   *uuid.UUID
+	Amount        money.Amount
+	Memo          string
+	Reference     string
+	BranchID      *uuid.UUID
+	DepartmentID  *uuid.UUID
+	CompanyID     uuid.UUID
+	ID            uuid.UUID
+	Version       int32
+}
+
+func (q *Queries) UpdateDraft(ctx context.Context, arg UpdateDraftParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateDraft,
+		arg.Kind,
+		arg.TrxDate,
+		arg.CashAccountID,
+		arg.ToAccountID,
+		arg.Amount,
+		arg.Memo,
+		arg.Reference,
+		arg.BranchID,
+		arg.DepartmentID,
+		arg.CompanyID,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateReconciliation = `-- name: UpdateReconciliation :execrows
+UPDATE cash.reconciliations SET statement_date = $3, statement_balance = $4, opening_balance = $5, version = version + 1
+WHERE company_id = $1 AND id = $2 AND version = $6 AND status = 'open'
+`
+
+type UpdateReconciliationParams struct {
+	CompanyID        uuid.UUID
+	ID               uuid.UUID
+	StatementDate    civil.Date
+	StatementBalance money.Amount
+	OpeningBalance   money.Amount
+	Version          int32
+}
+
+func (q *Queries) UpdateReconciliation(ctx context.Context, arg UpdateReconciliationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateReconciliation,
+		arg.CompanyID,
+		arg.ID,
+		arg.StatementDate,
+		arg.StatementBalance,
+		arg.OpeningBalance,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertCashAccount = `-- name: UpsertCashAccount :one

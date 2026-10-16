@@ -12,8 +12,13 @@ import (
 
 	"lajur/internal/ledger"
 	"lajur/internal/modules/cash"
+	"lajur/internal/modules/consol"
 	"lajur/internal/modules/core"
+	"lajur/internal/modules/imports"
+	"lajur/internal/modules/inventory"
+	"lajur/internal/modules/project"
 	"lajur/internal/modules/purchase"
+	"lajur/internal/modules/report"
 	"lajur/internal/modules/sales"
 	"lajur/internal/modules/tax"
 	"lajur/internal/modules/tax/coretax"
@@ -27,16 +32,21 @@ import (
 )
 
 type Env struct {
-	T        testing.TB
-	Ctx      context.Context
-	Pool     *pgxpool.Pool
-	Core     core.Service
-	Ledger   ledger.Service
-	Tax      tax.Service
-	Cash     cash.Service
-	Sales    sales.Service
-	Purchase purchase.Service
-	Coretax  coretax.Service
+	T         testing.TB
+	Ctx       context.Context
+	Pool      *pgxpool.Pool
+	Core      core.Service
+	Ledger    ledger.Service
+	Tax       tax.Service
+	Inventory inventory.Service
+	Cash      cash.Service
+	Sales     sales.Service
+	Purchase  purchase.Service
+	Coretax   coretax.Service
+	Project   project.Service
+	Report    report.Service
+	Consol    consol.Service
+	Imports   imports.Service
 
 	Company  uuid.UUID
 	Actor    audit.Actor // staf akuntansi
@@ -49,21 +59,42 @@ type Env struct {
 }
 
 // New membuat basis data sementara dan satu PT jasa yang siap bertransaksi.
-func New(t testing.TB) *Env {
+func New(t testing.TB) *Env { return NewWith(t, "jasa") }
+
+// NewWith sama dengan New untuk industri lain: jasa, konstruksi, atau retail.
+func NewWith(t testing.TB, industry string) *Env {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 	e := &Env{T: t, Ctx: ctx, Pool: pool, Acc: map[string]uuid.UUID{}}
 	m := server.Modules(pool)
 	e.Core, e.Ledger, e.Tax, e.Cash, e.Sales, e.Purchase, e.Coretax = m.Core, m.Ledger, m.Tax, m.Cash, m.Sales, m.Purchase, m.Coretax
-
-	c, err := e.Core.CreateCompany(ctx, core.NewCompany{Name: "PT Uji Jasa", ShortName: "Jasa", Industry: ptr("jasa")})
-	must(t, err)
-	e.Company = c.ID
+	e.Inventory, e.Project, e.Report, e.Consol, e.Imports = m.Inventory, m.Project, m.Report, m.Consol, m.Imports
 	e.Actor = audit.Actor{UserID: e.user("akuntansi@uji.test"), IP: "127.0.0.1"}
 	e.Other = audit.Actor{UserID: e.user("akuntansi2@uji.test"), IP: "127.0.0.1"}
+	e.setup("PT Uji "+industry, industry)
+	return e
+}
 
-	_, err = e.Ledger.ApplyTemplate(ctx, e.Company, "jasa", e.Actor)
+// Sibling membuat PT lain di basis data dan instalasi yang sama (grup yang sama), dengan
+// pengguna dan service yang sama, mis. untuk transaksi antar-PT dan konsolidasi.
+func (e *Env) Sibling(name, industry string) *Env {
+	e.T.Helper()
+	s := *e
+	s.Acc = map[string]uuid.UUID{}
+	s.setup(name, industry)
+	return &s
+}
+
+func (e *Env) setup(name, industry string) {
+	t, ctx := e.T, e.Ctx
+	c, err := e.Core.CreateCompany(ctx, core.NewCompany{Name: name, ShortName: industry, Industry: ptr(industry)})
+	must(t, err)
+	e.Company = c.ID
+	// Staf akuntansi uji menjadi Manager di setiap PT, supaya punya izin konsolidasi.
+	must(t, e.Core.Assign(ctx, e.Actor.UserID, c.ID, "manager"))
+
+	_, err = e.Ledger.ApplyTemplate(ctx, e.Company, industry, e.Actor)
 	must(t, err)
 	list, err := e.Ledger.Accounts(ctx, e.Company)
 	must(t, err)
@@ -86,7 +117,6 @@ func New(t testing.TB) *Env {
 	}, e.Actor)
 	must(t, err)
 	e.Supplier = sup.ID
-	return e
 }
 
 func (e *Env) user(email string) uuid.UUID {

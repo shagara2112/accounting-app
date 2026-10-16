@@ -29,6 +29,11 @@ type LineInput struct {
 	UnitPrice   money.Amount `json:"unitPrice"`
 	DiscountPct money.Amount `json:"discountPct"` // 0–100, maksimal 2 desimal
 	TaxCode     string       `json:"taxCode"`
+	ProductID   *uuid.UUID   `json:"productId,omitempty"`
+	ProjectID   *uuid.UUID   `json:"projectId,omitempty"` // dimensi proyek per baris (tagihan pembelian)
+	// DiscountAmount menggantikan diskon persen dengan nominal tetap; dipakai faktur termin
+	// untuk potongan uang muka supaya total potongan sama persis dengan uang muka.
+	DiscountAmount *money.Amount `json:"discountAmount,omitempty"`
 }
 
 type Line struct {
@@ -83,6 +88,9 @@ func Compute(t tax.Table, date civil.Date, in []LineInput, vatAllowed bool) ([]L
 		if pct.Sign() < 0 || pct.Cmp(hundred) > 0 || !pct.MulFrac(1, 1, 2, money.Down).Equal(pct) {
 			fields[key+"discountPct"] = "Diskon 0–100% dengan maksimal 2 desimal."
 		}
+		if d := li.DiscountAmount; d != nil && (d.Sign() < 0 || !d.MulFrac(1, 1, 0, money.Down).Equal(*d)) {
+			fields[key+"discountAmount"] = "Potongan harus rupiah bulat dan tidak negatif."
+		}
 		code, err := t.Find(li.TaxCode, date)
 		switch {
 		case err != nil:
@@ -99,6 +107,13 @@ func Compute(t tax.Table, date civil.Date, in []LineInput, vatAllowed bool) ([]L
 		l := Line{LineInput: li}
 		l.Gross = li.Qty.Mul(li.UnitPrice, 0, money.HalfUp)
 		l.Discount = l.Gross.Mul(pct.MulFrac(1, 100, 4, money.HalfUp), 0, money.HalfUp)
+		if li.DiscountAmount != nil {
+			if li.DiscountAmount.Cmp(l.Gross) > 0 {
+				fields[key+"discountAmount"] = "Potongan melebihi nilai baris."
+				continue
+			}
+			l.Discount = *li.DiscountAmount
+		}
 		l.Net = l.Gross.Sub(l.Discount)
 		l.OtherDPP, l.VAT = code.VAT(l.Net)
 		lines[i] = l

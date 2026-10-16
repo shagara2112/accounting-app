@@ -42,6 +42,12 @@ type testEnv struct {
 
 func newEnv(t *testing.T, lic license.Provider) *testEnv {
 	t.Helper()
+	return newEnvWith(t, lic, nil)
+}
+
+// newEnvWith seperti newEnv, tetapi tweak boleh mengubah Deps sebelum server dibuat.
+func newEnvWith(t *testing.T, lic license.Provider, tweak func(*Deps)) *testEnv {
+	t.Helper()
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 	svc := core.New(pool)
@@ -53,10 +59,14 @@ func newEnv(t *testing.T, lic license.Provider) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, _ := New(Deps{
+	d := Deps{
 		Pool: pool, Log: slog.New(slog.DiscardHandler), Sessions: auth.NewSessions(pool, false),
-		License: lic, Web: fstest.MapFS{"index.html": {Data: []byte("<html>lajur</html>")}},
-	}.WithModules())
+		License: lic, Web: fstest.MapFS{"index.html": {Data: []byte("<html>lajur</html>")}}, Box: testBox(),
+	}
+	if tweak != nil {
+		tweak(&d)
+	}
+	h, _ := New(d.WithModules())
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return &testEnv{t: t, pool: pool, srv: srv, core: svc, companyA: a.ID, companyB: b.ID}

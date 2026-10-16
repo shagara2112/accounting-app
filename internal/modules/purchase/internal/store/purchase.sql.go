@@ -16,17 +16,21 @@ import (
 
 const agingBills = `-- name: AgingBills :many
 SELECT i.id, i.number, i.supplier_id, i.bill_date, i.due_date, i.payable,
-  coalesce((SELECT sum(a.amount) FROM purchase.payment_allocations a
-            JOIN purchase.payments r ON r.id = a.payment_id
-            WHERE a.bill_id = i.id AND r.status = 'posted' AND r.payment_date <= $1), 0)::numeric AS paid
+  (coalesce((SELECT sum(a.amount) FROM purchase.payment_allocations a
+             JOIN purchase.payments r ON r.id = a.payment_id
+             WHERE a.bill_id = i.id AND r.status = 'posted' AND r.payment_date <= $1), 0)
+   + coalesce((SELECT sum(n.applied) FROM purchase.debit_notes n
+               WHERE n.bill_id = i.id AND n.status = 'posted' AND n.note_date <= $1), 0))::numeric AS paid
 FROM purchase.bills i
 WHERE i.company_id = $2 AND i.status = 'posted' AND i.bill_date <= $1
+  AND (coalesce(cardinality($3::uuid[]), 0) = 0 OR i.branch_id = ANY($3::uuid[]))
 ORDER BY i.due_date, i.number
 `
 
 type AgingBillsParams struct {
 	AsOf      civil.Date
 	CompanyID uuid.UUID
+	Branches  []uuid.UUID
 }
 
 type AgingBillsRow struct {
@@ -39,10 +43,10 @@ type AgingBillsRow struct {
 	Paid       money.Amount
 }
 
-// Tagihan yang belum lunas per tanggal @as_of: pembayaran yang dihitung hanya yang bertanggal
-// sampai tanggal itu (AP-06).
+// Tagihan yang belum lunas per tanggal @as_of: pembayaran dan nota debit yang dihitung hanya
+// yang bertanggal sampai tanggal itu (AP-06).
 func (q *Queries) AgingBills(ctx context.Context, arg AgingBillsParams) ([]AgingBillsRow, error) {
-	rows, err := q.db.Query(ctx, agingBills, arg.AsOf, arg.CompanyID)
+	rows, err := q.db.Query(ctx, agingBills, arg.AsOf, arg.CompanyID, arg.Branches)
 	if err != nil {
 		return nil, err
 	}
@@ -69,8 +73,56 @@ func (q *Queries) AgingBills(ctx context.Context, arg AgingBillsParams) ([]Aging
 	return items, nil
 }
 
+const billDebitNotes = `-- name: BillDebitNotes :many
+SELECT id, number, note_date, status, total, applied
+FROM purchase.debit_notes
+WHERE company_id = $1 AND bill_id = $2
+ORDER BY note_date, number
+`
+
+type BillDebitNotesParams struct {
+	CompanyID uuid.UUID
+	BillID    uuid.UUID
+}
+
+type BillDebitNotesRow struct {
+	ID       uuid.UUID
+	Number   string
+	NoteDate civil.Date
+	Status   string
+	Total    money.Amount
+	Applied  money.Amount
+}
+
+func (q *Queries) BillDebitNotes(ctx context.Context, arg BillDebitNotesParams) ([]BillDebitNotesRow, error) {
+	rows, err := q.db.Query(ctx, billDebitNotes, arg.CompanyID, arg.BillID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BillDebitNotesRow
+	for rows.Next() {
+		var i BillDebitNotesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.NoteDate,
+			&i.Status,
+			&i.Total,
+			&i.Applied,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const billLines = `-- name: BillLines :many
-SELECT id, company_id, bill_id, line_no, description, account_id, qty, unit_price, discount_pct, discount, net, tax_code, other_dpp, vat FROM purchase.bill_lines WHERE company_id = $1 AND bill_id = $2 ORDER BY line_no
+SELECT id, company_id, bill_id, line_no, description, account_id, qty, unit_price, discount_pct, discount, net, tax_code, other_dpp, vat, product_id, project_id FROM purchase.bill_lines WHERE company_id = $1 AND bill_id = $2 ORDER BY line_no
 `
 
 type BillLinesParams struct {
@@ -102,6 +154,8 @@ func (q *Queries) BillLines(ctx context.Context, arg BillLinesParams) ([]Purchas
 			&i.TaxCode,
 			&i.OtherDpp,
 			&i.Vat,
+			&i.ProductID,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -150,6 +204,148 @@ func (q *Queries) BillPayments(ctx context.Context, arg BillPaymentsParams) ([]B
 			&i.Status,
 			&i.Amount,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const costByAccount = `-- name: CostByAccount :many
+SELECT x.account_id, sum(x.net)::numeric AS amount
+FROM (
+  SELECT l.account_id, l.net
+  FROM purchase.bill_lines l
+  JOIN purchase.bills b ON b.id = l.bill_id
+  WHERE b.company_id = $1 AND b.supplier_id = $2 AND b.status = 'posted' AND NOT b.opening
+    AND b.bill_date >= $3 AND b.bill_date <= $4
+  UNION ALL
+  SELECT l.account_id, -l.net
+  FROM purchase.debit_note_lines l
+  JOIN purchase.debit_notes n ON n.id = l.debit_note_id
+  WHERE n.company_id = $1 AND n.supplier_id = $2 AND n.status = 'posted'
+    AND n.note_date >= $3 AND n.note_date <= $4
+) x
+GROUP BY x.account_id
+`
+
+type CostByAccountParams struct {
+	CompanyID  uuid.UUID
+	SupplierID uuid.UUID
+	FromDate   civil.Date
+	ToDate     civil.Date
+}
+
+type CostByAccountRow struct {
+	AccountID uuid.UUID
+	Amount    money.Amount
+}
+
+func (q *Queries) CostByAccount(ctx context.Context, arg CostByAccountParams) ([]CostByAccountRow, error) {
+	rows, err := q.db.Query(ctx, costByAccount,
+		arg.CompanyID,
+		arg.SupplierID,
+		arg.FromDate,
+		arg.ToDate,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CostByAccountRow
+	for rows.Next() {
+		var i CostByAccountRow
+		if err := rows.Scan(&i.AccountID, &i.Amount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const debitNoteLines = `-- name: DebitNoteLines :many
+SELECT id, company_id, debit_note_id, line_no, bill_line_id, description, account_id, product_id, project_id, qty, unit_price, discount_pct, discount, net, tax_code, other_dpp, vat FROM purchase.debit_note_lines WHERE company_id = $1 AND debit_note_id = $2 ORDER BY line_no
+`
+
+type DebitNoteLinesParams struct {
+	CompanyID   uuid.UUID
+	DebitNoteID uuid.UUID
+}
+
+func (q *Queries) DebitNoteLines(ctx context.Context, arg DebitNoteLinesParams) ([]PurchaseDebitNoteLine, error) {
+	rows, err := q.db.Query(ctx, debitNoteLines, arg.CompanyID, arg.DebitNoteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PurchaseDebitNoteLine
+	for rows.Next() {
+		var i PurchaseDebitNoteLine
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.DebitNoteID,
+			&i.LineNo,
+			&i.BillLineID,
+			&i.Description,
+			&i.AccountID,
+			&i.ProductID,
+			&i.ProjectID,
+			&i.Qty,
+			&i.UnitPrice,
+			&i.DiscountPct,
+			&i.Discount,
+			&i.Net,
+			&i.TaxCode,
+			&i.OtherDpp,
+			&i.Vat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const debitedByLine = `-- name: DebitedByLine :many
+SELECT l.bill_line_id, sum(l.net)::numeric AS net, sum(l.qty)::numeric AS qty
+FROM purchase.debit_note_lines l
+JOIN purchase.debit_notes n ON n.id = l.debit_note_id
+WHERE n.company_id = $1 AND n.bill_id = $2 AND n.status = 'posted'
+GROUP BY l.bill_line_id
+`
+
+type DebitedByLineParams struct {
+	CompanyID uuid.UUID
+	BillID    uuid.UUID
+}
+
+type DebitedByLineRow struct {
+	BillLineID uuid.UUID
+	Net        money.Amount
+	Qty        money.Amount
+}
+
+// Nilai dan kuantitas yang sudah dikembalikan per baris tagihan.
+func (q *Queries) DebitedByLine(ctx context.Context, arg DebitedByLineParams) ([]DebitedByLineRow, error) {
+	rows, err := q.db.Query(ctx, debitedByLine, arg.CompanyID, arg.BillID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DebitedByLineRow
+	for rows.Next() {
+		var i DebitedByLineRow
+		if err := rows.Scan(&i.BillLineID, &i.Net, &i.Qty); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -238,7 +434,7 @@ func (q *Queries) DuplicateSupplierInvoice(ctx context.Context, arg DuplicateSup
 }
 
 const getBill = `-- name: GetBill :one
-SELECT i.id, i.company_id, i.number, i.status, i.supplier_id, i.supplier_invoice_no, i.bill_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.withholding_code, i.withholding, i.total, i.payable, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, cu.name AS created_by_name, pu.name AS posted_by_name, vu.name AS voided_by_name
+SELECT i.id, i.company_id, i.number, i.status, i.supplier_id, i.supplier_invoice_no, i.bill_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.withholding_code, i.withholding, i.total, i.payable, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, i.opening, i.branch_id, i.department_id, cu.name AS created_by_name, pu.name AS posted_by_name, vu.name AS voided_by_name
 FROM purchase.bills i
 LEFT JOIN platform.users cu ON cu.id = i.created_by
 LEFT JOIN platform.users pu ON pu.id = i.posted_by
@@ -279,6 +475,9 @@ type GetBillRow struct {
 	VoidedBy          *uuid.UUID
 	VoidReason        *string
 	Version           int32
+	Opening           bool
+	BranchID          *uuid.UUID
+	DepartmentID      *uuid.UUID
 	CreatedByName     *string
 	PostedByName      *string
 	VoidedByName      *string
@@ -315,6 +514,9 @@ func (q *Queries) GetBill(ctx context.Context, arg GetBillParams) (GetBillRow, e
 		&i.VoidedBy,
 		&i.VoidReason,
 		&i.Version,
+		&i.Opening,
+		&i.BranchID,
+		&i.DepartmentID,
 		&i.CreatedByName,
 		&i.PostedByName,
 		&i.VoidedByName,
@@ -323,7 +525,7 @@ func (q *Queries) GetBill(ctx context.Context, arg GetBillParams) (GetBillRow, e
 }
 
 const getBillForUpdate = `-- name: GetBillForUpdate :one
-SELECT id, company_id, number, status, supplier_id, supplier_invoice_no, bill_date, due_date, memo, subtotal, discount, dpp, other_dpp, vat, withholding_code, withholding, total, payable, journal_entry_id, created_at, created_by, posted_at, posted_by, voided_at, voided_by, void_reason, version FROM purchase.bills WHERE company_id = $1 AND id = $2 FOR UPDATE
+SELECT id, company_id, number, status, supplier_id, supplier_invoice_no, bill_date, due_date, memo, subtotal, discount, dpp, other_dpp, vat, withholding_code, withholding, total, payable, journal_entry_id, created_at, created_by, posted_at, posted_by, voided_at, voided_by, void_reason, version, opening, branch_id, department_id FROM purchase.bills WHERE company_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetBillForUpdateParams struct {
@@ -362,12 +564,134 @@ func (q *Queries) GetBillForUpdate(ctx context.Context, arg GetBillForUpdatePara
 		&i.VoidedBy,
 		&i.VoidReason,
 		&i.Version,
+		&i.Opening,
+		&i.BranchID,
+		&i.DepartmentID,
+	)
+	return i, err
+}
+
+const getDebitNote = `-- name: GetDebitNote :one
+SELECT n.id, n.company_id, n.number, n.status, n.supplier_id, n.bill_id, n.note_date, n.memo, n.subtotal, n.discount, n.dpp, n.other_dpp, n.vat, n.withholding, n.total, n.payable, n.applied, n.journal_entry_id, n.created_at, n.created_by, n.voided_at, n.voided_by, n.void_reason, b.number AS bill_number, b.supplier_invoice_no, cu.name AS created_by_name, vu.name AS voided_by_name
+FROM purchase.debit_notes n
+JOIN purchase.bills b ON b.id = n.bill_id
+LEFT JOIN platform.users cu ON cu.id = n.created_by
+LEFT JOIN platform.users vu ON vu.id = n.voided_by
+WHERE n.company_id = $1 AND n.id = $2
+`
+
+type GetDebitNoteParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+type GetDebitNoteRow struct {
+	ID                uuid.UUID
+	CompanyID         uuid.UUID
+	Number            string
+	Status            string
+	SupplierID        uuid.UUID
+	BillID            uuid.UUID
+	NoteDate          civil.Date
+	Memo              string
+	Subtotal          money.Amount
+	Discount          money.Amount
+	Dpp               money.Amount
+	OtherDpp          money.Amount
+	Vat               money.Amount
+	Withholding       money.Amount
+	Total             money.Amount
+	Payable           money.Amount
+	Applied           money.Amount
+	JournalEntryID    uuid.UUID
+	CreatedAt         time.Time
+	CreatedBy         *uuid.UUID
+	VoidedAt          *time.Time
+	VoidedBy          *uuid.UUID
+	VoidReason        *string
+	BillNumber        *string
+	SupplierInvoiceNo string
+	CreatedByName     *string
+	VoidedByName      *string
+}
+
+func (q *Queries) GetDebitNote(ctx context.Context, arg GetDebitNoteParams) (GetDebitNoteRow, error) {
+	row := q.db.QueryRow(ctx, getDebitNote, arg.CompanyID, arg.ID)
+	var i GetDebitNoteRow
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Number,
+		&i.Status,
+		&i.SupplierID,
+		&i.BillID,
+		&i.NoteDate,
+		&i.Memo,
+		&i.Subtotal,
+		&i.Discount,
+		&i.Dpp,
+		&i.OtherDpp,
+		&i.Vat,
+		&i.Withholding,
+		&i.Total,
+		&i.Payable,
+		&i.Applied,
+		&i.JournalEntryID,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.VoidedAt,
+		&i.VoidedBy,
+		&i.VoidReason,
+		&i.BillNumber,
+		&i.SupplierInvoiceNo,
+		&i.CreatedByName,
+		&i.VoidedByName,
+	)
+	return i, err
+}
+
+const getDebitNoteForUpdate = `-- name: GetDebitNoteForUpdate :one
+SELECT id, company_id, number, status, supplier_id, bill_id, note_date, memo, subtotal, discount, dpp, other_dpp, vat, withholding, total, payable, applied, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason FROM purchase.debit_notes WHERE company_id = $1 AND id = $2 FOR UPDATE
+`
+
+type GetDebitNoteForUpdateParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+func (q *Queries) GetDebitNoteForUpdate(ctx context.Context, arg GetDebitNoteForUpdateParams) (PurchaseDebitNote, error) {
+	row := q.db.QueryRow(ctx, getDebitNoteForUpdate, arg.CompanyID, arg.ID)
+	var i PurchaseDebitNote
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Number,
+		&i.Status,
+		&i.SupplierID,
+		&i.BillID,
+		&i.NoteDate,
+		&i.Memo,
+		&i.Subtotal,
+		&i.Discount,
+		&i.Dpp,
+		&i.OtherDpp,
+		&i.Vat,
+		&i.Withholding,
+		&i.Total,
+		&i.Payable,
+		&i.Applied,
+		&i.JournalEntryID,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.VoidedAt,
+		&i.VoidedBy,
+		&i.VoidReason,
 	)
 	return i, err
 }
 
 const getPayment = `-- name: GetPayment :one
-SELECT r.id, r.company_id, r.number, r.supplier_id, r.payment_date, r.cash_account_id, r.amount, r.memo, r.status, r.journal_entry_id, r.created_at, r.created_by, r.voided_at, r.voided_by, r.void_reason, u.name AS created_by_name, vu.name AS voided_by_name
+SELECT r.id, r.company_id, r.number, r.supplier_id, r.payment_date, r.cash_account_id, r.amount, r.memo, r.status, r.journal_entry_id, r.created_at, r.created_by, r.voided_at, r.voided_by, r.void_reason, r.kind, r.advance, r.from_advance, u.name AS created_by_name, vu.name AS voided_by_name
 FROM purchase.payments r
 LEFT JOIN platform.users u ON u.id = r.created_by
 LEFT JOIN platform.users vu ON vu.id = r.voided_by
@@ -385,7 +709,7 @@ type GetPaymentRow struct {
 	Number         string
 	SupplierID     uuid.UUID
 	PaymentDate    civil.Date
-	CashAccountID  uuid.UUID
+	CashAccountID  *uuid.UUID
 	Amount         money.Amount
 	Memo           string
 	Status         string
@@ -395,6 +719,9 @@ type GetPaymentRow struct {
 	VoidedAt       *time.Time
 	VoidedBy       *uuid.UUID
 	VoidReason     *string
+	Kind           string
+	Advance        money.Amount
+	FromAdvance    money.Amount
 	CreatedByName  *string
 	VoidedByName   *string
 }
@@ -418,6 +745,9 @@ func (q *Queries) GetPayment(ctx context.Context, arg GetPaymentParams) (GetPaym
 		&i.VoidedAt,
 		&i.VoidedBy,
 		&i.VoidReason,
+		&i.Kind,
+		&i.Advance,
+		&i.FromAdvance,
 		&i.CreatedByName,
 		&i.VoidedByName,
 	)
@@ -425,7 +755,7 @@ func (q *Queries) GetPayment(ctx context.Context, arg GetPaymentParams) (GetPaym
 }
 
 const getPaymentForUpdate = `-- name: GetPaymentForUpdate :one
-SELECT id, company_id, number, supplier_id, payment_date, cash_account_id, amount, memo, status, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason FROM purchase.payments WHERE company_id = $1 AND id = $2 FOR UPDATE
+SELECT id, company_id, number, supplier_id, payment_date, cash_account_id, amount, memo, status, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason, kind, advance, from_advance FROM purchase.payments WHERE company_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetPaymentForUpdateParams struct {
@@ -452,6 +782,9 @@ func (q *Queries) GetPaymentForUpdate(ctx context.Context, arg GetPaymentForUpda
 		&i.VoidedAt,
 		&i.VoidedBy,
 		&i.VoidReason,
+		&i.Kind,
+		&i.Advance,
+		&i.FromAdvance,
 	)
 	return i, err
 }
@@ -484,8 +817,8 @@ const insertBill = `-- name: InsertBill :exec
 
 INSERT INTO purchase.bills
   (id, company_id, supplier_id, supplier_invoice_no, bill_date, due_date, memo, subtotal, discount, dpp,
-   other_dpp, vat, withholding_code, withholding, total, payable, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+   other_dpp, vat, withholding_code, withholding, total, payable, created_by, opening, branch_id, department_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 `
 
 type InsertBillParams struct {
@@ -506,6 +839,9 @@ type InsertBillParams struct {
 	Total             money.Amount
 	Payable           money.Amount
 	CreatedBy         *uuid.UUID
+	Opening           bool
+	BranchID          *uuid.UUID
+	DepartmentID      *uuid.UUID
 }
 
 // Tagihan ---------------------------------------------------------------------------
@@ -528,6 +864,9 @@ func (q *Queries) InsertBill(ctx context.Context, arg InsertBillParams) error {
 		arg.Total,
 		arg.Payable,
 		arg.CreatedBy,
+		arg.Opening,
+		arg.BranchID,
+		arg.DepartmentID,
 	)
 	return err
 }
@@ -535,8 +874,8 @@ func (q *Queries) InsertBill(ctx context.Context, arg InsertBillParams) error {
 const insertBillLine = `-- name: InsertBillLine :exec
 INSERT INTO purchase.bill_lines
   (id, company_id, bill_id, line_no, description, account_id, qty, unit_price, discount_pct,
-   discount, net, tax_code, other_dpp, vat)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+   discount, net, tax_code, other_dpp, vat, product_id, project_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 `
 
 type InsertBillLineParams struct {
@@ -554,6 +893,8 @@ type InsertBillLineParams struct {
 	TaxCode     string
 	OtherDpp    money.Amount
 	Vat         money.Amount
+	ProductID   *uuid.UUID
+	ProjectID   *uuid.UUID
 }
 
 func (q *Queries) InsertBillLine(ctx context.Context, arg InsertBillLineParams) error {
@@ -572,6 +913,112 @@ func (q *Queries) InsertBillLine(ctx context.Context, arg InsertBillLineParams) 
 		arg.TaxCode,
 		arg.OtherDpp,
 		arg.Vat,
+		arg.ProductID,
+		arg.ProjectID,
+	)
+	return err
+}
+
+const insertDebitNote = `-- name: InsertDebitNote :exec
+
+INSERT INTO purchase.debit_notes
+  (id, company_id, number, supplier_id, bill_id, note_date, memo, subtotal, discount, dpp, other_dpp, vat,
+   withholding, total, payable, applied, journal_entry_id, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+`
+
+type InsertDebitNoteParams struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	SupplierID     uuid.UUID
+	BillID         uuid.UUID
+	NoteDate       civil.Date
+	Memo           string
+	Subtotal       money.Amount
+	Discount       money.Amount
+	Dpp            money.Amount
+	OtherDpp       money.Amount
+	Vat            money.Amount
+	Withholding    money.Amount
+	Total          money.Amount
+	Payable        money.Amount
+	Applied        money.Amount
+	JournalEntryID uuid.UUID
+	CreatedBy      *uuid.UUID
+}
+
+// Nota debit dan retur pembelian (AP-05) --------------------------------------------
+func (q *Queries) InsertDebitNote(ctx context.Context, arg InsertDebitNoteParams) error {
+	_, err := q.db.Exec(ctx, insertDebitNote,
+		arg.ID,
+		arg.CompanyID,
+		arg.Number,
+		arg.SupplierID,
+		arg.BillID,
+		arg.NoteDate,
+		arg.Memo,
+		arg.Subtotal,
+		arg.Discount,
+		arg.Dpp,
+		arg.OtherDpp,
+		arg.Vat,
+		arg.Withholding,
+		arg.Total,
+		arg.Payable,
+		arg.Applied,
+		arg.JournalEntryID,
+		arg.CreatedBy,
+	)
+	return err
+}
+
+const insertDebitNoteLine = `-- name: InsertDebitNoteLine :exec
+INSERT INTO purchase.debit_note_lines
+  (id, company_id, debit_note_id, line_no, bill_line_id, description, account_id, product_id, project_id, qty,
+   unit_price, discount_pct, discount, net, tax_code, other_dpp, vat)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+`
+
+type InsertDebitNoteLineParams struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	DebitNoteID uuid.UUID
+	LineNo      int16
+	BillLineID  uuid.UUID
+	Description string
+	AccountID   uuid.UUID
+	ProductID   *uuid.UUID
+	ProjectID   *uuid.UUID
+	Qty         money.Amount
+	UnitPrice   money.Amount
+	DiscountPct money.Amount
+	Discount    money.Amount
+	Net         money.Amount
+	TaxCode     string
+	OtherDpp    money.Amount
+	Vat         money.Amount
+}
+
+func (q *Queries) InsertDebitNoteLine(ctx context.Context, arg InsertDebitNoteLineParams) error {
+	_, err := q.db.Exec(ctx, insertDebitNoteLine,
+		arg.ID,
+		arg.CompanyID,
+		arg.DebitNoteID,
+		arg.LineNo,
+		arg.BillLineID,
+		arg.Description,
+		arg.AccountID,
+		arg.ProductID,
+		arg.ProjectID,
+		arg.Qty,
+		arg.UnitPrice,
+		arg.DiscountPct,
+		arg.Discount,
+		arg.Net,
+		arg.TaxCode,
+		arg.OtherDpp,
+		arg.Vat,
 	)
 	return err
 }
@@ -579,8 +1026,9 @@ func (q *Queries) InsertBillLine(ctx context.Context, arg InsertBillLineParams) 
 const insertPayment = `-- name: InsertPayment :exec
 
 INSERT INTO purchase.payments
-  (id, company_id, number, supplier_id, payment_date, cash_account_id, amount, memo, journal_entry_id, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  (id, company_id, number, supplier_id, payment_date, cash_account_id, amount, memo, journal_entry_id, created_by,
+   kind, advance, from_advance)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 `
 
 type InsertPaymentParams struct {
@@ -589,11 +1037,14 @@ type InsertPaymentParams struct {
 	Number         string
 	SupplierID     uuid.UUID
 	PaymentDate    civil.Date
-	CashAccountID  uuid.UUID
+	CashAccountID  *uuid.UUID
 	Amount         money.Amount
 	Memo           string
 	JournalEntryID uuid.UUID
 	CreatedBy      *uuid.UUID
+	Kind           string
+	Advance        money.Amount
+	FromAdvance    money.Amount
 }
 
 // Pembayaran -------------------------------------------------------------------------
@@ -609,12 +1060,15 @@ func (q *Queries) InsertPayment(ctx context.Context, arg InsertPaymentParams) er
 		arg.Memo,
 		arg.JournalEntryID,
 		arg.CreatedBy,
+		arg.Kind,
+		arg.Advance,
+		arg.FromAdvance,
 	)
 	return err
 }
 
 const listBills = `-- name: ListBills :many
-SELECT i.id, i.company_id, i.number, i.status, i.supplier_id, i.supplier_invoice_no, i.bill_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.withholding_code, i.withholding, i.total, i.payable, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, coalesce(p.paid, 0)::numeric AS paid
+SELECT i.id, i.company_id, i.number, i.status, i.supplier_id, i.supplier_invoice_no, i.bill_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.withholding_code, i.withholding, i.total, i.payable, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, i.opening, i.branch_id, i.department_id, coalesce(p.paid, 0)::numeric AS paid, coalesce(d.debited, 0)::numeric AS debited
 FROM purchase.bills i
 LEFT JOIN LATERAL (
   SELECT sum(a.amount) AS paid
@@ -622,14 +1076,18 @@ LEFT JOIN LATERAL (
   JOIN purchase.payments r ON r.id = a.payment_id
   WHERE a.bill_id = i.id AND r.status = 'posted'
 ) p ON true
+LEFT JOIN LATERAL (
+  SELECT sum(n.applied) AS debited FROM purchase.debit_notes n WHERE n.bill_id = i.id AND n.status = 'posted'
+) d ON true
 WHERE i.company_id = $1
   AND i.bill_date >= $2 AND i.bill_date <= $3
   AND ($4::uuid IS NULL OR i.supplier_id = $4::uuid)
-  AND ($5::text IS NULL OR i.number ILIKE '%' || $5::text || '%'
-       OR i.memo ILIKE '%' || $5::text || '%')
-  AND ($6::text IS NULL OR $6::text =
+  AND (coalesce(cardinality($5::uuid[]), 0) = 0 OR i.branch_id = ANY($5::uuid[]))
+  AND ($6::text IS NULL OR i.number ILIKE '%' || $6::text || '%'
+       OR i.memo ILIKE '%' || $6::text || '%')
+  AND ($7::text IS NULL OR $7::text =
        CASE WHEN i.status <> 'posted' THEN i.status
-            WHEN coalesce(p.paid, 0) >= i.payable THEN 'paid' ELSE 'open' END)
+            WHEN coalesce(p.paid, 0) + coalesce(d.debited, 0) >= i.payable THEN 'paid' ELSE 'open' END)
 ORDER BY i.bill_date DESC, i.id DESC
 LIMIT 500
 `
@@ -639,6 +1097,7 @@ type ListBillsParams struct {
 	FromDate   civil.Date
 	ToDate     civil.Date
 	SupplierID *uuid.UUID
+	Branches   []uuid.UUID
 	Search     *string
 	State      *string
 }
@@ -671,16 +1130,21 @@ type ListBillsRow struct {
 	VoidedBy          *uuid.UUID
 	VoidReason        *string
 	Version           int32
+	Opening           bool
+	BranchID          *uuid.UUID
+	DepartmentID      *uuid.UUID
 	Paid              money.Amount
+	Debited           money.Amount
 }
 
-// state: draft, open (diposting, belum lunas), paid, atau void.
+// state: draft, open (diposting, belum lunas), paid, atau void. Nota debit ikut mengurangi sisa.
 func (q *Queries) ListBills(ctx context.Context, arg ListBillsParams) ([]ListBillsRow, error) {
 	rows, err := q.db.Query(ctx, listBills,
 		arg.CompanyID,
 		arg.FromDate,
 		arg.ToDate,
 		arg.SupplierID,
+		arg.Branches,
 		arg.Search,
 		arg.State,
 	)
@@ -719,7 +1183,108 @@ func (q *Queries) ListBills(ctx context.Context, arg ListBillsParams) ([]ListBil
 			&i.VoidedBy,
 			&i.VoidReason,
 			&i.Version,
+			&i.Opening,
+			&i.BranchID,
+			&i.DepartmentID,
 			&i.Paid,
+			&i.Debited,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDebitNotes = `-- name: ListDebitNotes :many
+SELECT n.id, n.company_id, n.number, n.status, n.supplier_id, n.bill_id, n.note_date, n.memo, n.subtotal, n.discount, n.dpp, n.other_dpp, n.vat, n.withholding, n.total, n.payable, n.applied, n.journal_entry_id, n.created_at, n.created_by, n.voided_at, n.voided_by, n.void_reason, b.number AS bill_number
+FROM purchase.debit_notes n
+JOIN purchase.bills b ON b.id = n.bill_id
+WHERE n.company_id = $1 AND n.note_date >= $2 AND n.note_date <= $3
+  AND ($4::uuid IS NULL OR n.supplier_id = $4::uuid)
+  AND (coalesce(cardinality($5::uuid[]), 0) = 0 OR b.branch_id = ANY($5::uuid[]))
+ORDER BY n.note_date DESC, n.id DESC
+LIMIT 500
+`
+
+type ListDebitNotesParams struct {
+	CompanyID  uuid.UUID
+	FromDate   civil.Date
+	ToDate     civil.Date
+	SupplierID *uuid.UUID
+	Branches   []uuid.UUID
+}
+
+type ListDebitNotesRow struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	Status         string
+	SupplierID     uuid.UUID
+	BillID         uuid.UUID
+	NoteDate       civil.Date
+	Memo           string
+	Subtotal       money.Amount
+	Discount       money.Amount
+	Dpp            money.Amount
+	OtherDpp       money.Amount
+	Vat            money.Amount
+	Withholding    money.Amount
+	Total          money.Amount
+	Payable        money.Amount
+	Applied        money.Amount
+	JournalEntryID uuid.UUID
+	CreatedAt      time.Time
+	CreatedBy      *uuid.UUID
+	VoidedAt       *time.Time
+	VoidedBy       *uuid.UUID
+	VoidReason     *string
+	BillNumber     *string
+}
+
+func (q *Queries) ListDebitNotes(ctx context.Context, arg ListDebitNotesParams) ([]ListDebitNotesRow, error) {
+	rows, err := q.db.Query(ctx, listDebitNotes,
+		arg.CompanyID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.SupplierID,
+		arg.Branches,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDebitNotesRow
+	for rows.Next() {
+		var i ListDebitNotesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.Number,
+			&i.Status,
+			&i.SupplierID,
+			&i.BillID,
+			&i.NoteDate,
+			&i.Memo,
+			&i.Subtotal,
+			&i.Discount,
+			&i.Dpp,
+			&i.OtherDpp,
+			&i.Vat,
+			&i.Withholding,
+			&i.Total,
+			&i.Payable,
+			&i.Applied,
+			&i.JournalEntryID,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.VoidedAt,
+			&i.VoidedBy,
+			&i.VoidReason,
+			&i.BillNumber,
 		); err != nil {
 			return nil, err
 		}
@@ -732,10 +1297,13 @@ func (q *Queries) ListBills(ctx context.Context, arg ListBillsParams) ([]ListBil
 }
 
 const listPayments = `-- name: ListPayments :many
-SELECT id, company_id, number, supplier_id, payment_date, cash_account_id, amount, memo, status, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason FROM purchase.payments
-WHERE company_id = $1 AND payment_date >= $2 AND payment_date <= $3
-  AND ($4::uuid IS NULL OR supplier_id = $4::uuid)
-ORDER BY payment_date DESC, id DESC
+SELECT p.id, p.company_id, p.number, p.supplier_id, p.payment_date, p.cash_account_id, p.amount, p.memo, p.status, p.journal_entry_id, p.created_at, p.created_by, p.voided_at, p.voided_by, p.void_reason, p.kind, p.advance, p.from_advance FROM purchase.payments p
+WHERE p.company_id = $1 AND p.payment_date >= $2 AND p.payment_date <= $3
+  AND ($4::uuid IS NULL OR p.supplier_id = $4::uuid)
+  AND (coalesce(cardinality($5::uuid[]), 0) = 0 OR EXISTS (
+       SELECT 1 FROM purchase.payment_allocations a JOIN purchase.bills b ON b.id = a.bill_id
+       WHERE a.payment_id = p.id AND b.branch_id = ANY($5::uuid[])))
+ORDER BY p.payment_date DESC, p.id DESC
 LIMIT 500
 `
 
@@ -744,6 +1312,7 @@ type ListPaymentsParams struct {
 	FromDate   civil.Date
 	ToDate     civil.Date
 	SupplierID *uuid.UUID
+	Branches   []uuid.UUID
 }
 
 func (q *Queries) ListPayments(ctx context.Context, arg ListPaymentsParams) ([]PurchasePayment, error) {
@@ -752,6 +1321,7 @@ func (q *Queries) ListPayments(ctx context.Context, arg ListPaymentsParams) ([]P
 		arg.FromDate,
 		arg.ToDate,
 		arg.SupplierID,
+		arg.Branches,
 	)
 	if err != nil {
 		return nil, err
@@ -776,6 +1346,9 @@ func (q *Queries) ListPayments(ctx context.Context, arg ListPaymentsParams) ([]P
 			&i.VoidedAt,
 			&i.VoidedBy,
 			&i.VoidReason,
+			&i.Kind,
+			&i.Advance,
+			&i.FromAdvance,
 		); err != nil {
 			return nil, err
 		}
@@ -787,8 +1360,18 @@ func (q *Queries) ListPayments(ctx context.Context, arg ListPaymentsParams) ([]P
 	return items, nil
 }
 
+const lockAdvance = `-- name: LockAdvance :exec
+SELECT pg_advisory_xact_lock($1::bigint)
+`
+
+// Mengunci saldo uang muka satu kontak sampai transaksi selesai (kunci dihitung di Go).
+func (q *Queries) LockAdvance(ctx context.Context, lockKey int64) error {
+	_, err := q.db.Exec(ctx, lockAdvance, lockKey)
+	return err
+}
+
 const lockBills = `-- name: LockBills :many
-SELECT id, company_id, number, status, supplier_id, supplier_invoice_no, bill_date, due_date, memo, subtotal, discount, dpp, other_dpp, vat, withholding_code, withholding, total, payable, journal_entry_id, created_at, created_by, posted_at, posted_by, voided_at, voided_by, void_reason, version FROM purchase.bills
+SELECT id, company_id, number, status, supplier_id, supplier_invoice_no, bill_date, due_date, memo, subtotal, discount, dpp, other_dpp, vat, withholding_code, withholding, total, payable, journal_entry_id, created_at, created_by, posted_at, posted_by, voided_at, voided_by, void_reason, version, opening, branch_id, department_id FROM purchase.bills
 WHERE company_id = $1 AND id = ANY($2::uuid[])
 ORDER BY id
 FOR UPDATE
@@ -836,6 +1419,9 @@ func (q *Queries) LockBills(ctx context.Context, arg LockBillsParams) ([]Purchas
 			&i.VoidedBy,
 			&i.VoidReason,
 			&i.Version,
+			&i.Opening,
+			&i.BranchID,
+			&i.DepartmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -901,6 +1487,32 @@ func (q *Queries) MarkBillVoid(ctx context.Context, arg MarkBillVoidParams) (int
 	return result.RowsAffected(), nil
 }
 
+const markDebitNoteVoid = `-- name: MarkDebitNoteVoid :execrows
+UPDATE purchase.debit_notes
+SET status = 'void', voided_at = now(), voided_by = $3, void_reason = $4
+WHERE company_id = $1 AND id = $2 AND status = 'posted'
+`
+
+type MarkDebitNoteVoidParams struct {
+	CompanyID  uuid.UUID
+	ID         uuid.UUID
+	VoidedBy   *uuid.UUID
+	VoidReason *string
+}
+
+func (q *Queries) MarkDebitNoteVoid(ctx context.Context, arg MarkDebitNoteVoidParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markDebitNoteVoid,
+		arg.CompanyID,
+		arg.ID,
+		arg.VoidedBy,
+		arg.VoidReason,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markPaymentVoid = `-- name: MarkPaymentVoid :execrows
 UPDATE purchase.payments
 SET status = 'void', voided_at = now(), voided_by = $3, void_reason = $4
@@ -928,7 +1540,7 @@ func (q *Queries) MarkPaymentVoid(ctx context.Context, arg MarkPaymentVoidParams
 }
 
 const openBills = `-- name: OpenBills :many
-SELECT i.id, i.company_id, i.number, i.status, i.supplier_id, i.supplier_invoice_no, i.bill_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.withholding_code, i.withholding, i.total, i.payable, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, coalesce(p.paid, 0)::numeric AS paid
+SELECT i.id, i.company_id, i.number, i.status, i.supplier_id, i.supplier_invoice_no, i.bill_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.withholding_code, i.withholding, i.total, i.payable, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, i.opening, i.branch_id, i.department_id, coalesce(p.paid, 0)::numeric AS paid, coalesce(d.debited, 0)::numeric AS debited
 FROM purchase.bills i
 LEFT JOIN LATERAL (
   SELECT sum(a.amount) AS paid
@@ -936,15 +1548,20 @@ LEFT JOIN LATERAL (
   JOIN purchase.payments r ON r.id = a.payment_id
   WHERE a.bill_id = i.id AND r.status = 'posted'
 ) p ON true
+LEFT JOIN LATERAL (
+  SELECT sum(n.applied) AS debited FROM purchase.debit_notes n WHERE n.bill_id = i.id AND n.status = 'posted'
+) d ON true
 WHERE i.company_id = $1 AND i.status = 'posted'
   AND ($2::uuid IS NULL OR i.supplier_id = $2::uuid)
-  AND coalesce(p.paid, 0) < i.payable
+  AND (coalesce(cardinality($3::uuid[]), 0) = 0 OR i.branch_id = ANY($3::uuid[]))
+  AND coalesce(p.paid, 0) + coalesce(d.debited, 0) < i.payable
 ORDER BY i.due_date, i.number
 `
 
 type OpenBillsParams struct {
 	CompanyID  uuid.UUID
 	SupplierID *uuid.UUID
+	Branches   []uuid.UUID
 }
 
 type OpenBillsRow struct {
@@ -975,11 +1592,15 @@ type OpenBillsRow struct {
 	VoidedBy          *uuid.UUID
 	VoidReason        *string
 	Version           int32
+	Opening           bool
+	BranchID          *uuid.UUID
+	DepartmentID      *uuid.UUID
 	Paid              money.Amount
+	Debited           money.Amount
 }
 
 func (q *Queries) OpenBills(ctx context.Context, arg OpenBillsParams) ([]OpenBillsRow, error) {
-	rows, err := q.db.Query(ctx, openBills, arg.CompanyID, arg.SupplierID)
+	rows, err := q.db.Query(ctx, openBills, arg.CompanyID, arg.SupplierID, arg.Branches)
 	if err != nil {
 		return nil, err
 	}
@@ -1015,7 +1636,11 @@ func (q *Queries) OpenBills(ctx context.Context, arg OpenBillsParams) ([]OpenBil
 			&i.VoidedBy,
 			&i.VoidReason,
 			&i.Version,
+			&i.Opening,
+			&i.BranchID,
+			&i.DepartmentID,
 			&i.Paid,
+			&i.Debited,
 		); err != nil {
 			return nil, err
 		}
@@ -1028,11 +1653,18 @@ func (q *Queries) OpenBills(ctx context.Context, arg OpenBillsParams) ([]OpenBil
 }
 
 const paidByBill = `-- name: PaidByBill :many
-SELECT a.bill_id, sum(a.amount)::numeric AS paid
-FROM purchase.payment_allocations a
-JOIN purchase.payments r ON r.id = a.payment_id
-WHERE a.company_id = $1 AND a.bill_id = ANY($2::uuid[]) AND r.status = 'posted'
-GROUP BY a.bill_id
+SELECT x.bill_id, sum(x.amount)::numeric AS paid
+FROM (
+  SELECT a.bill_id, a.amount
+  FROM purchase.payment_allocations a
+  JOIN purchase.payments r ON r.id = a.payment_id
+  WHERE a.company_id = $1 AND a.bill_id = ANY($2::uuid[]) AND r.status = 'posted'
+  UNION ALL
+  SELECT n.bill_id, n.applied
+  FROM purchase.debit_notes n
+  WHERE n.company_id = $1 AND n.bill_id = ANY($2::uuid[]) AND n.status = 'posted'
+) x
+GROUP BY x.bill_id
 `
 
 type PaidByBillParams struct {
@@ -1045,6 +1677,7 @@ type PaidByBillRow struct {
 	Paid   money.Amount
 }
 
+// Pembayaran dan nota debit yang sudah mengurangi sisa tagihan.
 func (q *Queries) PaidByBill(ctx context.Context, arg PaidByBillParams) ([]PaidByBillRow, error) {
 	rows, err := q.db.Query(ctx, paidByBill, arg.CompanyID, arg.Ids)
 	if err != nil {
@@ -1116,13 +1749,236 @@ func (q *Queries) PaymentAllocations(ctx context.Context, arg PaymentAllocations
 	return items, nil
 }
 
+const purchasesBySupplier = `-- name: PurchasesBySupplier :many
+
+SELECT x.supplier_id, count(*) FILTER (WHERE x.bill) AS bills, sum(x.dpp)::numeric AS dpp, sum(x.vat)::numeric AS vat,
+       sum(x.withholding)::numeric AS withholding, sum(x.total)::numeric AS total
+FROM (
+  SELECT true AS bill, b.supplier_id, b.dpp, b.vat, b.withholding, b.total
+  FROM purchase.bills b
+  WHERE b.company_id = $1 AND b.status = 'posted' AND NOT b.opening
+    AND b.bill_date >= $2 AND b.bill_date <= $3
+  UNION ALL
+  SELECT false, n.supplier_id, -n.dpp, -n.vat, -n.withholding, -n.total
+  FROM purchase.debit_notes n
+  WHERE n.company_id = $1 AND n.status = 'posted' AND n.note_date >= $2 AND n.note_date <= $3
+) x
+GROUP BY x.supplier_id
+ORDER BY sum(x.dpp) DESC
+`
+
+type PurchasesBySupplierParams struct {
+	CompanyID uuid.UUID
+	FromDate  civil.Date
+	ToDate    civil.Date
+}
+
+type PurchasesBySupplierRow struct {
+	SupplierID  uuid.UUID
+	Bills       int64
+	Dpp         money.Amount
+	Vat         money.Amount
+	Withholding money.Amount
+	Total       money.Amount
+}
+
+// Laporan -------------------------------------------------------------------------
+// Pembelian bersih: tagihan dikurangi nota debit di periode yang sama.
+func (q *Queries) PurchasesBySupplier(ctx context.Context, arg PurchasesBySupplierParams) ([]PurchasesBySupplierRow, error) {
+	rows, err := q.db.Query(ctx, purchasesBySupplier, arg.CompanyID, arg.FromDate, arg.ToDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PurchasesBySupplierRow
+	for rows.Next() {
+		var i PurchasesBySupplierRow
+		if err := rows.Scan(
+			&i.SupplierID,
+			&i.Bills,
+			&i.Dpp,
+			&i.Vat,
+			&i.Withholding,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const supplierAdvanceBalance = `-- name: SupplierAdvanceBalance :one
+SELECT (coalesce((SELECT sum(p.advance - p.from_advance) FROM purchase.payments p
+                  WHERE p.company_id = $1 AND p.supplier_id = $2 AND p.status = 'posted'), 0)
+      + coalesce((SELECT sum(n.payable - n.applied) FROM purchase.debit_notes n
+                  WHERE n.company_id = $1 AND n.supplier_id = $2 AND n.status = 'posted'), 0))::numeric AS balance
+`
+
+type SupplierAdvanceBalanceParams struct {
+	CompanyID  uuid.UUID
+	SupplierID uuid.UUID
+}
+
+// Saldo uang muka pembelian: uang muka dibayar − dipakai/dikembalikan + kelebihan nota debit.
+func (q *Queries) SupplierAdvanceBalance(ctx context.Context, arg SupplierAdvanceBalanceParams) (money.Amount, error) {
+	row := q.db.QueryRow(ctx, supplierAdvanceBalance, arg.CompanyID, arg.SupplierID)
+	var balance money.Amount
+	err := row.Scan(&balance)
+	return balance, err
+}
+
+const supplierAdvanceBalances = `-- name: SupplierAdvanceBalances :many
+SELECT x.supplier_id, sum(x.amount)::numeric AS balance
+FROM (
+  SELECT p.supplier_id, p.advance - p.from_advance AS amount FROM purchase.payments p
+  WHERE p.company_id = $1 AND p.status = 'posted' AND (p.advance > 0 OR p.from_advance > 0)
+  UNION ALL
+  SELECT n.supplier_id, n.payable - n.applied FROM purchase.debit_notes n
+  WHERE n.company_id = $1 AND n.status = 'posted' AND n.payable > n.applied
+) x
+GROUP BY x.supplier_id
+HAVING sum(x.amount) <> 0
+`
+
+type SupplierAdvanceBalancesRow struct {
+	SupplierID uuid.UUID
+	Balance    money.Amount
+}
+
+func (q *Queries) SupplierAdvanceBalances(ctx context.Context, companyID uuid.UUID) ([]SupplierAdvanceBalancesRow, error) {
+	rows, err := q.db.Query(ctx, supplierAdvanceBalances, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SupplierAdvanceBalancesRow
+	for rows.Next() {
+		var i SupplierAdvanceBalancesRow
+		if err := rows.Scan(&i.SupplierID, &i.Balance); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const supplierCardLines = `-- name: SupplierCardLines :many
+SELECT x.kind, x.id, x.number, x.doc_date, x.memo, x.debit, x.credit, x.withholding
+FROM (
+  SELECT 'tagihan'::text AS kind, b.id, coalesce(b.number, '') AS number, b.bill_date AS doc_date, b.memo,
+         0::numeric AS debit, b.payable AS credit, b.withholding
+  FROM purchase.bills b
+  WHERE b.company_id = $1 AND b.supplier_id = $2 AND b.status = 'posted'
+    AND b.bill_date >= $3 AND b.bill_date <= $4
+  UNION ALL
+  SELECT 'pembayaran'::text, p.id, p.number, p.payment_date, p.memo, sum(a.amount)::numeric, 0::numeric, 0::numeric
+  FROM purchase.payments p
+  JOIN purchase.payment_allocations a ON a.payment_id = p.id
+  WHERE p.company_id = $1 AND p.supplier_id = $2 AND p.status = 'posted'
+    AND p.payment_date >= $3 AND p.payment_date <= $4
+  GROUP BY p.id
+  UNION ALL
+  SELECT 'nota_debit'::text, n.id, n.number, n.note_date, n.memo, n.applied, 0::numeric, 0::numeric
+  FROM purchase.debit_notes n
+  WHERE n.company_id = $1 AND n.supplier_id = $2 AND n.status = 'posted' AND n.applied > 0
+    AND n.note_date >= $3 AND n.note_date <= $4
+) x
+ORDER BY x.doc_date, x.kind DESC, x.number
+`
+
+type SupplierCardLinesParams struct {
+	CompanyID  uuid.UUID
+	SupplierID uuid.UUID
+	FromDate   civil.Date
+	ToDate     civil.Date
+}
+
+type SupplierCardLinesRow struct {
+	Kind        string
+	ID          uuid.UUID
+	Number      string
+	DocDate     civil.Date
+	Memo        string
+	Debit       money.Amount
+	Credit      money.Amount
+	Withholding money.Amount
+}
+
+func (q *Queries) SupplierCardLines(ctx context.Context, arg SupplierCardLinesParams) ([]SupplierCardLinesRow, error) {
+	rows, err := q.db.Query(ctx, supplierCardLines,
+		arg.CompanyID,
+		arg.SupplierID,
+		arg.FromDate,
+		arg.ToDate,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SupplierCardLinesRow
+	for rows.Next() {
+		var i SupplierCardLinesRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.Number,
+			&i.DocDate,
+			&i.Memo,
+			&i.Debit,
+			&i.Credit,
+			&i.Withholding,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const supplierCardOpening = `-- name: SupplierCardOpening :one
+SELECT (coalesce((SELECT sum(b.payable) FROM purchase.bills b
+                  WHERE b.company_id = $1 AND b.supplier_id = $2 AND b.status = 'posted'
+                    AND b.bill_date < $3), 0)
+      - coalesce((SELECT sum(a.amount) FROM purchase.payment_allocations a
+                  JOIN purchase.payments p ON p.id = a.payment_id
+                  WHERE p.company_id = $1 AND p.supplier_id = $2 AND p.status = 'posted'
+                    AND p.payment_date < $3), 0)
+      - coalesce((SELECT sum(n.applied) FROM purchase.debit_notes n
+                  WHERE n.company_id = $1 AND n.supplier_id = $2 AND n.status = 'posted'
+                    AND n.note_date < $3), 0))::numeric AS opening
+`
+
+type SupplierCardOpeningParams struct {
+	CompanyID  uuid.UUID
+	SupplierID uuid.UUID
+	FromDate   civil.Date
+}
+
+func (q *Queries) SupplierCardOpening(ctx context.Context, arg SupplierCardOpeningParams) (money.Amount, error) {
+	row := q.db.QueryRow(ctx, supplierCardOpening, arg.CompanyID, arg.SupplierID, arg.FromDate)
+	var opening money.Amount
+	err := row.Scan(&opening)
+	return opening, err
+}
+
 const updateDraftBill = `-- name: UpdateDraftBill :execrows
 UPDATE purchase.bills
 SET supplier_id = $1, supplier_invoice_no = $2, bill_date = $3,
     due_date = $4, memo = $5, subtotal = $6, discount = $7, dpp = $8,
     other_dpp = $9, vat = $10, withholding_code = $11,
-    withholding = $12, total = $13, payable = $14, version = version + 1
-WHERE company_id = $15 AND id = $16 AND status = 'draft' AND version = $17
+    withholding = $12, total = $13, payable = $14, branch_id = $15,
+    department_id = $16, version = version + 1
+WHERE company_id = $17 AND id = $18 AND status = 'draft' AND version = $19
 `
 
 type UpdateDraftBillParams struct {
@@ -1140,6 +1996,8 @@ type UpdateDraftBillParams struct {
 	Withholding       money.Amount
 	Total             money.Amount
 	Payable           money.Amount
+	BranchID          *uuid.UUID
+	DepartmentID      *uuid.UUID
 	CompanyID         uuid.UUID
 	ID                uuid.UUID
 	Version           int32
@@ -1161,6 +2019,8 @@ func (q *Queries) UpdateDraftBill(ctx context.Context, arg UpdateDraftBillParams
 		arg.Withholding,
 		arg.Total,
 		arg.Payable,
+		arg.BranchID,
+		arg.DepartmentID,
 		arg.CompanyID,
 		arg.ID,
 		arg.Version,
@@ -1173,11 +2033,19 @@ func (q *Queries) UpdateDraftBill(ctx context.Context, arg UpdateDraftBillParams
 
 const vATByMonth = `-- name: VATByMonth :many
 
-SELECT date_trunc('month', bill_date)::date AS month, count(*) AS bills,
-       coalesce(sum(dpp), 0)::numeric AS dpp, coalesce(sum(vat), 0)::numeric AS vat
-FROM purchase.bills
-WHERE company_id = $1 AND status = 'posted' AND vat > 0
-  AND bill_date >= $2 AND bill_date < $3
+SELECT x.month::date AS month, count(*) AS bills,
+       coalesce(sum(x.dpp), 0)::numeric AS dpp, coalesce(sum(x.vat), 0)::numeric AS vat
+FROM (
+  SELECT date_trunc('month', b.bill_date) AS month, b.dpp, b.vat
+  FROM purchase.bills b
+  WHERE b.company_id = $1 AND b.status = 'posted' AND b.vat > 0
+    AND b.bill_date >= $2 AND b.bill_date < $3
+  UNION ALL
+  SELECT date_trunc('month', n.note_date), -n.dpp, -n.vat
+  FROM purchase.debit_notes n
+  WHERE n.company_id = $1 AND n.status = 'posted' AND n.vat > 0
+    AND n.note_date >= $2 AND n.note_date < $3
+) x
 GROUP BY 1
 ORDER BY 1
 `
@@ -1196,7 +2064,8 @@ type VATByMonthRow struct {
 }
 
 // Pajak ---------------------------------------------------------------------------
-// PPN masukan per masa dari tagihan yang diposting (TAX-06).
+// PPN masukan per masa dari tagihan yang diposting (TAX-06), dikurangi PPN retur pembelian
+// (nota debit) di masa returnya.
 func (q *Queries) VATByMonth(ctx context.Context, arg VATByMonthParams) ([]VATByMonthRow, error) {
 	rows, err := q.db.Query(ctx, vATByMonth, arg.CompanyID, arg.FromDate, arg.ToDate)
 	if err != nil {
@@ -1223,11 +2092,20 @@ func (q *Queries) VATByMonth(ctx context.Context, arg VATByMonthParams) ([]VATBy
 }
 
 const withheldFromSuppliers = `-- name: WithheldFromSuppliers :many
-SELECT id, number, bill_date, supplier_id, supplier_invoice_no, dpp, withholding_code, withholding
-FROM purchase.bills
-WHERE company_id = $1 AND status = 'posted' AND withholding > 0
-  AND bill_date >= $2 AND bill_date < $3
-ORDER BY bill_date, number
+SELECT x.id, x.number, x.bill_date, x.supplier_id, x.supplier_invoice_no, x.dpp, x.withholding_code, x.withholding
+FROM (
+  SELECT b.id, b.number, b.bill_date, b.supplier_id, b.supplier_invoice_no, b.dpp, b.withholding_code, b.withholding
+  FROM purchase.bills b
+  WHERE b.company_id = $1 AND b.status = 'posted' AND b.withholding > 0
+    AND b.bill_date >= $2 AND b.bill_date < $3
+  UNION ALL
+  SELECT n.id, n.number, n.note_date, n.supplier_id, b.supplier_invoice_no, -n.dpp, b.withholding_code, -n.withholding
+  FROM purchase.debit_notes n
+  JOIN purchase.bills b ON b.id = n.bill_id
+  WHERE n.company_id = $1 AND n.status = 'posted' AND n.withholding > 0
+    AND n.note_date >= $2 AND n.note_date < $3
+) x
+ORDER BY x.bill_date, x.number
 `
 
 type WithheldFromSuppliersParams struct {
@@ -1247,7 +2125,8 @@ type WithheldFromSuppliersRow struct {
 	Withholding       money.Amount
 }
 
-// PPh yang kita potong dari pemasok; dasar bukti potong dan SPT Masa PPh Unifikasi.
+// PPh yang kita potong dari pemasok; dasar bukti potong dan SPT Masa PPh Unifikasi. Nota debit
+// membatalkan sebagian potongannya dan tampil sebagai baris negatif.
 func (q *Queries) WithheldFromSuppliers(ctx context.Context, arg WithheldFromSuppliersParams) ([]WithheldFromSuppliersRow, error) {
 	rows, err := q.db.Query(ctx, withheldFromSuppliers, arg.CompanyID, arg.FromDate, arg.ToDate)
 	if err != nil {

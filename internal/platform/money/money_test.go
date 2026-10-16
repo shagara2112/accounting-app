@@ -159,3 +159,20 @@ func TestMulFracAndRounding(t *testing.T) {
 		t.Errorf("0,3333 × 3 = %s", got)
 	}
 }
+
+func TestMulDiv(t *testing.T) {
+	cases := []struct{ a, num, den, want string }{
+		// Biaya rata-rata: stok 3 unit senilai 10.000, keluar 1 → 3.333,33 dibulatkan ke 3.333.
+		{"10000", "1", "3", "3333.0000"},
+		{"10000", "2", "3", "6667.0000"},
+		// Kuantitas pecahan: 2,5 kg dari 7,5 kg senilai 1.000.001.
+		{"1000001", "2.5", "7.5", "333334.0000"},
+		{"-10000", "2", "3", "-6667.0000"},
+	}
+	for _, c := range cases {
+		got := MustParse(c.a).MulDiv(MustParse(c.num), MustParse(c.den), 0, HalfUp)
+		if got.String() != c.want {
+			t.Errorf("%s × %s ÷ %s = %s, seharusnya %s", c.a, c.num, c.den, got, c.want)
+		}
+	}
+}

@@ -93,12 +93,16 @@ func WriteJSON(w http.ResponseWriter, status int, v any) error {
 }
 
 // DecodeJSON membaca body JSON (maks. 1 MB) dan menolak field yang tidak dikenal.
-func DecodeJSON(r *http.Request, dst any) error {
+func DecodeJSON(r *http.Request, dst any) error { return DecodeJSONLimit(r, dst, 1<<20) }
+
+// DecodeJSONLimit seperti DecodeJSON dengan batas ukuran body sendiri, mis. untuk unggahan
+// bukti bayar yang dikirim sebagai base64.
+func DecodeJSONLimit(r *http.Request, dst any, limit int64) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		return NewProblem(http.StatusUnsupportedMediaType, "request.content_type",
 			"Format tidak didukung", "Kirim body sebagai application/json.")
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return BadRequest("request.body", "Body JSON tidak bisa dibaca: "+err.Error())

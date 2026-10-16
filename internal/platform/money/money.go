@@ -213,3 +213,16 @@ func (a Amount) Mul(b Amount, places int, mode Rounding) Amount {
 	q := round(n, new(big.Int).Mul(unit, step), mode)
 	return Amount{u: q.Mul(q, step)}
 }
+
+// MulDiv menghitung a × num ÷ den lalu membulatkan ke places angka desimal (0–4), tanpa
+// pembulatan antara. Dipakai untuk biaya rata-rata: nilai stok × qty keluar ÷ qty stok.
+func (a Amount) MulDiv(num, den Amount, places int, mode Rounding) Amount {
+	checkPlaces(places)
+	if den.Sign() == 0 {
+		panic("money: pembagi nol")
+	}
+	step := pow10(Scale - places)
+	n := new(big.Int).Mul(a.units(), num.units())
+	q := round(n, new(big.Int).Mul(den.units(), step), mode)
+	return Amount{u: q.Mul(q, step)}
+}

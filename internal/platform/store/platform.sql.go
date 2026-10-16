@@ -49,6 +49,66 @@ func (q *Queries) AuditChain(ctx context.Context) ([]PlatformAuditLog, error) {
 	return items, nil
 }
 
+const backupsToPrune = `-- name: BackupsToPrune :many
+SELECT id, kind, status, started_at, finished_at, file_name, size_bytes, sha256, key_id, copies, error, pruned, created_by FROM platform.backups
+WHERE status = 'ok' AND NOT pruned
+ORDER BY started_at DESC
+OFFSET $1
+`
+
+// Backup sukses yang filenya masih ada, selain N terbaru.
+func (q *Queries) BackupsToPrune(ctx context.Context, keep int32) ([]PlatformBackup, error) {
+	rows, err := q.db.Query(ctx, backupsToPrune, keep)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PlatformBackup
+	for rows.Next() {
+		var i PlatformBackup
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Status,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.FileName,
+			&i.SizeBytes,
+			&i.Sha256,
+			&i.KeyID,
+			&i.Copies,
+			&i.Error,
+			&i.Pruned,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const bumpHighWater = `-- name: BumpHighWater :exec
+UPDATE platform.license SET high_water = GREATEST(high_water, $1::timestamptz)
+`
+
+func (q *Queries) BumpHighWater(ctx context.Context, seen time.Time) error {
+	_, err := q.db.Exec(ctx, bumpHighWater, seen)
+	return err
+}
+
+const bumpLoginChallenge = `-- name: BumpLoginChallenge :exec
+UPDATE platform.login_challenges SET attempts = attempts + 1 WHERE id_hash = $1
+`
+
+func (q *Queries) BumpLoginChallenge(ctx context.Context, idHash []byte) error {
+	_, err := q.db.Exec(ctx, bumpLoginChallenge, idHash)
+	return err
+}
+
 const claimIdempotencyKey = `-- name: ClaimIdempotencyKey :one
 INSERT INTO platform.idempotency_keys (user_id, key, request_hash)
 VALUES ($1, $2, $3)
@@ -71,9 +131,38 @@ func (q *Queries) ClaimIdempotencyKey(ctx context.Context, arg ClaimIdempotencyK
 	return key, err
 }
 
+const clearSessionMFASetup = `-- name: ClearSessionMFASetup :exec
+UPDATE platform.sessions SET mfa_setup = false WHERE user_id = $1
+`
+
+func (q *Queries) ClearSessionMFASetup(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearSessionMFASetup, userID)
+	return err
+}
+
+const clearTOTP = `-- name: ClearTOTP :exec
+UPDATE platform.users SET totp_secret = NULL, totp_enabled_at = NULL, totp_last_step = 0 WHERE id = $1
+`
+
+func (q *Queries) ClearTOTP(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearTOTP, id)
+	return err
+}
+
+const countUsers = `-- name: CountUsers :one
+SELECT count(*) FROM platform.users
+`
+
+func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSession = `-- name: CreateSession :exec
-INSERT INTO platform.sessions (id_hash, user_id, active_company_id, expires_at, ip, user_agent)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO platform.sessions (id_hash, user_id, active_company_id, expires_at, ip, user_agent, mfa_setup)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type CreateSessionParams struct {
@@ -83,6 +172,7 @@ type CreateSessionParams struct {
 	ExpiresAt       time.Time
 	Ip              *string
 	UserAgent       *string
+	MfaSetup        bool
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
@@ -93,6 +183,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 		arg.ExpiresAt,
 		arg.Ip,
 		arg.UserAgent,
+		arg.MfaSetup,
 	)
 	return err
 }
@@ -100,7 +191,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 const createUser = `-- name: CreateUser :one
 INSERT INTO platform.users (id, email, name, password_hash)
 VALUES ($1, $2, $3, $4)
-RETURNING id, email, name, password_hash, active, failed_logins, locked_until, created_at, version
+RETURNING id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at
 `
 
 type CreateUserParams struct {
@@ -128,8 +219,35 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (Platfor
 		&i.LockedUntil,
 		&i.CreatedAt,
 		&i.Version,
+		&i.TotpSecret,
+		&i.TotpEnabledAt,
+		&i.TotpLastStep,
+		&i.LastLoginAt,
 	)
 	return i, err
+}
+
+const deleteLoginChallenge = `-- name: DeleteLoginChallenge :exec
+DELETE FROM platform.login_challenges WHERE id_hash = $1
+`
+
+func (q *Queries) DeleteLoginChallenge(ctx context.Context, idHash []byte) error {
+	_, err := q.db.Exec(ctx, deleteLoginChallenge, idHash)
+	return err
+}
+
+const deleteOtherSessions = `-- name: DeleteOtherSessions :exec
+DELETE FROM platform.sessions WHERE user_id = $1 AND id_hash <> $2
+`
+
+type DeleteOtherSessionsParams struct {
+	UserID uuid.UUID
+	IDHash []byte
+}
+
+func (q *Queries) DeleteOtherSessions(ctx context.Context, arg DeleteOtherSessionsParams) error {
+	_, err := q.db.Exec(ctx, deleteOtherSessions, arg.UserID, arg.IDHash)
+	return err
 }
 
 const deleteSession = `-- name: DeleteSession :exec
@@ -148,6 +266,124 @@ DELETE FROM platform.sessions WHERE user_id = $1
 func (q *Queries) DeleteUserSessions(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deleteUserSessions, userID)
 	return err
+}
+
+const enableTOTP = `-- name: EnableTOTP :execrows
+UPDATE platform.users SET totp_enabled_at = now(), totp_last_step = $2
+WHERE id = $1 AND totp_secret IS NOT NULL AND totp_enabled_at IS NULL
+`
+
+type EnableTOTPParams struct {
+	ID           uuid.UUID
+	TotpLastStep int64
+}
+
+func (q *Queries) EnableTOTP(ctx context.Context, arg EnableTOTPParams) (int64, error) {
+	result, err := q.db.Exec(ctx, enableTOTP, arg.ID, arg.TotpLastStep)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const ensureInstallation = `-- name: EnsureInstallation :exec
+INSERT INTO platform.installation (id) VALUES ($1) ON CONFLICT (singleton) DO NOTHING
+`
+
+func (q *Queries) EnsureInstallation(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, ensureInstallation, id)
+	return err
+}
+
+const failStaleBackups = `-- name: FailStaleBackups :exec
+UPDATE platform.backups SET status = 'failed', finished_at = now(), error = 'Aplikasi berhenti saat backup berjalan.'
+WHERE status = 'running'
+`
+
+// Backup yang tertinggal "running" karena aplikasi mati di tengah jalan.
+func (q *Queries) FailStaleBackups(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, failStaleBackups)
+	return err
+}
+
+const finishBackup = `-- name: FinishBackup :exec
+UPDATE platform.backups
+SET status = $2, finished_at = $3, file_name = $4, size_bytes = $5, sha256 = $6, copies = $7, error = $8
+WHERE id = $1
+`
+
+type FinishBackupParams struct {
+	ID         uuid.UUID
+	Status     string
+	FinishedAt *time.Time
+	FileName   *string
+	SizeBytes  *int64
+	Sha256     *string
+	Copies     []byte
+	Error      *string
+}
+
+func (q *Queries) FinishBackup(ctx context.Context, arg FinishBackupParams) error {
+	_, err := q.db.Exec(ctx, finishBackup,
+		arg.ID,
+		arg.Status,
+		arg.FinishedAt,
+		arg.FileName,
+		arg.SizeBytes,
+		arg.Sha256,
+		arg.Copies,
+		arg.Error,
+	)
+	return err
+}
+
+const getBackup = `-- name: GetBackup :one
+SELECT id, kind, status, started_at, finished_at, file_name, size_bytes, sha256, key_id, copies, error, pruned, created_by FROM platform.backups WHERE id = $1
+`
+
+func (q *Queries) GetBackup(ctx context.Context, id uuid.UUID) (PlatformBackup, error) {
+	row := q.db.QueryRow(ctx, getBackup, id)
+	var i PlatformBackup
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Status,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.FileName,
+		&i.SizeBytes,
+		&i.Sha256,
+		&i.KeyID,
+		&i.Copies,
+		&i.Error,
+		&i.Pruned,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
+const getBackupSettings = `-- name: GetBackupSettings :one
+SELECT singleton, hour, keep, copy_dir, s3_endpoint, s3_region, s3_bucket, s3_prefix, s3_access_key, s3_secret, version, updated_at FROM platform.backup_settings
+`
+
+func (q *Queries) GetBackupSettings(ctx context.Context) (PlatformBackupSetting, error) {
+	row := q.db.QueryRow(ctx, getBackupSettings)
+	var i PlatformBackupSetting
+	err := row.Scan(
+		&i.Singleton,
+		&i.Hour,
+		&i.Keep,
+		&i.CopyDir,
+		&i.S3Endpoint,
+		&i.S3Region,
+		&i.S3Bucket,
+		&i.S3Prefix,
+		&i.S3AccessKey,
+		&i.S3Secret,
+		&i.Version,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getIdempotencyKey = `-- name: GetIdempotencyKey :one
@@ -174,8 +410,82 @@ func (q *Queries) GetIdempotencyKey(ctx context.Context, arg GetIdempotencyKeyPa
 	return i, err
 }
 
+const getInstallation = `-- name: GetInstallation :one
+SELECT id, singleton, created_at, setup_at FROM platform.installation LIMIT 1
+`
+
+func (q *Queries) GetInstallation(ctx context.Context) (PlatformInstallation, error) {
+	row := q.db.QueryRow(ctx, getInstallation)
+	var i PlatformInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.Singleton,
+		&i.CreatedAt,
+		&i.SetupAt,
+	)
+	return i, err
+}
+
+const getLicense = `-- name: GetLicense :one
+SELECT l.singleton, l.console_url, l.client_id, l.license_key, l.token, l.checked_at, l.attempted_at, l.error_code, l.error_message, l.high_water, l.updated_at, GREATEST(l.high_water, COALESCE((SELECT max(at) FROM platform.audit_log), l.high_water))::timestamptz AS last_activity
+FROM platform.license l
+`
+
+type GetLicenseRow struct {
+	Singleton    bool
+	ConsoleUrl   string
+	ClientID     string
+	LicenseKey   []byte
+	Token        *string
+	CheckedAt    *time.Time
+	AttemptedAt  *time.Time
+	ErrorCode    *string
+	ErrorMessage *string
+	HighWater    time.Time
+	UpdatedAt    time.Time
+	LastActivity time.Time
+}
+
+// last_activity: waktu audit terakhir, ikut menjadi batas bawah deteksi jam mundur.
+func (q *Queries) GetLicense(ctx context.Context) (GetLicenseRow, error) {
+	row := q.db.QueryRow(ctx, getLicense)
+	var i GetLicenseRow
+	err := row.Scan(
+		&i.Singleton,
+		&i.ConsoleUrl,
+		&i.ClientID,
+		&i.LicenseKey,
+		&i.Token,
+		&i.CheckedAt,
+		&i.AttemptedAt,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.HighWater,
+		&i.UpdatedAt,
+		&i.LastActivity,
+	)
+	return i, err
+}
+
+const getLoginChallenge = `-- name: GetLoginChallenge :one
+SELECT id_hash, user_id, ip, expires_at, attempts FROM platform.login_challenges WHERE id_hash = $1 FOR UPDATE
+`
+
+func (q *Queries) GetLoginChallenge(ctx context.Context, idHash []byte) (PlatformLoginChallenge, error) {
+	row := q.db.QueryRow(ctx, getLoginChallenge, idHash)
+	var i PlatformLoginChallenge
+	err := row.Scan(
+		&i.IDHash,
+		&i.UserID,
+		&i.Ip,
+		&i.ExpiresAt,
+		&i.Attempts,
+	)
+	return i, err
+}
+
 const getSession = `-- name: GetSession :one
-SELECT s.id_hash, s.user_id, s.active_company_id, s.last_seen_at, s.expires_at,
+SELECT s.id_hash, s.user_id, s.active_company_id, s.last_seen_at, s.expires_at, s.mfa_setup,
        u.email, u.name, u.active
 FROM platform.sessions s
 JOIN platform.users u ON u.id = s.user_id
@@ -188,6 +498,7 @@ type GetSessionRow struct {
 	ActiveCompanyID *uuid.UUID
 	LastSeenAt      time.Time
 	ExpiresAt       time.Time
+	MfaSetup        bool
 	Email           string
 	Name            string
 	Active          bool
@@ -202,6 +513,7 @@ func (q *Queries) GetSession(ctx context.Context, idHash []byte) (GetSessionRow,
 		&i.ActiveCompanyID,
 		&i.LastSeenAt,
 		&i.ExpiresAt,
+		&i.MfaSetup,
 		&i.Email,
 		&i.Name,
 		&i.Active,
@@ -210,7 +522,7 @@ func (q *Queries) GetSession(ctx context.Context, idHash []byte) (GetSessionRow,
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version FROM platform.users WHERE lower(email) = lower($1::text)
+SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at FROM platform.users WHERE lower(email) = lower($1::text)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (PlatformUser, error) {
@@ -226,12 +538,16 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (PlatformUse
 		&i.LockedUntil,
 		&i.CreatedAt,
 		&i.Version,
+		&i.TotpSecret,
+		&i.TotpEnabledAt,
+		&i.TotpLastStep,
+		&i.LastLoginAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version FROM platform.users WHERE id = $1
+SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at FROM platform.users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (PlatformUser, error) {
@@ -247,7 +563,30 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (PlatformUser, 
 		&i.LockedUntil,
 		&i.CreatedAt,
 		&i.Version,
+		&i.TotpSecret,
+		&i.TotpEnabledAt,
+		&i.TotpLastStep,
+		&i.LastLoginAt,
 	)
+	return i, err
+}
+
+const healthCounts = `-- name: HealthCounts :one
+SELECT (SELECT count(*) FROM core.companies WHERE kind = 'pt')::int AS companies,
+       (SELECT count(*) FROM platform.users WHERE active)::int AS users,
+       (pg_database_size(current_database()) / 1048576)::int AS db_mb
+`
+
+type HealthCountsRow struct {
+	Companies int32
+	Users     int32
+	DbMb      int32
+}
+
+func (q *Queries) HealthCounts(ctx context.Context) (HealthCountsRow, error) {
+	row := q.db.QueryRow(ctx, healthCounts)
+	var i HealthCountsRow
+	err := row.Scan(&i.Companies, &i.Users, &i.DbMb)
 	return i, err
 }
 
@@ -291,6 +630,74 @@ func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) (int64
 	return seq, err
 }
 
+const insertBackup = `-- name: InsertBackup :exec
+INSERT INTO platform.backups (id, kind, status, started_at, key_id, created_by)
+VALUES ($1, $2, 'running', $3, $4, $5)
+`
+
+type InsertBackupParams struct {
+	ID        uuid.UUID
+	Kind      string
+	StartedAt time.Time
+	KeyID     *string
+	CreatedBy *uuid.UUID
+}
+
+func (q *Queries) InsertBackup(ctx context.Context, arg InsertBackupParams) error {
+	_, err := q.db.Exec(ctx, insertBackup,
+		arg.ID,
+		arg.Kind,
+		arg.StartedAt,
+		arg.KeyID,
+		arg.CreatedBy,
+	)
+	return err
+}
+
+const insertLoginChallenge = `-- name: InsertLoginChallenge :exec
+INSERT INTO platform.login_challenges (id_hash, user_id, ip, expires_at) VALUES ($1, $2, $3, $4)
+`
+
+type InsertLoginChallengeParams struct {
+	IDHash    []byte
+	UserID    uuid.UUID
+	Ip        *string
+	ExpiresAt time.Time
+}
+
+func (q *Queries) InsertLoginChallenge(ctx context.Context, arg InsertLoginChallengeParams) error {
+	_, err := q.db.Exec(ctx, insertLoginChallenge,
+		arg.IDHash,
+		arg.UserID,
+		arg.Ip,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const insertRestoreTest = `-- name: InsertRestoreTest :exec
+INSERT INTO platform.restore_tests (id, backup_id, tested_at, ok, detail) VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertRestoreTestParams struct {
+	ID       uuid.UUID
+	BackupID *uuid.UUID
+	TestedAt time.Time
+	Ok       bool
+	Detail   string
+}
+
+func (q *Queries) InsertRestoreTest(ctx context.Context, arg InsertRestoreTestParams) error {
+	_, err := q.db.Exec(ctx, insertRestoreTest,
+		arg.ID,
+		arg.BackupID,
+		arg.TestedAt,
+		arg.Ok,
+		arg.Detail,
+	)
+	return err
+}
+
 const lastAuditHash = `-- name: LastAuditHash :one
 SELECT hash FROM platform.audit_log ORDER BY seq DESC LIMIT 1
 `
@@ -300,6 +707,98 @@ func (q *Queries) LastAuditHash(ctx context.Context) ([]byte, error) {
 	var hash []byte
 	err := row.Scan(&hash)
 	return hash, err
+}
+
+const lastFailedBackup = `-- name: LastFailedBackup :one
+SELECT id, kind, status, started_at, finished_at, file_name, size_bytes, sha256, key_id, copies, error, pruned, created_by FROM platform.backups WHERE status = 'failed' ORDER BY started_at DESC LIMIT 1
+`
+
+func (q *Queries) LastFailedBackup(ctx context.Context) (PlatformBackup, error) {
+	row := q.db.QueryRow(ctx, lastFailedBackup)
+	var i PlatformBackup
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Status,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.FileName,
+		&i.SizeBytes,
+		&i.Sha256,
+		&i.KeyID,
+		&i.Copies,
+		&i.Error,
+		&i.Pruned,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
+const lastOKBackup = `-- name: LastOKBackup :one
+SELECT id, kind, status, started_at, finished_at, file_name, size_bytes, sha256, key_id, copies, error, pruned, created_by FROM platform.backups WHERE status = 'ok' ORDER BY started_at DESC LIMIT 1
+`
+
+func (q *Queries) LastOKBackup(ctx context.Context) (PlatformBackup, error) {
+	row := q.db.QueryRow(ctx, lastOKBackup)
+	var i PlatformBackup
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Status,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.FileName,
+		&i.SizeBytes,
+		&i.Sha256,
+		&i.KeyID,
+		&i.Copies,
+		&i.Error,
+		&i.Pruned,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
+const lastRestoreTest = `-- name: LastRestoreTest :one
+SELECT id, backup_id, tested_at, ok, detail FROM platform.restore_tests ORDER BY tested_at DESC LIMIT 1
+`
+
+func (q *Queries) LastRestoreTest(ctx context.Context) (PlatformRestoreTest, error) {
+	row := q.db.QueryRow(ctx, lastRestoreTest)
+	var i PlatformRestoreTest
+	err := row.Scan(
+		&i.ID,
+		&i.BackupID,
+		&i.TestedAt,
+		&i.Ok,
+		&i.Detail,
+	)
+	return i, err
+}
+
+const lastScheduledBackup = `-- name: LastScheduledBackup :one
+SELECT id, kind, status, started_at, finished_at, file_name, size_bytes, sha256, key_id, copies, error, pruned, created_by FROM platform.backups WHERE kind = 'scheduled' ORDER BY started_at DESC LIMIT 1
+`
+
+func (q *Queries) LastScheduledBackup(ctx context.Context) (PlatformBackup, error) {
+	row := q.db.QueryRow(ctx, lastScheduledBackup)
+	var i PlatformBackup
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Status,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.FileName,
+		&i.SizeBytes,
+		&i.Sha256,
+		&i.KeyID,
+		&i.Copies,
+		&i.Error,
+		&i.Pruned,
+		&i.CreatedBy,
+	)
+	return i, err
 }
 
 const listAudit = `-- name: ListAudit :many
@@ -347,12 +846,59 @@ func (q *Queries) ListAudit(ctx context.Context, arg ListAuditParams) ([]Platfor
 	return items, nil
 }
 
+const listBackups = `-- name: ListBackups :many
+SELECT id, kind, status, started_at, finished_at, file_name, size_bytes, sha256, key_id, copies, error, pruned, created_by FROM platform.backups ORDER BY started_at DESC LIMIT $1
+`
+
+func (q *Queries) ListBackups(ctx context.Context, rowLimit int32) ([]PlatformBackup, error) {
+	rows, err := q.db.Query(ctx, listBackups, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PlatformBackup
+	for rows.Next() {
+		var i PlatformBackup
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Status,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.FileName,
+			&i.SizeBytes,
+			&i.Sha256,
+			&i.KeyID,
+			&i.Copies,
+			&i.Error,
+			&i.Pruned,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAuditChain = `-- name: LockAuditChain :exec
 SELECT pg_advisory_xact_lock(7240001)
 `
 
 func (q *Queries) LockAuditChain(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, lockAuditChain)
+	return err
+}
+
+const markPruned = `-- name: MarkPruned :exec
+UPDATE platform.backups SET pruned = true WHERE id = $1
+`
+
+func (q *Queries) MarkPruned(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markPruned, id)
 	return err
 }
 
@@ -366,6 +912,89 @@ func (q *Queries) PurgeIdempotencyKeys(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const purgeLoginChallenges = `-- name: PurgeLoginChallenges :execrows
+DELETE FROM platform.login_challenges WHERE expires_at < now()
+`
+
+func (q *Queries) PurgeLoginChallenges(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeLoginChallenges)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const saveBackupSettings = `-- name: SaveBackupSettings :execrows
+UPDATE platform.backup_settings
+SET hour = $2, keep = $3, copy_dir = $4, s3_endpoint = $5, s3_region = $6, s3_bucket = $7, s3_prefix = $8,
+    s3_access_key = $9, s3_secret = $10, version = version + 1, updated_at = now()
+WHERE version = $1
+`
+
+type SaveBackupSettingsParams struct {
+	Version     int32
+	Hour        int16
+	Keep        int32
+	CopyDir     *string
+	S3Endpoint  *string
+	S3Region    *string
+	S3Bucket    *string
+	S3Prefix    *string
+	S3AccessKey *string
+	S3Secret    []byte
+}
+
+func (q *Queries) SaveBackupSettings(ctx context.Context, arg SaveBackupSettingsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveBackupSettings,
+		arg.Version,
+		arg.Hour,
+		arg.Keep,
+		arg.CopyDir,
+		arg.S3Endpoint,
+		arg.S3Region,
+		arg.S3Bucket,
+		arg.S3Prefix,
+		arg.S3AccessKey,
+		arg.S3Secret,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const saveCheckin = `-- name: SaveCheckin :exec
+UPDATE platform.license
+SET token = $1, checked_at = $2, attempted_at = $2, error_code = NULL, error_message = NULL,
+    high_water = GREATEST(high_water, $3::timestamptz), updated_at = now()
+`
+
+type SaveCheckinParams struct {
+	Token     *string
+	CheckedAt *time.Time
+	Seen      time.Time
+}
+
+func (q *Queries) SaveCheckin(ctx context.Context, arg SaveCheckinParams) error {
+	_, err := q.db.Exec(ctx, saveCheckin, arg.Token, arg.CheckedAt, arg.Seen)
+	return err
+}
+
+const saveCheckinError = `-- name: SaveCheckinError :exec
+UPDATE platform.license SET attempted_at = $1, error_code = $2, error_message = $3, updated_at = now()
+`
+
+type SaveCheckinErrorParams struct {
+	AttemptedAt  *time.Time
+	ErrorCode    *string
+	ErrorMessage *string
+}
+
+func (q *Queries) SaveCheckinError(ctx context.Context, arg SaveCheckinErrorParams) error {
+	_, err := q.db.Exec(ctx, saveCheckinError, arg.AttemptedAt, arg.ErrorCode, arg.ErrorMessage)
+	return err
 }
 
 const saveIdempotentResponse = `-- name: SaveIdempotentResponse :exec
@@ -393,6 +1022,44 @@ func (q *Queries) SaveIdempotentResponse(ctx context.Context, arg SaveIdempotent
 	return err
 }
 
+const saveLicenseConfig = `-- name: SaveLicenseConfig :exec
+INSERT INTO platform.license (console_url, client_id, license_key, token, checked_at, attempted_at, high_water)
+VALUES ($1, $2, $3, $4, $5, $5, $5)
+ON CONFLICT (singleton) DO UPDATE
+SET console_url = EXCLUDED.console_url, client_id = EXCLUDED.client_id, license_key = EXCLUDED.license_key,
+    token = EXCLUDED.token, checked_at = EXCLUDED.checked_at, attempted_at = EXCLUDED.attempted_at,
+    error_code = NULL, error_message = NULL,
+    high_water = GREATEST(platform.license.high_water, EXCLUDED.high_water), updated_at = now()
+`
+
+type SaveLicenseConfigParams struct {
+	ConsoleUrl string
+	ClientID   string
+	LicenseKey []byte
+	Token      *string
+	CheckedAt  *time.Time
+}
+
+func (q *Queries) SaveLicenseConfig(ctx context.Context, arg SaveLicenseConfigParams) error {
+	_, err := q.db.Exec(ctx, saveLicenseConfig,
+		arg.ConsoleUrl,
+		arg.ClientID,
+		arg.LicenseKey,
+		arg.Token,
+		arg.CheckedAt,
+	)
+	return err
+}
+
+const setLastLogin = `-- name: SetLastLogin :exec
+UPDATE platform.users SET last_login_at = now() WHERE id = $1
+`
+
+func (q *Queries) SetLastLogin(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, setLastLogin, id)
+	return err
+}
+
 const setLoginFailures = `-- name: SetLoginFailures :exec
 UPDATE platform.users SET failed_logins = $2, locked_until = $3 WHERE id = $1
 `
@@ -405,6 +1072,37 @@ type SetLoginFailuresParams struct {
 
 func (q *Queries) SetLoginFailures(ctx context.Context, arg SetLoginFailuresParams) error {
 	_, err := q.db.Exec(ctx, setLoginFailures, arg.ID, arg.FailedLogins, arg.LockedUntil)
+	return err
+}
+
+const setPassword = `-- name: SetPassword :exec
+UPDATE platform.users
+SET password_hash = $2, failed_logins = 0, locked_until = NULL, version = version + 1
+WHERE id = $1
+`
+
+type SetPasswordParams struct {
+	ID           uuid.UUID
+	PasswordHash string
+}
+
+func (q *Queries) SetPassword(ctx context.Context, arg SetPasswordParams) error {
+	_, err := q.db.Exec(ctx, setPassword, arg.ID, arg.PasswordHash)
+	return err
+}
+
+const setPendingTOTP = `-- name: SetPendingTOTP :exec
+UPDATE platform.users SET totp_secret = $2, totp_enabled_at = NULL, totp_last_step = 0 WHERE id = $1
+`
+
+type SetPendingTOTPParams struct {
+	ID         uuid.UUID
+	TotpSecret []byte
+}
+
+// Rahasia baru belum aktif sampai kode pertama dikonfirmasi.
+func (q *Queries) SetPendingTOTP(ctx context.Context, arg SetPendingTOTPParams) error {
+	_, err := q.db.Exec(ctx, setPendingTOTP, arg.ID, arg.TotpSecret)
 	return err
 }
 
@@ -453,4 +1151,43 @@ func (q *Queries) UpsertBuiltinRole(ctx context.Context, arg UpsertBuiltinRolePa
 		arg.Permissions,
 	)
 	return err
+}
+
+const useTOTPStep = `-- name: UseTOTPStep :execrows
+UPDATE platform.users SET totp_last_step = $2 WHERE id = $1 AND totp_last_step < $2
+`
+
+type UseTOTPStepParams struct {
+	ID           uuid.UUID
+	TotpLastStep int64
+}
+
+// Kode hanya sah sekali: langkah waktu harus lebih baru dari yang terakhir dipakai.
+func (q *Queries) UseTOTPStep(ctx context.Context, arg UseTOTPStepParams) (int64, error) {
+	result, err := q.db.Exec(ctx, useTOTPStep, arg.ID, arg.TotpLastStep)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const userPrivileged = `-- name: UserPrivileged :one
+SELECT EXISTS (
+  SELECT 1 FROM core.user_company_roles ucr
+  JOIN platform.roles r ON r.id = ucr.role_id
+  WHERE ucr.user_id = $1 AND r.permissions && $2::text[]
+)::boolean
+`
+
+type UserPrivilegedParams struct {
+	UserID uuid.UUID
+	Perms  []string
+}
+
+// Pengguna yang memegang salah satu izin ini di PT mana pun wajib memakai 2FA.
+func (q *Queries) UserPrivileged(ctx context.Context, arg UserPrivilegedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, userPrivileged, arg.UserID, arg.Perms)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }

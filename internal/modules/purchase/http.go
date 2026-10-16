@@ -36,6 +36,12 @@ func Routes(svc Service) []api.Route {
 		view("/api/v1/purchase/payments/{id}", h.payment),
 		write(http.MethodPost, "/api/v1/purchase/payments/{id}/void", rbac.PurchaseVoid, h.voidPayment),
 		view("/api/v1/purchase/aging", h.aging),
+		view("/api/v1/purchase/advances", h.advances),
+		write(http.MethodPost, "/api/v1/purchase/advance-refunds", rbac.PurchaseCreate, h.refundAdvance),
+		view("/api/v1/purchase/debit-notes", h.debitNotes),
+		write(http.MethodPost, "/api/v1/purchase/debit-notes", rbac.PurchaseCreate, h.createDebitNote),
+		view("/api/v1/purchase/debit-notes/{id}", h.debitNote),
+		write(http.MethodPost, "/api/v1/purchase/debit-notes/{id}/void", rbac.PurchaseVoid, h.voidDebitNote),
 	}
 }
 
@@ -233,4 +239,96 @@ func (h handlers) aging(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return httpx.WriteJSON(w, http.StatusOK, a)
+}
+
+func (h handlers) debitNotes(w http.ResponseWriter, r *http.Request) error {
+	from, to, err := monthRange(r)
+	if err != nil {
+		return err
+	}
+	supplier, err := api.UUIDQuery(r, "supplier")
+	if err != nil {
+		return err
+	}
+	list, err := h.svc.DebitNotes(r.Context(), api.CompanyID(r), DebitNoteFilter{From: from, To: to, SupplierID: supplier})
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h handlers) debitNote(w http.ResponseWriter, r *http.Request) error {
+	id, err := api.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	n, err := h.svc.DebitNote(r.Context(), api.CompanyID(r), id)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, n)
+}
+
+func (h handlers) createDebitNote(w http.ResponseWriter, r *http.Request) error {
+	var in DebitNoteInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	n, err := h.svc.CreateDebitNote(r.Context(), api.CompanyID(r), in, auth.ActorFrom(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusCreated, n)
+}
+
+func (h handlers) voidDebitNote(w http.ResponseWriter, r *http.Request) error {
+	id, err := api.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	var req voidRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	n, err := h.svc.VoidDebitNote(r.Context(), api.CompanyID(r), id, req.Date, req.Reason, auth.ActorFrom(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, n)
+}
+
+// advances: saldo uang muka per pemasok; ?supplier= untuk satu pemasok.
+func (h handlers) advances(w http.ResponseWriter, r *http.Request) error {
+	supplier, err := api.UUIDQuery(r, "supplier")
+	if err != nil {
+		return err
+	}
+	if supplier != nil {
+		bal, err := h.svc.AdvanceBalance(r.Context(), api.CompanyID(r), *supplier)
+		if err != nil {
+			return err
+		}
+		return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": []map[string]any{{"contactId": *supplier, "balance": bal}}})
+	}
+	m, err := h.svc.AdvanceBalances(r.Context(), api.CompanyID(r))
+	if err != nil {
+		return err
+	}
+	items := make([]map[string]any, 0, len(m))
+	for id, bal := range m {
+		items = append(items, map[string]any{"contactId": id, "balance": bal})
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h handlers) refundAdvance(w http.ResponseWriter, r *http.Request) error {
+	var in AdvanceRefundInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	p, err := h.svc.RefundAdvance(r.Context(), api.CompanyID(r), in, auth.ActorFrom(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusCreated, p)
 }

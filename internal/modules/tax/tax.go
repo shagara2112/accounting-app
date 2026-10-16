@@ -92,6 +92,21 @@ func (c Code) VAT(dpp money.Amount) (otherDPP, vat money.Amount) {
 	return otherDPP, vat
 }
 
+// Inclusive memecah harga jual yang sudah termasuk PPN (penjualan eceran, PPN digunggung):
+// DPP = harga / (1 + num/den × tarif), dibulatkan ke rupiah; PPN = harga − DPP, sehingga uang
+// yang diterima tetap sama persis dengan harga.
+func (c Code) Inclusive(amount money.Amount) (dpp, otherDPP, vat money.Amount) {
+	if c.Kind != KindPPN {
+		panic("tax: Inclusive dipanggil untuk kode " + c.Code)
+	}
+	if c.RateBP == 0 {
+		return amount, amount, money.Amount{}
+	}
+	den := int64(c.DPPDen) * 10_000
+	dpp = amount.MulFrac(den, den+int64(c.DPPNum)*int64(c.RateBP), 0, money.HalfUp)
+	return dpp, dpp.MulFrac(int64(c.DPPNum), int64(c.DPPDen), 2, money.HalfUp), amount.Sub(dpp)
+}
+
 // Withholding menghitung PPh yang dipotong: tarif × dasar, dibulatkan ke bawah ke rupiah.
 func (c Code) Withholding(base money.Amount) money.Amount {
 	if c.Kind != KindPPh {

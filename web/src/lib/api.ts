@@ -63,12 +63,16 @@ export type CompanyAccess = {
   roleKey: string
   roleName: string
   permissions: string[]
+  /** PLT-12: pengguna dibatasi ke cabang ini; kosong = semua cabang. */
+  branchIds?: string[]
 }
 
 export type Me = {
   user: { id: string; name: string; email: string }
   activeCompanyId: string | null
   companies: CompanyAccess[]
+  /** Pengguna wajib 2FA tetapi belum memasangnya; aplikasi hanya menampilkan layar pemasangan. */
+  mfaSetupRequired?: boolean
 }
 
 export type LicenseState = 'ACTIVE' | 'WARNING' | 'EXPIRED' | 'SUSPENDED' | 'UNVERIFIED' | 'INVALID_KEY'
@@ -78,6 +82,9 @@ export type LicenseStatus = {
   expiresAt?: string
   daysLeft?: number
   message: string
+  /** Versi aplikasi di bawah versi minimum dari License Console: hanya baca sampai diperbarui. */
+  updateRequired?: boolean
+  minVersion?: string
 }
 
 export type AuditItem = {
@@ -145,6 +152,11 @@ export type EntryLine = {
   debit: string
   credit: string
   memo: string
+  projectId?: string
+  branchId?: string
+  departmentId?: string
+  branchCode?: string
+  departmentCode?: string
 }
 
 export type Ref = { id: string; number: string }
@@ -159,12 +171,23 @@ export type EntryDetail = EntrySummary & {
   lines: EntryLine[]
   reversalOfRef?: Ref
   reversals: (Ref & { sourceType: string; date: string; status: string })[]
+  /** Berapa kali jurnal manual ini diubah; versi lamanya ada di revisions (terbaru dulu). */
+  revision: number
+  revisedAt?: string
+  revisedBy?: string
+  revisions: JournalRevision[]
+  /** Jurnal manual yang periodenya belum dikunci; editBlock menjelaskan kenapa tidak bisa. */
+  editable: boolean
+  editBlock?: string
 }
+
+/** Versi jurnal yang sudah digantikan. revision 0 = versi saat pertama diposting. */
+export type JournalRevision = { revision: number; date: string; memo: string; total: string; lines: EntryLine[]; reason?: string; revisedAt: string; revisedBy?: string }
 
 export type Posted = Ref & { autoReversal?: Ref }
 export type Voided = { reversal: Ref; alsoVoided?: Ref[] }
 
-export type LineInput = { accountId: string; debit: string; credit: string; memo: string }
+export type LineInput = { accountId: string; debit: string; credit: string; memo: string; projectId?: string; branchId?: string; departmentId?: string }
 
 export type Pair = { debit: string; credit: string }
 
@@ -203,6 +226,7 @@ export type LedgerLine = {
   debit: string
   credit: string
   balance: string
+  projectId?: string
 }
 
 export type AccountLedger = {
@@ -253,9 +277,21 @@ export type Contact = {
   bankAccount: string
   active: boolean
   version: number
+  /** Kontak yang mewakili PT lain dalam grup (transaksi antar-PT). */
+  linkedCompanyId?: string | null
+  linkedCompanyName?: string
+  /** Akun beban/aset untuk tagihan cerminan di PT ini. */
+  icExpenseAccountId?: string | null
+  /** Akun pendapatan untuk faktur cerminan di PT ini. */
+  icRevenueAccountId?: string | null
+  /** Rekening kas PT ini untuk pelunasan antar-PT yang dicerminkan. */
+  icCashAccountId?: string | null
+  /** AR-01: limit kredit pelanggan; kosong = tanpa limit. */
+  creditLimit?: string | null
+  billingContact: string
 }
 
-export type ContactInput = Omit<Contact, 'id'>
+export type ContactInput = Omit<Contact, 'id' | 'linkedCompanyName'>
 
 export type TaxCode = {
   code: string
@@ -276,9 +312,16 @@ export type TradeLineInput = {
   unitPrice: string
   discountPct: string
   taxCode: string
+  productId?: string
+  /** Hanya tagihan pembelian: proyek per baris. Faktur penjualan memakai proyek di kepala faktur. */
+  projectId?: string
+  /** Potongan nominal tetap (potongan uang muka di faktur termin); dibuat server, bukan formulir. */
+  discountAmount?: string
 }
 
 export type TradeLine = TradeLineInput & {
+  /** Hanya baris faktur dan tagihan yang diposting: dirujuk nota kredit/debit. */
+  id?: string
   gross: string
   discount: string
   net: string
@@ -286,6 +329,11 @@ export type TradeLine = TradeLineInput & {
   vat: string
   accountCode: string
   accountName: string
+  /** DPP yang sudah dikembalikan lewat nota kredit (penjualan) atau nota debit (pembelian). */
+  creditedNet?: string
+  debitedNet?: string
+  /** Kuantitas yang sudah diretur (barang kembali ke stok atau ke pemasok). */
+  returnedQty?: string
 }
 
 export type Totals = { subtotal: string; discount: string; dpp: string; otherDpp: string; vat: string; total: string }
@@ -304,6 +352,9 @@ type DocCommon = {
   paid: string
   outstanding: string
   daysOverdue: number
+  /** Dimensi cabang dan departemen (GL-09). */
+  branchId?: string
+  departmentId?: string
 }
 
 type DocDetailCommon = {
@@ -320,27 +371,84 @@ type DocDetailCommon = {
   version: number
 }
 
-export type Invoice = DocCommon & { customerId: string; customerName: string; dpp: string }
-export type InvoicePayment = { receiptId: string; number: string; date: string; status: string; amount: string; withholding: string; withholdingCode?: string }
-export type InvoiceDetail = Invoice & DocDetailCommon & { payments: InvoicePayment[] }
+export type InvoiceKind = 'biasa' | 'uang_muka' | 'termin' | 'retensi' | 'saldo_awal'
 
-export type Bill = DocCommon & { supplierId: string; supplierName: string; supplierInvoiceNo: string; payable: string }
+export type Invoice = DocCommon & {
+  customerId: string
+  customerName: string
+  dpp: string
+  kind: InvoiceKind
+  projectId?: string
+  progressPct?: string
+  subtotal: string
+  discount: string
+  retention: string
+  /** Total − retensi: yang ditagih sekarang. */
+  receivable: string
+  /** Nota kredit yang mengurangi sisa faktur. */
+  credited: string
+}
+export type InvoicePayment = { receiptId: string; number: string; date: string; status: string; amount: string; withholding: string; withholdingCode?: string }
+export type NoteRef = { number: string; date: string; status: 'posted' | 'void'; total: string; applied: string }
+export type InvoiceDetail = Invoice &
+  DocDetailCommon & { payments: InvoicePayment[]; creditNotes: (NoteRef & { creditNoteId: string })[]; creditWarning?: string }
+
+export type Bill = DocCommon & { supplierId: string; supplierName: string; supplierInvoiceNo: string; payable: string; debited: string; opening?: boolean }
 export type BillPayment = { paymentId: string; number: string; date: string; status: string; amount: string }
 export type BillDetail = Bill &
   DocDetailCommon & {
     withholdingCode?: string
     withholding: string
     payments: BillPayment[]
+    debitNotes: (NoteRef & { debitNoteId: string })[]
     duplicates: { id: string; number: string | null; status: string }[]
   }
+
+// Nota kredit/retur penjualan (AR-05) dan nota debit/retur pembelian (AP-05).
+type NoteCommon = {
+  id: string
+  number: string
+  status: 'posted' | 'void'
+  date: string
+  memo: string
+  dpp: string
+  vat: string
+  total: string
+  applied: string
+  excess: string
+}
+type NoteDetailCommon = {
+  totals: Totals
+  journalEntryId: string
+  createdAt: string
+  createdBy?: string
+  voidedBy?: string
+  voidedAt?: string
+  voidReason?: string
+}
+export type CreditNote = NoteCommon & { customerId: string; customerName: string; invoiceId: string; invoiceNumber: string }
+export type CreditNoteDetail = CreditNote & NoteDetailCommon & { lines: (TradeLine & { invoiceLineId: string; restock: boolean })[] }
+export type DebitNote = NoteCommon & {
+  supplierId: string
+  supplierName: string
+  billId: string
+  billNumber: string
+  withholding: string
+  payable: string
+}
+export type DebitNoteDetail = DebitNote & NoteDetailCommon & { supplierInvoiceNo: string; lines: (TradeLine & { billLineId: string })[] }
 
 type SettlementCommon = {
   id: string
   number: string
+  /** pelunasan/pembayaran, atau pengembalian uang muka. */
+  kind: string
   date: string
-  cashAccountId: string
+  cashAccountId?: string
   cashAccount: string
   amount: string
+  advance: string
+  fromAdvance: string
   memo: string
   status: 'posted' | 'void'
   journalEntryId: string
@@ -388,7 +496,8 @@ export type CashKind = 'in' | 'out' | 'transfer'
 
 export type CashTransaction = {
   id: string
-  number: string
+  /** Kosong selama draf; nomor BKM/BKK/TRF diberikan saat diposting. */
+  number: string | null
   kind: CashKind
   date: string
   cashAccountId: string
@@ -398,14 +507,22 @@ export type CashTransaction = {
   amount: string
   memo: string
   reference: string
-  status: 'posted' | 'void'
-  journalEntryId: string
+  status: 'draft' | 'posted' | 'void'
+  journalEntryId?: string
+  branchId?: string
+  departmentId?: string
 }
 
 export type CashTransactionDetail = CashTransaction & {
-  lines: { accountId: string; accountCode: string; accountName: string; amount: string; memo: string }[]
+  /** accountId kosong pada draf yang akunnya belum dilengkapi. */
+  lines: { accountId?: string; accountCode: string; accountName: string; amount: string; memo: string; projectId?: string; departmentId?: string }[]
+  createdById?: string
   createdBy?: string
+  createdAt: string
+  postedBy?: string
+  postedAt?: string
   voidReason?: string
+  version: number
 }
 
 // Pajak dan Coretax ---------------------------------------------------------------------------
@@ -455,6 +572,210 @@ export type WithholdingRecap = {
 export type CompanyProfile = CompanyAccess & { npwp?: string; nitku?: string; address?: string; version: number }
 
 /** Mengunduh file dari API (mis. XML Coretax). Mengembalikan nama file yang diunduh. */
+// Produk dan persediaan -----------------------------------------------------------------------
+
+export type ProductKind = 'barang' | 'jasa'
+
+export type Product = {
+  id: string
+  code: string
+  name: string
+  kind: ProductKind
+  unit: string
+  salePrice: string
+  purchasePrice: string
+  revenueAccountId?: string | null
+  expenseAccountId?: string | null
+  inventoryAccountId?: string | null
+  active: boolean
+  version: number
+  stockQty: string
+  stockValue: string
+  avgCost: string
+}
+
+export type ProductInput = Omit<Product, 'id' | 'stockQty' | 'stockValue' | 'avgCost'>
+
+export type StockRow = {
+  productId: string
+  code: string
+  name: string
+  unit: string
+  active: boolean
+  inventoryAccountId: string
+  qty: string
+  value: string
+  avgCost: string
+}
+
+export type StockReport = {
+  asOf: string
+  rows: StockRow[]
+  totalValue: string
+  accounts: { accountId: string; code: string; name: string; subledger: string; ledger: string; difference: string }[]
+}
+
+export type CardLine = {
+  date: string
+  sourceType: string
+  sourceId: string
+  number: string
+  memo: string
+  qtyIn: string
+  qtyOut: string
+  value: string
+  unitCost: string
+  qtyAfter: string
+  valueAfter: string
+  reversal: boolean
+}
+
+export type StockCard = {
+  product: Product
+  from: string
+  to: string
+  openingQty: string
+  openingValue: string
+  lines: CardLine[]
+  closingQty: string
+  closingValue: string
+  truncated: boolean
+}
+
+export type AdjustmentKind = 'penyesuaian' | 'pemakaian' | 'opname'
+
+export type Adjustment = {
+  id: string
+  number: string
+  kind: AdjustmentKind
+  date: string
+  accountId: string
+  accountCode: string
+  accountName: string
+  projectId?: string
+  memo: string
+  status: 'posted' | 'void'
+  lineCount: number
+}
+
+export type AdjustmentDetail = Adjustment & {
+  lines: {
+    productId: string
+    productCode: string
+    productName: string
+    unit: string
+    systemQty?: string
+    countedQty?: string
+    qty: string
+    unitCost?: string
+    value: string
+    memo: string
+  }[]
+  total: string
+  createdBy?: string
+  createdAt: string
+  voidedBy?: string
+  voidedAt?: string
+  voidDate?: string
+  voidReason?: string
+}
+
+export type AdjustmentInput = {
+  kind: AdjustmentKind
+  date: string
+  accountId: string
+  projectId?: string
+  memo: string
+  lines: { productId: string; qty: string; countedQty?: string; unitCost?: string; memo: string }[]
+}
+
+// Proyek ---------------------------------------------------------------------------------------
+
+export type ProjectStatus = 'berjalan' | 'selesai' | 'batal'
+
+export type Project = {
+  id: string
+  code: string
+  name: string
+  customerId?: string | null
+  customerName: string
+  contractValue: string
+  dpPct: string
+  retentionPct: string
+  pphCode?: string | null
+  revenueAccountId?: string | null
+  startDate?: string | null
+  endDate?: string | null
+  status: ProjectStatus
+  notes: string
+  version: number
+}
+
+export type ProjectInput = Omit<Project, 'id' | 'customerName'>
+
+export type ProjectSummary = Project & { budget: string; revenue: string; cost: string; profit: string; costPct?: string }
+
+export type Billing = {
+  contractValue: string
+  advanceInvoiced: string
+  advancePosted: boolean
+  advanceDeducted: string
+  advanceRemaining: string
+  progressPct: string
+  progressBilled: string
+  unbilled: string
+  terms: number
+  retentionHeld: string
+  retentionReleased: string
+  drafts: number
+}
+
+export type BudgetLine = { accountId: string; accountCode: string; accountName: string; description: string; amount: string }
+
+export type ProjectDetail = ProjectSummary & { budgetLines: BudgetLine[]; billing: Billing; invoices: Invoice[] }
+
+export type ProjectReportRow = {
+  accountId: string
+  code: string
+  name: string
+  class: number
+  budget: string
+  actual: string
+  remaining: string
+  usedPct?: string
+}
+
+export type ProjectReport = {
+  project: Project
+  from: string
+  to: string
+  revenue: ProjectReportRow[]
+  costs: ProjectReportRow[]
+  totalRevenue: string
+  totalBudget: string
+  totalCost: string
+  profit: string
+  margin?: string
+  costPct?: string
+}
+
+export type ProjectLine = {
+  entryId: string
+  number: string
+  status: string
+  sourceType: string
+  sourceId?: string
+  date: string
+  memo: string
+  accountId: string
+  accountCode: string
+  accountName: string
+  debit: string
+  credit: string
+}
+
+export type BillingInput = { kind: Exclude<InvoiceKind, 'biasa'>; date: string; progressPct?: string; taxCode?: string; memo: string }
+
 export async function download(method: 'GET' | 'POST', path: string, body?: unknown): Promise<string> {
   const res = await fetch('/api/v1' + path, {
     method,

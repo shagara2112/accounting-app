@@ -35,6 +35,8 @@ type CompanyAccess struct {
 	RoleKey     string   `json:"roleKey"`
 	RoleName    string   `json:"roleName"`
 	Permissions []string `json:"permissions"`
+	// BranchIDs: pengguna dibatasi ke cabang ini (PLT-12); kosong = semua cabang.
+	BranchIDs []uuid.UUID `json:"branchIds"`
 }
 
 type NewCompany struct {
@@ -51,6 +53,10 @@ type Service interface {
 	rbac.Resolver
 	CompaniesFor(ctx context.Context, userID uuid.UUID) ([]CompanyAccess, error)
 	Companies(ctx context.Context) ([]Company, error)
+	// Dimensi cabang dan departemen (GL-09); kind = "cabang" atau "departemen".
+	Dimensions(ctx context.Context, companyID uuid.UUID, kind string) ([]Dimension, error)
+	SaveDimension(ctx context.Context, companyID uuid.UUID, kind string, id *uuid.UUID, in DimensionInput, actor audit.Actor) (Dimension, error)
+	CheckDimensions(ctx context.Context, companyID uuid.UUID, branchID, departmentID *uuid.UUID) error
 	Company(ctx context.Context, id uuid.UUID) (Company, error)
 	// UpdateTaxProfile mengubah NPWP, NITKU, alamat, dan status PKP PT (TAX-05).
 	UpdateTaxProfile(ctx context.Context, id uuid.UUID, in TaxProfile, actor audit.Actor) (Company, error)
@@ -62,11 +68,34 @@ type Service interface {
 	ContactNames(ctx context.Context, companyID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	CreateContact(ctx context.Context, companyID uuid.UUID, in ContactInput, actor audit.Actor) (Contact, error)
 	UpdateContact(ctx context.Context, companyID, id uuid.UUID, in ContactInput, actor audit.Actor) (Contact, error)
+	// LinkedContact mengembalikan kontak di PT ini yang mewakili PT grup lain (ME-03).
+	LinkedContact(ctx context.Context, companyID, linkedCompanyID uuid.UUID) (Contact, error)
+
+	// Logo PT untuk kop faktur PDF (JPEG); nil bila belum ada.
+	Logo(ctx context.Context, companyID uuid.UUID) ([]byte, error)
+	SetLogo(ctx context.Context, companyID uuid.UUID, jpeg []byte, actor audit.Actor) error
 }
 
-func New(pool *pgxpool.Pool) Service { return &service{pool: pool} }
+// AccountCheck memastikan akun ada di PT, akun detail yang aktif, dan berkelas yang diizinkan.
+// Diisi buku besar saat perangkaian, karena modul core tidak membaca tabel buku besar.
+type AccountCheck func(ctx context.Context, companyID, accountID uuid.UUID, classes []int) error
 
-type service struct{ pool *pgxpool.Pool }
+type Option func(*service)
+
+func WithAccountCheck(fn AccountCheck) Option { return func(s *service) { s.accountCheck = fn } }
+
+func New(pool *pgxpool.Pool, opts ...Option) Service {
+	s := &service{pool: pool}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+type service struct {
+	pool         *pgxpool.Pool
+	accountCheck AccountCheck
+}
 
 func (s *service) q(ctx context.Context) *store.Queries { return store.New(db.Conn(ctx, s.pool)) }
 
@@ -78,7 +107,7 @@ func (s *service) Role(ctx context.Context, userID, companyID uuid.UUID) (rbac.R
 	if err != nil {
 		return rbac.Role{}, err
 	}
-	return rbac.Role{Key: row.Key, Perms: rbac.NewPerms(row.Permissions)}, nil
+	return rbac.Role{Key: row.Key, Perms: rbac.NewPerms(row.Permissions), Branches: row.BranchIds}, nil
 }
 
 // DefaultCompany memilih PT pertama yang bisa diakses pengguna, untuk PT aktif saat login.
@@ -99,7 +128,7 @@ func (s *service) CompaniesFor(ctx context.Context, userID uuid.UUID) ([]Company
 	for _, r := range rows {
 		out = append(out, CompanyAccess{
 			Company: Company{ID: r.ID, Name: r.Name, ShortName: r.ShortName, Kind: r.Kind, Industry: r.Industry, PKP: r.Pkp},
-			RoleKey: r.RoleKey, RoleName: r.RoleName, Permissions: r.Permissions,
+			RoleKey: r.RoleKey, RoleName: r.RoleName, Permissions: r.Permissions, BranchIDs: nonNil(r.BranchIds),
 		})
 	}
 	return out, nil
@@ -158,4 +187,33 @@ func (s *service) Assign(ctx context.Context, userID, companyID uuid.UUID, roleK
 		return fmt.Errorf("peran %q tidak ada", roleKey)
 	}
 	return nil
+}
+
+func (s *service) Logo(ctx context.Context, companyID uuid.UUID) ([]byte, error) {
+	return s.q(ctx).GetCompanyLogo(ctx, companyID)
+}
+
+// SetLogo mengganti atau (jpeg nil) menghapus logo PT.
+func (s *service) SetLogo(ctx context.Context, companyID uuid.UUID, jpeg []byte, actor audit.Actor) error {
+	return db.Run(ctx, s.pool, func(ctx context.Context) error {
+		if err := s.q(ctx).SetCompanyLogo(ctx, store.SetCompanyLogoParams{ID: companyID, Logo: jpeg}); err != nil {
+			return err
+		}
+		action := "core.company.logo"
+		if jpeg == nil {
+			action = "core.company.logo_remove"
+		}
+		_, err := audit.Write(ctx, db.Conn(ctx, s.pool), audit.Entry{
+			UserID: actor.UserRef(), CompanyID: &companyID, Action: action, ObjectType: "company", ObjectID: companyID.String(), IP: actor.IP,
+			After: map[string]any{"bytes": len(jpeg)},
+		})
+		return err
+	})
+}
+
+func nonNil(ids []uuid.UUID) []uuid.UUID {
+	if ids == nil {
+		return []uuid.UUID{}
+	}
+	return ids
 }

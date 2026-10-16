@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, download, query, type CompanyProfile, type ExportBatch, type OutputList, type TaxSettings, type VATRecap, type WithholdingRecap } from './api'
+import { ApiError, api, download, query, type CompanyProfile, type ExportBatch, type OutputList, type TaxSettings, type VATRecap, type WithholdingRecap } from './api'
 import { useInvalidateCompany } from './invalidate'
 
 export function useOutputs(companyId: string | null, month: string) {
@@ -95,5 +95,29 @@ export function useSaveCompanyProfile(companyId: string | null) {
     mutationFn: (p: { npwp: string; nitku: string; address: string; pkp: boolean; version: number }) => api<CompanyProfile>('PUT', '/company/profile', p),
     // Status PKP juga dipakai formulir faktur lewat /me.
     onSuccess: () => Promise.all([invalidate(), qc.invalidateQueries({ queryKey: ['me'] })]),
+  })
+}
+
+// Logo PT untuk kop faktur PDF ----------------------------------------------------------
+
+export function useLogoVersion(companyId: string | null) {
+  // Versi logo hanya penanda cache gambar di browser; naik setiap logo diganti.
+  return useQuery({ queryKey: ['tax', companyId, 'logo-version'], queryFn: async () => Date.now(), enabled: companyId !== null, staleTime: Infinity })
+}
+
+export function useSetLogo(companyId: string | null) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (file: File | null) => {
+      if (!file) return api('DELETE', '/company/logo')
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch('/api/v1/company/logo', { method: 'PUT', credentials: 'same-origin', body: form })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new ApiError(res.status, data?.code ?? 'unknown', data?.detail || 'Logo gagal disimpan.')
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tax', companyId, 'logo-version'] }),
   })
 }

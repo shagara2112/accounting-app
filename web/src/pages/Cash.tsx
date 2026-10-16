@@ -1,16 +1,32 @@
 import { useState } from 'react'
 import { motion } from 'motion/react'
 import { useNavigate, useSearchParams } from 'react-router'
-import { ApiError, newIdempotencyKey, type CashKind, type Me } from '../lib/api'
-import { useCashAccounts, useCashTransaction, useCashTransactions, useRecordCash, useRegisterCashAccount, useVoidCash } from '../lib/cash'
+import { ApiError, newIdempotencyKey, type CashKind, type CashTransactionDetail, type Me } from '../lib/api'
+import {
+  useCashAccounts,
+  useCashTransaction,
+  useCashTransactions,
+  useDeleteCashDraft,
+  usePostCashDraft,
+  useRecordCash,
+  useRegisterCashAccount,
+  useSaveCashDraft,
+  useVoidCash,
+  type CashInput,
+} from '../lib/cash'
 import { formatDate, monthEnd, monthLabel, monthOf, monthStart, todayISO } from '../lib/dates'
 import { useAccounts } from '../lib/ledger'
 import { formatAmount, formatRp, fromUnits, parseInput } from '../lib/money'
+import { useProjectNames, useProjectOptions } from '../lib/projects'
 import { can } from '../lib/session'
+import { isRestricted, useDimensions } from '../lib/dimensions'
 import { AccountPicker } from '../components/AccountPicker'
+import { DimensionFields, type DimValue } from '../components/DimensionFields'
+import { SearchSelect } from '../components/SearchSelect'
 import { MonthNav } from '../components/MonthNav'
 import { useToast } from '../components/Toast'
 import { VoidForm } from '../components/VoidForm'
+import { Attachments } from '../components/Attachments'
 import { Alert, Badge, Button, Dialog, Drawer, EmptyState, Field, PageHeader, Segmented, SelectField, Skeleton, TableShell, ease, inputClass, td, th } from '../components/ui'
 
 const kindLabel: Record<CashKind, string> = { in: 'Penerimaan', out: 'Pengeluaran', transfer: 'Transfer' }
@@ -24,8 +40,9 @@ export function CashPage({ me }: { me: Me }) {
   const account = params.get('rekening') ?? undefined
   const openId = params.get('id')
   const accounts = useCashAccounts(companyId)
-  const list = useCashTransactions(companyId, { from: monthStart(month), to: monthEnd(month), account })
-  const [recording, setRecording] = useState<CashKind | null>(null)
+  const draftsOnly = params.get('draf') === '1'
+  const list = useCashTransactions(companyId, draftsOnly ? { drafts: '1' } : { from: monthStart(month), to: monthEnd(month), account })
+  const [recording, setRecording] = useState<Opening | null>(null)
   const [registering, setRegistering] = useState(false)
   const canCreate = can(me, 'cash.create')
 
@@ -38,24 +55,32 @@ export function CashPage({ me }: { me: Me }) {
     setParams(p, { replace: true })
   }
 
-  const items = list.data ?? []
+  const items = list.data?.items ?? []
+  const drafts = list.data?.drafts ?? 0
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
         title="Kas dan bank"
         subtitle="Saldo rekening adalah saldo akun buku besarnya, sehingga pelunasan dan pembayaran dari penjualan dan pembelian ikut terhitung. Transaksi bank dicatat manual."
         actions={
-          canCreate && (
+          <>
+            {!isRestricted(me) && (
+              <Button variant="ghost" onClick={() => navigate(account ? `/kas/rekonsiliasi?rekening=${account}` : '/kas/rekonsiliasi')}>
+                Rekonsiliasi bank
+              </Button>
+            )}
+            {canCreate && (
             <>
-              <Button variant="secondary" onClick={() => setRecording('transfer')}>
+              <Button variant="secondary" onClick={() => setRecording({ kind: 'transfer' })}>
                 Transfer
               </Button>
-              <Button variant="secondary" onClick={() => setRecording('out')}>
+              <Button variant="secondary" onClick={() => setRecording({ kind: 'out' })}>
                 Pengeluaran
               </Button>
-              <Button onClick={() => setRecording('in')}>Penerimaan</Button>
+              <Button onClick={() => setRecording({ kind: 'in' })}>Penerimaan</Button>
             </>
-          )
+            )}
+          </>
         }
       />
 
@@ -95,9 +120,26 @@ export function CashPage({ me }: { me: Me }) {
         )}
       </div>
 
+      {drafts > 0 && !draftsOnly && (
+        <Alert tone="warn">
+          Ada {drafts} draf transaksi kas senilai Rp {formatAmount(list.data?.draftAmount ?? '0')} yang belum diposting, sehingga belum masuk saldo rekening.{' '}
+          <button type="button" onClick={() => update({ draf: '1', id: null })} className="cursor-pointer font-semibold underline">
+            Lihat draf
+          </button>
+        </Alert>
+      )}
       <div className="flex flex-wrap items-center gap-3">
-        <MonthNav value={month} onChange={(m) => update({ bulan: m })} />
-        {account && (
+        {draftsOnly ? (
+          <Badge tone="warn">
+            Semua draf belum diposting
+            <button type="button" aria-label="Tampilkan semua transaksi" onClick={() => update({ draf: null })} className="ml-1 cursor-pointer font-bold">
+              ×
+            </button>
+          </Badge>
+        ) : (
+          <MonthNav value={month} onChange={(m) => update({ bulan: m })} />
+        )}
+        {account && !draftsOnly && (
           <>
             <Badge tone="accent">
               {accounts.data?.find((a) => a.accountId === account)?.name}
@@ -134,11 +176,12 @@ export function CashPage({ me }: { me: Me }) {
           {items.map((x) => (
             <tr key={x.id} onClick={() => update({ id: x.id })} className={`cursor-pointer border-t border-line transition-colors duration-150 hover:bg-hover ${x.status === 'void' ? 'text-muted' : ''}`}>
               <td className={`${td} num whitespace-nowrap`}>{formatDate(x.date)}</td>
-              <td className={`${td} num font-semibold whitespace-nowrap ${x.status === 'void' ? 'line-through' : 'text-accent'}`}>{x.number}</td>
+              <td className={`${td} num font-semibold whitespace-nowrap ${x.status === 'void' ? 'line-through' : x.status === 'draft' ? 'text-muted' : 'text-accent'}`}>{x.number ?? 'Draf'}</td>
               <td className={td}>
                 <span className="flex items-center gap-1.5">
                   <Badge tone={kindTone[x.kind]}>{kindLabel[x.kind]}</Badge>
                   {x.status === 'void' && <Badge tone="bad">Void</Badge>}
+                  {x.status === 'draft' && <Badge tone="warn">Draf</Badge>}
                 </span>
               </td>
               <td className={td}>{x.kind === 'transfer' ? `${x.cashAccount} → ${x.toAccount}` : x.cashAccount}</td>
@@ -152,24 +195,42 @@ export function CashPage({ me }: { me: Me }) {
         </tbody>
       </TableShell>
       {list.isSuccess && items.length === 0 && (
-        <EmptyState title={`Belum ada transaksi kas manual di ${monthLabel(month)}`} body="Pelunasan faktur dan pembayaran tagihan tercatat di Penjualan dan Pembelian; semuanya tetap terlihat di buku besar rekening." />
+        <EmptyState
+          title={draftsOnly ? 'Tidak ada draf transaksi kas' : `Belum ada transaksi kas manual di ${monthLabel(month)}`}
+          body={draftsOnly ? undefined : 'Pelunasan faktur dan pembayaran tagihan tercatat di Penjualan dan Pembelian; semuanya tetap terlihat di buku besar rekening.'}
+        />
       )}
 
-      <RecordDialog me={me} kind={recording} onClose={() => setRecording(null)} onKind={setRecording} defaultAccount={account} />
+      <RecordDialog me={me} open={recording} onClose={() => setRecording(null)} onKind={(k) => setRecording((r) => r && { ...r, kind: k })} defaultAccount={account} />
       <RegisterDialog me={me} open={registering} onClose={() => setRegistering(false)} />
-      <TransactionDrawer me={me} id={openId} onClose={() => update({ id: null })} />
+      <TransactionDrawer
+        me={me}
+        id={openId}
+        onClose={() => update({ id: null })}
+        onEditDraft={(d) => {
+          update({ id: null })
+          setRecording({ kind: d.kind, draft: d })
+        }}
+      />
     </div>
   )
 }
 
-type Line = { key: string; accountId: string; amount: string; memo: string }
-const blankLine = (): Line => ({ key: newIdempotencyKey(), accountId: '', amount: '', memo: '' })
+type Line = { key: string; accountId: string; amount: string; memo: string; projectId: string; departmentId: string }
+const blankLine = (projectId = ''): Line => ({ key: newIdempotencyKey(), accountId: '', amount: '', memo: '', projectId, departmentId: '' })
 
-function RecordDialog({ me, kind, onClose, onKind, defaultAccount }: { me: Me; kind: CashKind | null; onClose: () => void; onKind: (k: CashKind) => void; defaultAccount?: string }) {
+/** Dialog transaksi kas baru, atau melengkapi draf (open.draft). */
+type Opening = { kind: CashKind; draft?: CashTransactionDetail }
+
+function RecordDialog({ me, open, onClose, onKind, defaultAccount }: { me: Me; open: Opening | null; onClose: () => void; onKind: (k: CashKind) => void; defaultAccount?: string }) {
   const companyId = me.activeCompanyId
+  const kind = open?.kind ?? null
+  const draft = open?.draft
   const accounts = useAccounts(companyId)
   const cashAccounts = (useCashAccounts(companyId).data ?? []).filter((a) => a.active)
   const record = useRecordCash(companyId)
+  const saveDraft = useSaveCashDraft(companyId)
+  const postDraft = usePostCashDraft(companyId)
   const toast = useToast()
   const [shownFor, setShownFor] = useState<CashKind | null>(null)
   const [date, setDate] = useState(todayISO())
@@ -178,24 +239,50 @@ function RecordDialog({ me, kind, onClose, onKind, defaultAccount }: { me: Me; k
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
   const [reference, setReference] = useState('')
+  const [dims, setDims] = useState<DimValue>({ branchId: '', departmentId: '' })
   const [lines, setLines] = useState<Line[]>([blankLine()])
   const [key, setKey] = useState(newIdempotencyKey)
+  const [postKey, setPostKey] = useState(newIdempotencyKey)
+  // Versi draf terakhir yang disimpan dialog ini: bila "Simpan & posting" gagal di tahap posting,
+  // drafnya sudah tersimpan dengan versi baru dan percobaan berikutnya harus memakai versi itu.
+  const [version, setVersion] = useState<number>()
   const [attempt, setAttempt] = useState(0)
+  const projectOptions = useProjectOptions(companyId, kind !== null && can(me, 'project.view'), lines.map((l) => l.projectId))
+  const departments = (useDimensions(companyId, 'departemen').data ?? []).filter((d) => d.active || lines.some((l) => l.departmentId === d.id))
 
   if (kind && shownFor === null) {
     setShownFor(kind)
-    setDate(todayISO())
-    setFrom(defaultAccount ?? cashAccounts[0]?.accountId ?? '')
-    setTo('')
-    setAmount('')
-    setMemo('')
-    setReference('')
-    setLines([blankLine()])
+    setDate(draft?.date ?? todayISO())
+    setFrom(draft?.cashAccountId ?? defaultAccount ?? cashAccounts[0]?.accountId ?? '')
+    setTo(draft?.toAccountId ?? '')
+    setAmount(draft && draft.kind === 'transfer' ? formatAmount(draft.amount) : '')
+    setMemo(draft?.memo ?? '')
+    setReference(draft?.reference ?? '')
+    setDims({ branchId: draft?.branchId ?? '', departmentId: '' })
+    setLines(
+      draft && draft.lines.length > 0
+        ? draft.lines.map((l) => ({
+            key: newIdempotencyKey(),
+            accountId: l.accountId ?? '',
+            amount: formatAmount(l.amount),
+            memo: l.memo,
+            projectId: l.projectId ?? '',
+            // Departemen kepala dari draf lama dipindah ke baris supaya terlihat dan bisa diubah.
+            departmentId: l.departmentId ?? draft.departmentId ?? '',
+          }))
+        : [blankLine()],
+    )
     setKey(newIdempotencyKey())
+    setPostKey(newIdempotencyKey())
+    setVersion(draft?.version)
     record.reset()
+    saveDraft.reset()
+    postDraft.reset()
   }
   const current = kind ?? shownFor
-  const err = record.error instanceof ApiError ? record.error : null
+  const failure = record.error ?? saveDraft.error ?? postDraft.error
+  const err = failure instanceof ApiError ? failure : null
+  const busy = record.isPending || saveDraft.isPending || postDraft.isPending
   const counter = (accounts.data?.items ?? []).filter((a) => !cashAccounts.some((c) => c.accountId === a.id))
   const total = current === 'transfer' ? (parseInput(amount) ?? 0n) : lines.reduce((s, l) => s + (parseInput(l.amount) ?? 0n), 0n)
 
@@ -204,33 +291,58 @@ function RecordDialog({ me, kind, onClose, onKind, defaultAccount }: { me: Me; k
     onClose()
   }
 
-  function submit() {
+  function input(kind: CashKind): CashInput {
+    return {
+      kind,
+      date,
+      cashAccountId: from,
+      toAccountId: kind === 'transfer' ? to : undefined,
+      amount: fromUnits(kind === 'transfer' ? total : 0n),
+      memo: memo.trim(),
+      reference: reference.trim(),
+      branchId: dims.branchId || undefined,
+      departmentId: dims.departmentId || undefined,
+      lines:
+        kind === 'transfer'
+          ? []
+          : lines
+              .filter((l) => l.accountId || l.amount || l.memo.trim())
+              .map((l) => ({
+                accountId: l.accountId || undefined,
+                amount: fromUnits(parseInput(l.amount) ?? 0n),
+                memo: l.memo.trim(),
+                projectId: l.projectId || undefined,
+                departmentId: l.departmentId || undefined,
+              })),
+    }
+  }
+
+  // post = false: simpan sebagai draf (akun boleh kosong). post = true: posting sekarang;
+  // draf yang sedang dilengkapi disimpan dulu, lalu diposting.
+  async function submit(post: boolean) {
     if (!current) return
     setAttempt((n) => n + 1)
-    record.mutate(
-      {
-        idempotencyKey: key,
-        input: {
-          kind: current,
-          date,
-          cashAccountId: from,
-          toAccountId: current === 'transfer' ? to : undefined,
-          amount: fromUnits(current === 'transfer' ? total : 0n),
-          memo: memo.trim(),
-          reference: reference.trim(),
-          lines:
-            current === 'transfer'
-              ? []
-              : lines.filter((l) => l.accountId || l.amount).map((l) => ({ accountId: l.accountId, amount: fromUnits(parseInput(l.amount) ?? 0n), memo: l.memo.trim() })),
-        },
-      },
-      {
-        onSuccess: (x) => {
+    record.reset()
+    saveDraft.reset()
+    postDraft.reset()
+    try {
+      if (post && !draft) {
+        const x = await record.mutateAsync({ idempotencyKey: key, input: input(current) })
+        toast(`${x.number} diposting · ${formatRp(x.amount)}`)
+      } else {
+        const saved = await saveDraft.mutateAsync({ id: draft?.id, version, input: input(current), idempotencyKey: key })
+        setVersion(saved.version)
+        if (post) {
+          const x = await postDraft.mutateAsync({ id: saved.id, idempotencyKey: postKey })
           toast(`${x.number} diposting · ${formatRp(x.amount)}`)
-          close()
-        },
-      },
-    )
+        } else {
+          toast('Draf disimpan · belum masuk saldo rekening')
+        }
+      }
+      close()
+    } catch {
+      // Pesan galat ditampilkan dari error mutasi.
+    }
   }
 
   return (
@@ -238,13 +350,16 @@ function RecordDialog({ me, kind, onClose, onKind, defaultAccount }: { me: Me; k
       open={kind !== null}
       onClose={close}
       width={640}
-      title={current ? kindLabel[current] : ''}
+      title={current ? (draft ? `Lengkapi draf ${kindLabel[current].toLowerCase()}` : kindLabel[current]) : ''}
       description={
-        current === 'in'
-          ? 'Uang masuk ke rekening, mis. bunga jasa giro, setoran modal, atau pendapatan lain. Seri BKM.'
-          : current === 'out'
-            ? 'Uang keluar dari rekening, mis. biaya admin bank, pajak bunga, atau biaya kecil. Seri BKK.'
-            : 'Pindah dana antar rekening kas dan bank milik PT ini. Seri TRF.'
+        <>
+          {current === 'in'
+            ? 'Uang masuk ke rekening, mis. bunga jasa giro, setoran modal, atau pendapatan lain. Seri BKM.'
+            : current === 'out'
+              ? 'Uang keluar dari rekening, mis. biaya admin bank, pajak bunga, atau biaya kecil. Seri BKK.'
+              : 'Pindah dana antar rekening kas dan bank milik PT ini. Seri TRF.'}
+          {current !== 'transfer' && ' Belum tahu akunnya? Simpan sebagai draf; akuntan bisa melengkapinya lalu memposting.'}
+        </>
       }
       footer={
         <>
@@ -254,8 +369,11 @@ function RecordDialog({ me, kind, onClose, onKind, defaultAccount }: { me: Me; k
           <Button variant="secondary" onClick={close}>
             Batal
           </Button>
-          <Button busy={record.isPending} disabled={total <= 0n || !from || (current === 'transfer' && !to)} onClick={submit}>
-            Posting
+          <Button variant="secondary" busy={saveDraft.isPending && !postDraft.isPending} disabled={busy || total <= 0n || !from || (current === 'transfer' && !to)} onClick={() => void submit(false)}>
+            Simpan draf
+          </Button>
+          <Button busy={record.isPending || postDraft.isPending} disabled={busy || total <= 0n || !from || (current === 'transfer' && !to)} onClick={() => void submit(true)}>
+            {draft ? 'Simpan & posting' : 'Posting'}
           </Button>
         </>
       }
@@ -302,7 +420,10 @@ function RecordDialog({ me, kind, onClose, onKind, defaultAccount }: { me: Me; k
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <span className="text-sm font-medium text-ink-2">{current === 'in' ? 'Diterima dari akun' : 'Dibebankan ke akun'}</span>
+          <span className="text-sm font-medium text-ink-2">
+            {current === 'in' ? 'Diterima dari akun' : 'Dibebankan ke akun'}
+            <span className="font-normal text-muted"> · boleh dikosongkan bila disimpan sebagai draf</span>
+          </span>
           {lines.map((l, i) => (
             <div key={l.key} className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_130px_40px] items-start gap-2 max-sm:grid-cols-1">
               <div>
@@ -315,8 +436,38 @@ function RecordDialog({ me, kind, onClose, onKind, defaultAccount }: { me: Me; k
                   onChange={(a) => setLines((list) => list.map((x) => (x.key === l.key ? { ...x, accountId: a } : x)))}
                 />
                 {err?.fields[`lines.${i}.accountId`] && <p className="mt-1 text-[13px] text-bad">{err.fields[`lines.${i}.accountId`]}</p>}
+                {projectOptions.length > 0 && (
+                  <div className="mt-1.5">
+                    <SearchSelect
+                      label={`Proyek baris ${i + 1}`}
+                      options={projectOptions}
+                      value={l.projectId}
+                      onChange={(p) => setLines((list) => list.map((x) => (x.key === l.key ? { ...x, projectId: p } : x)))}
+                      placeholder="Proyek (opsional)"
+                      clearLabel="Tanpa proyek"
+                    />
+                  </div>
+                )}
               </div>
-              <input aria-label={`Keterangan baris ${i + 1}`} placeholder="Keterangan" value={l.memo} onChange={(e) => setLines((list) => list.map((x) => (x.key === l.key ? { ...x, memo: e.target.value } : x)))} className={`${inputClass} border-line-2`} />
+              <div>
+                <input aria-label={`Keterangan baris ${i + 1}`} placeholder="Keterangan" value={l.memo} onChange={(e) => setLines((list) => list.map((x) => (x.key === l.key ? { ...x, memo: e.target.value } : x)))} className={`${inputClass} border-line-2`} />
+                {departments.length > 0 && (
+                  <select
+                    aria-label={`Departemen baris ${i + 1}`}
+                    value={l.departmentId}
+                    onChange={(e) => setLines((list) => list.map((x) => (x.key === l.key ? { ...x, departmentId: e.target.value } : x)))}
+                    className={`${inputClass} mt-1.5 ${err?.fields[`lines.${i}.departmentId`] ? 'border-bad' : 'border-line-2'} ${l.departmentId ? '' : 'text-muted'}`}
+                  >
+                    <option value="">Departemen (opsional)</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.code} · {d.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {err?.fields[`lines.${i}.departmentId`] && <p className="mt-1 text-[13px] text-bad">{err.fields[`lines.${i}.departmentId`]}</p>}
+              </div>
               <input
                 aria-label={`Jumlah baris ${i + 1}`}
                 inputMode="decimal"
@@ -340,7 +491,7 @@ function RecordDialog({ me, kind, onClose, onKind, defaultAccount }: { me: Me; k
               </button>
             </div>
           ))}
-          <Button size="sm" variant="ghost" className="self-start" onClick={() => setLines((list) => [...list, blankLine()])}>
+          <Button size="sm" variant="ghost" className="self-start" onClick={() => setLines((list) => [...list, blankLine(list[list.length - 1]?.projectId)])}>
             + Tambah baris
           </Button>
         </div>
@@ -348,6 +499,7 @@ function RecordDialog({ me, kind, onClose, onKind, defaultAccount }: { me: Me; k
       <div className="grid grid-cols-2 gap-4 max-sm:grid-cols-1">
         <Field id="kas-keterangan" label="Keterangan" value={memo} maxLength={500} onChange={(e) => setMemo(e.target.value)} />
         <Field id="kas-referensi" label="Referensi bank (opsional)" value={reference} maxLength={100} onChange={(e) => setReference(e.target.value)} />
+        <DimensionFields me={me} value={dims} onChange={setDims} errors={err?.fields} withDepartment={false} />
       </div>
       {err && <Alert shakeKey={attempt}>{err.message}</Alert>}
     </Dialog>
@@ -420,15 +572,19 @@ function RegisterDialog({ me, open, onClose }: { me: Me; open: boolean; onClose:
   )
 }
 
-function TransactionDrawer({ me, id, onClose }: { me: Me; id: string | null; onClose: () => void }) {
+function TransactionDrawer({ me, id, onClose, onEditDraft }: { me: Me; id: string | null; onClose: () => void; onEditDraft: (d: CashTransactionDetail) => void }) {
   const companyId = me.activeCompanyId
   const q = useCashTransaction(companyId, id)
   const x = q.data && q.data.id === id ? q.data : undefined
   const voidIt = useVoidCash(companyId)
+  const del = useDeleteCashDraft(companyId)
+  const missing = x?.lines.filter((l) => !l.accountId).length ?? 0
   const toast = useToast()
   const navigate = useNavigate()
   const [voiding, setVoiding] = useState(false)
   const [key, setKey] = useState(newIdempotencyKey)
+  const projectNames = useProjectNames(companyId, id !== null && can(me, 'project.view'))
+  const departmentNames = new Map((useDimensions(companyId, 'departemen').data ?? []).map((d) => [d.id, `${d.code} · ${d.name}`]))
 
   return (
     <Drawer
@@ -436,20 +592,30 @@ function TransactionDrawer({ me, id, onClose }: { me: Me; id: string | null; onC
       onClose={() => {
         setVoiding(false)
         voidIt.reset()
+        del.reset()
         onClose()
       }}
-      title={x?.number ?? 'Memuat…'}
+      title={x ? (x.number ?? `Draf ${kindLabel[x.kind].toLowerCase()}`) : 'Memuat…'}
       description={
         x && (
           <span className="flex items-center gap-2">
             <Badge tone={kindTone[x.kind]}>{kindLabel[x.kind]}</Badge>
-            {x.status === 'void' ? <Badge tone="bad">Void</Badge> : <Badge tone="good">Diposting</Badge>}
+            {x.status === 'void' ? <Badge tone="bad">Void</Badge> : x.status === 'draft' ? <Badge tone="warn">Draf</Badge> : <Badge tone="good">Diposting</Badge>}
             <span>{formatDate(x.date)}</span>
           </span>
         )
       }
       footer={
-        x?.status === 'posted' &&
+        x?.status === 'draft' ? (
+          <>
+            {(x.createdById === me.user.id || can(me, 'cash.void')) && (
+              <Button variant="ghost" busy={del.isPending} onClick={() => del.mutate(x.id, { onSuccess: () => (toast('Draf dihapus'), onClose()) })}>
+                Hapus draf
+              </Button>
+            )}
+            {can(me, 'cash.create') && <Button onClick={() => onEditDraft(x)}>{missing > 0 ? 'Lengkapi & posting' : 'Periksa & posting'}</Button>}
+          </>
+        ) : x?.status === 'posted' &&
         can(me, 'cash.void') &&
         !voiding && (
           <Button
@@ -489,6 +655,12 @@ function TransactionDrawer({ me, id, onClose }: { me: Me; id: string | null; onC
             </div>
           </dl>
           {x.memo && <p className="text-sm text-ink-2">{x.memo}</p>}
+          {x.status === 'draft' && (
+            <Alert tone="warn">
+              Draf belum masuk buku besar dan belum mengubah saldo rekening.{missing > 0 && ` ${missing} baris belum punya akun lawan.`}
+            </Alert>
+          )}
+          {del.error && <Alert>{del.error.message}</Alert>}
           {x.status === 'void' && x.voidReason && <Alert tone="bad">Alasan void: {x.voidReason}</Alert>}
           {x.lines.length > 0 && (
             <div className="overflow-hidden rounded-[12px] border border-line">
@@ -497,8 +669,16 @@ function TransactionDrawer({ me, id, onClose }: { me: Me; id: string | null; onC
                   {x.lines.map((l, i) => (
                     <tr key={i} className="border-t border-line first:border-0">
                       <td className="px-3 py-2.5">
-                        <span className="num font-semibold text-ink-2">{l.accountCode}</span> {l.accountName}
+                        {l.accountId ? (
+                          <>
+                            <span className="num font-semibold text-ink-2">{l.accountCode}</span> {l.accountName}
+                          </>
+                        ) : (
+                          <span className="font-medium text-warn">Akun belum dipilih</span>
+                        )}
                         {l.memo && <span className="block text-[12.5px] text-muted">{l.memo}</span>}
+                        {l.projectId && <span className="block text-[12.5px] text-accent">Proyek {projectNames.get(l.projectId) ?? ''}</span>}
+                        {(l.departmentId ?? x.departmentId) && <span className="block text-[12.5px] text-ink-2">Departemen {departmentNames.get((l.departmentId ?? x.departmentId)!) ?? ''}</span>}
                       </td>
                       <td className="num px-3 py-2.5 text-right">{formatAmount(l.amount)}</td>
                     </tr>
@@ -507,9 +687,11 @@ function TransactionDrawer({ me, id, onClose }: { me: Me; id: string | null; onC
               </table>
             </div>
           )}
-          <button type="button" onClick={() => navigate(`/jurnal?bulan=${monthOf(x.date)}&id=${x.journalEntryId}`)} className="self-start text-sm font-semibold text-accent hover:underline">
-            Lihat jurnal {x.number} →
-          </button>
+          {x.journalEntryId && (
+            <button type="button" onClick={() => navigate(`/jurnal?bulan=${monthOf(x.date)}&id=${x.journalEntryId}`)} className="self-start text-sm font-semibold text-accent hover:underline">
+              Lihat jurnal {x.number} →
+            </button>
+          )}
           {voiding && (
             <VoidForm
               title={`Void ${x.number}`}
@@ -523,6 +705,7 @@ function TransactionDrawer({ me, id, onClose }: { me: Me; id: string | null; onC
               }
             />
           )}
+          <Attachments companyId={companyId} type="cash_transaction" id={x.id} canUpload={can(me, 'cash.create')} canDeleteAny={can(me, 'cash.void')} userId={me.user.id} />
         </>
       )}
     </Drawer>

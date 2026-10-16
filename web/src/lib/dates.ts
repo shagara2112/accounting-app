@@ -50,3 +50,24 @@ export function formatDate(iso: string): string {
 export function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
 }
+
+/** Tanggal ditambah n hari. */
+export function addDays(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(y, m - 1, d + n)
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
+}
+
+/** Tanggal yang sama setahun sebelumnya; 29 Februari menjadi 28 Februari. */
+export function lastYear(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  const end = new Date(y - 1, m, 0).getDate()
+  return `${y - 1}-${pad(m)}-${pad(Math.min(d, end))}`
+}
+
+/** Jumlah hari dari a ke b (b − a). */
+export function daysBetween(a: string, b: string): number {
+  const [y1, m1, d1] = a.split('-').map(Number)
+  const [y2, m2, d2] = b.split('-').map(Number)
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000)
+}

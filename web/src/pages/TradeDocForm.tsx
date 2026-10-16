@@ -5,19 +5,42 @@ import { ApiError, newIdempotencyKey, type Me } from '../lib/api'
 import { formatDate, monthOf, todayISO } from '../lib/dates'
 import { useContacts } from '../lib/cash'
 import { useDoc, usePostDoc, useSaveDoc, useTaxCodes, type DocDetail, type DocInput, type TradeKind } from '../lib/docs'
+import { formatQty, useProducts } from '../lib/inventory'
 import { useAccounts } from '../lib/ledger'
 import { tradeText } from '../lib/labels'
 import { formatAmount, fromUnits, parseInput } from '../lib/money'
+import { useProjectOptions } from '../lib/projects'
 import { activeCompany, can } from '../lib/session'
 import { computeLine, computeTotals, rateLabel, withholding } from '../lib/trade'
+import { DimensionFields, type DimValue } from '../components/DimensionFields'
 import { AccountPicker } from '../components/AccountPicker'
 import { SearchSelect } from '../components/SearchSelect'
 import { useToast } from '../components/Toast'
 import { Alert, Button, Card, EmptyState, Field, Skeleton, ease, inputClass } from '../components/ui'
 
-type Row = { key: string; accountId: string; description: string; qty: string; unitPrice: string; discountPct: string; taxCode: string }
+type Row = {
+  key: string
+  productId: string
+  projectId: string
+  accountId: string
+  description: string
+  qty: string
+  unitPrice: string
+  discountPct: string
+  taxCode: string
+}
 
-const blankRow = (taxCode: string, accountId = ''): Row => ({ key: newIdempotencyKey(), accountId, description: '', qty: '1', unitPrice: '', discountPct: '', taxCode })
+const blankRow = (taxCode: string, accountId = '', projectId = ''): Row => ({
+  key: newIdempotencyKey(),
+  productId: '',
+  projectId,
+  accountId,
+  description: '',
+  qty: '1',
+  unitPrice: '',
+  discountPct: '',
+  taxCode,
+})
 
 /** Halaman faktur atau tagihan: baru, atau mengubah draf (route …/:id/ubah). */
 export function TradeDocForm({ me, kind }: { me: Me; kind: TradeKind }) {
@@ -27,6 +50,20 @@ export function TradeDocForm({ me, kind }: { me: Me; kind: TradeKind }) {
   if (doc.isPending) return <Skeleton className="h-96" />
   if (doc.isError) return <EmptyState title="Dokumen tidak ditemukan" body={doc.error.message} />
   if (doc.data.status !== 'draft') return <EmptyState title="Dokumen sudah diposting" body="Dokumen yang sudah diposting tidak bisa diubah; koreksi lewat void." />
+  if (doc.data.kind && doc.data.kind !== 'biasa')
+    return (
+      <EmptyState
+        title="Draf ini dibuat dari halaman proyek"
+        body="Faktur uang muka, termin, dan pelepasan retensi dihitung dari data proyek. Hapus drafnya lalu buat ulang dari halaman proyek bila perlu diubah."
+        action={
+          doc.data.projectId && (
+            <Link to={`/proyek/${doc.data.projectId}`} className="text-sm font-semibold text-accent">
+              Buka proyek
+            </Link>
+          )
+        }
+      />
+    )
   return <DocForm key={doc.data.id} me={me} kind={kind} existing={doc.data} />
 }
 
@@ -40,6 +77,8 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
   const accounts = useAccounts(companyId)
   const save = useSaveDoc(kind, companyId)
   const post = usePostDoc(kind, companyId)
+  const products = useProducts(companyId, {}, can(me, 'inventory.view'))
+  const productList = useMemo(() => products.data ?? [], [products.data])
 
   const defaultTax = kind === 'sales' && !company?.pkp ? 'NON-PPN' : 'PPN'
   const defaultAccount = kind === 'sales' ? (accounts.data?.items.find((a) => a.code === '4-1001')?.id ?? '') : ''
@@ -50,10 +89,14 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
   const [memo, setMemo] = useState(existing?.memo ?? '')
   const [supplierNo, setSupplierNo] = useState(existing?.supplierInvoiceNo ?? '')
   const [whCode, setWhCode] = useState(existing?.withholdingCode ?? '')
+  const [projectId, setProjectId] = useState(existing?.projectId ?? '')
+  const [dims, setDims] = useState<DimValue>({ branchId: existing?.branchId ?? '', departmentId: existing?.departmentId ?? '' })
   const [rows, setRows] = useState<Row[]>(() =>
     existing
       ? existing.lines.map((l) => ({
           key: newIdempotencyKey(),
+          productId: l.productId ?? '',
+          projectId: l.projectId ?? '',
           accountId: l.accountId,
           description: l.description,
           qty: formatAmount(l.qty),
@@ -71,6 +114,17 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
   const ppnCodes = codes.filter((c) => c.kind === 'ppn')
   const pphCodes = codes.filter((c) => c.kind === 'pph')
   const contact = contacts.data?.find((c) => c.id === contactId)
+  const projectOptions = useProjectOptions(companyId, can(me, 'project.view'), [projectId, ...rows.map((r) => r.projectId)])
+  const productOptions = useMemo(
+    () =>
+      productList.map((p) => ({
+        id: p.id,
+        label: `${p.code} · ${p.name}`,
+        detail: p.kind === 'barang' ? `Stok ${formatQty(p.stockQty)} ${p.unit}` : `Jasa · per ${p.unit}`,
+      })),
+    [productList],
+  )
+  const productById = useMemo(() => new Map(productList.map((p) => [p.id, p])), [productList])
 
   // Akun baris yang boleh dipakai: pendapatan untuk faktur; aset dan beban untuk tagihan.
   const lineAccounts = useMemo(() => (accounts.data?.items ?? []).filter((a) => t.accountClasses.includes(a.class)), [accounts.data, t.accountClasses])
@@ -86,6 +140,24 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
     setRows((list) => list.map((r) => (r.key === key ? { ...r, ...patch } : r)))
   }
 
+  // Memilih produk mengisi uraian, harga, dan akunnya. Barang di tagihan selalu dibukukan ke
+  // akun persediaannya, supaya stok dan nilai persediaan ikut bertambah.
+  function chooseProduct(row: Row, id: string) {
+    const p = productById.get(id)
+    if (!p) {
+      setRow(row.key, { productId: '' })
+      return
+    }
+    const price = kind === 'sales' ? p.salePrice : p.purchasePrice
+    const account = kind === 'sales' ? p.revenueAccountId : p.kind === 'barang' ? p.inventoryAccountId : p.expenseAccountId
+    setRow(row.key, {
+      productId: p.id,
+      description: row.description && row.productId === '' ? row.description : p.name,
+      unitPrice: price !== '0.0000' ? formatAmount(price) : row.unitPrice,
+      accountId: account ?? row.accountId,
+    })
+  }
+
   function input(): DocInput {
     return {
       contactId,
@@ -94,10 +166,14 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
       dueDate: effectiveDue,
       memo: memo.trim(),
       withholdingCode: whCode,
+      projectId: kind === 'sales' ? projectId : '',
+      ...dims,
       version: existing?.version ?? 0,
       lines: rows
-        .filter((r) => r.accountId || r.unitPrice || r.description)
+        .filter((r) => r.accountId || r.unitPrice || r.description || r.productId)
         .map((r) => ({
+          productId: r.productId || undefined,
+          projectId: kind === 'purchase' ? r.projectId || undefined : undefined,
           accountId: r.accountId,
           description: r.description.trim(),
           qty: fromUnits(parseInput(r.qty) ?? 0n),
@@ -184,6 +260,16 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
           {kind === 'purchase' && (
             <Field id="no-pemasok" label="No. faktur pemasok" value={supplierNo} maxLength={60} onChange={(e) => setSupplierNo(e.target.value)} error={err?.fields.supplierInvoiceNo} />
           )}
+          {kind === 'sales' && projectOptions.length > 0 && (
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <label htmlFor="proyek" className="text-sm font-medium text-ink-2">
+                Proyek <span className="font-normal text-muted">(opsional)</span>
+              </label>
+              <SearchSelect id="proyek" options={projectOptions} value={projectId} onChange={setProjectId} placeholder="Tanpa proyek" clearLabel="Tanpa proyek" invalid={Boolean(err?.fields.projectId)} />
+              {err?.fields.projectId ? <p className="text-[13px] text-bad">{err.fields.projectId}</p> : <p className="text-[13px] text-muted">Pendapatannya masuk ke laba proyek ini.</p>}
+            </div>
+          )}
+          <DimensionFields me={me} value={dims} onChange={setDims} errors={err?.fields} />
         </div>
         <Field id="catatan" label="Catatan" value={memo} maxLength={500} onChange={(e) => setMemo(e.target.value)} error={err?.fields.memo} />
       </Card>
@@ -193,8 +279,8 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
           <table className="w-full min-w-[1040px] text-left text-sm">
             <thead className="bg-hover/60 text-[12.5px] text-muted">
               <tr>
-                <th className="px-2 py-3 pl-4 font-semibold">Akun</th>
-                <th className="px-2 py-3 font-semibold">Uraian</th>
+                <th className="px-2 py-3 pl-4 font-semibold">{productList.length > 0 ? 'Produk dan akun' : 'Akun'}</th>
+                <th className="px-2 py-3 font-semibold">{kind === 'purchase' && projectOptions.length > 0 ? 'Uraian dan proyek' : 'Uraian'}</th>
                 <th className="w-[90px] px-2 py-3 text-right font-semibold">Qty</th>
                 <th className="w-[150px] px-2 py-3 text-right font-semibold">Harga satuan</th>
                 <th className="w-[80px] px-2 py-3 text-right font-semibold">Diskon %</th>
@@ -211,6 +297,9 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
                   const c = calcs[i]
                   const num = (field: 'qty' | 'unitPrice' | 'discountPct') =>
                     `${inputClass} num text-right ${c?.invalid === field || lineError(i, field) ? 'border-bad' : 'border-line-2'}`
+                  const product = productById.get(r.productId)
+                  const lockedAccount = kind === 'purchase' && product?.kind === 'barang'
+                  const account = accounts.data?.items.find((a) => a.id === r.accountId)
                   return (
                     <motion.tr
                       key={r.key}
@@ -221,9 +310,27 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
                       transition={{ duration: 0.18, ease }}
                       className="border-t border-line align-top"
                     >
-                      <td className="min-w-[220px] px-2 py-2 pl-4">
+                      <td className="min-w-[240px] px-2 py-2 pl-4">
+                        {productList.length > 0 && (
+                          <div className="mb-1.5">
+                            <SearchSelect
+                              label={`Produk baris ${i + 1}`}
+                              options={productOptions}
+                              value={r.productId}
+                              onChange={(id) => chooseProduct(r, id)}
+                              placeholder="Produk (opsional)"
+                              clearLabel="Tanpa produk"
+                              invalid={Boolean(lineError(i, 'productId'))}
+                            />
+                            {lineError(i, 'productId') && <p className="mt-1 text-[13px] text-bad">{lineError(i, 'productId')}</p>}
+                          </div>
+                        )}
                         {accounts.isPending ? (
                           <Skeleton className="h-11" />
+                        ) : lockedAccount ? (
+                          <p className="flex min-h-11 items-center rounded-[10px] bg-hover/70 px-3 text-[13px] text-ink-2" title="Barang dibukukan ke akun persediaannya">
+                            {account ? `${account.code} ${account.name}` : 'Akun persediaan produk'}
+                          </p>
                         ) : (
                           <AccountPicker
                             id={`akun-${r.key}`}
@@ -237,11 +344,31 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
                         )}
                         {lineError(i, 'accountId') && <p className="mt-1 text-[13px] text-bad">{lineError(i, 'accountId')}</p>}
                       </td>
-                      <td className="min-w-[180px] px-2 py-2">
+                      <td className="min-w-[200px] px-2 py-2">
                         <input aria-label={`Uraian baris ${i + 1}`} value={r.description} maxLength={300} onChange={(e) => setRow(r.key, { description: e.target.value })} className={`${inputClass} border-line-2`} />
+                        {kind === 'purchase' && projectOptions.length > 0 && (
+                          <div className="mt-1.5">
+                            <SearchSelect
+                              label={`Proyek baris ${i + 1}`}
+                              options={projectOptions}
+                              value={r.projectId}
+                              onChange={(id) => setRow(r.key, { projectId: id })}
+                              placeholder="Proyek (opsional)"
+                              clearLabel="Tanpa proyek"
+                              invalid={Boolean(lineError(i, 'projectId'))}
+                            />
+                            {lineError(i, 'projectId') && <p className="mt-1 text-[13px] text-bad">{lineError(i, 'projectId')}</p>}
+                          </div>
+                        )}
                       </td>
                       <td className="px-2 py-2">
                         <input aria-label={`Qty baris ${i + 1}`} inputMode="decimal" value={r.qty} onChange={(e) => setRow(r.key, { qty: e.target.value })} className={num('qty')} />
+                        {product && (
+                          <span className="mt-1 block text-right text-[12px] text-muted">
+                            {product.unit}
+                            {kind === 'sales' && product.kind === 'barang' && ` · stok ${formatQty(product.stockQty)}`}
+                          </span>
+                        )}
                       </td>
                       <td className="px-2 py-2">
                         <input
@@ -300,7 +427,7 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
           </table>
         </div>
         <div className="flex flex-wrap items-start justify-between gap-6 border-t border-line px-4 py-4">
-          <Button variant="ghost" size="sm" onClick={() => setRows((list) => [...list, blankRow(list[list.length - 1]?.taxCode ?? defaultTax, defaultAccount)])}>
+          <Button variant="ghost" size="sm" onClick={() => setRows((list) => [...list, blankRow(list[list.length - 1]?.taxCode ?? defaultTax, defaultAccount, list[list.length - 1]?.projectId ?? '')])}>
             + Tambah baris
           </Button>
           <dl className="w-full max-w-[380px] text-sm">
@@ -335,7 +462,7 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
 
       {err && <Alert shakeKey={attempt}>{err.message}</Alert>}
 
-      <div className="sticky bottom-0 z-10 -mx-8 flex flex-wrap items-center justify-end gap-2.5 border-t border-line bg-surface/95 px-8 py-4 backdrop-blur">
+      <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap items-center justify-end gap-2.5 border-t border-line bg-surface/95 px-4 py-4 backdrop-blur sm:-mx-8 sm:px-8">
         <span className="mr-auto text-sm text-muted">
           {date && `Tanggal ${formatDate(date)}`}
           {effectiveDue && ` · jatuh tempo ${formatDate(effectiveDue)}`}

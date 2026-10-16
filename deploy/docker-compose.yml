@@ -1,0 +1,64 @@
+# /opt/lajur/docker-compose.yml — dipasang oleh install.sh. Nilai ${...} dibaca dari .env di folder yang sama.
+name: lajur
+services:
+  app:
+    image: ${LAJUR_IMAGE}
+    container_name: lajur-app
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "443:8443"   # HTTPS untuk PC di jaringan kantor
+      - "80:8080"    # dialihkan ke HTTPS; juga menyajikan /ca.crt
+    volumes:
+      - ./data:/var/lib/lajur
+      - ./tls:/etc/lajur/tls:ro
+      - /etc/machine-id:/host/machine-id:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    networks: [internal, egress]
+
+  db:
+    image: postgres:16
+    container_name: lajur-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lajur
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: lajur
+    # Disetel untuk server 8 GB RAM (TDD); sesuaikan bila RAM berbeda.
+    command: >
+      postgres -c shared_buffers=2GB -c effective_cache_size=6GB -c work_mem=32MB
+               -c maintenance_work_mem=512MB -c max_connections=100 -c wal_compression=on
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lajur -d lajur"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [internal]   # tidak membuka port ke host
+
+  # Pembaruan satu klik (PLT-10). Hanya menerima perintah dari container app lewat jaringan
+  # internal bertoken, tidak membuka port, dan hanya menjalankan image dari manifest bertanda tangan.
+  updater:
+    image: ${LAJUR_UPDATER_IMAGE}
+    container_name: lajur-updater
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/lajur:/opt/lajur
+    networks: [internal, egress]
+
+volumes:
+  pgdata: {}
+
+networks:
+  internal:
+    internal: true
+  egress: {}

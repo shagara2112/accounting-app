@@ -110,3 +110,66 @@ sql:
         out: internal/modules/purchase/internal/store
         sql_package: pgx/v5
         emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/modules/inventory/queries
+    gen:
+      go:
+        package: store
+        out: internal/modules/inventory/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/modules/project/queries
+    gen:
+      go:
+        package: store
+        out: internal/modules/project/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/modules/report/queries
+    gen:
+      go:
+        package: store
+        out: internal/modules/report/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/modules/consol/queries
+    gen:
+      go:
+        package: store
+        out: internal/modules/consol/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/modules/admin/queries
+    gen:
+      go:
+        package: store
+        out: internal/modules/admin/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/platform/attach/queries
+    gen:
+      go:
+        package: store
+        out: internal/platform/attach/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/platform/mail/queries
+    gen:
+      go:
+        package: store
+        out: internal/platform/mail/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true

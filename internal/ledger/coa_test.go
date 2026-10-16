@@ -99,8 +99,12 @@ func TestRoleAccountsExistInEveryTemplate(t *testing.T) {
 			postable[a.Code] = !a.Header
 		}
 		for role, info := range roles {
-			if !postable[info.code] {
-				t.Errorf("%s: akun sistem %s (%s) tidak ada", name, role, info.code)
+			found := false
+			for _, code := range info.codes {
+				found = found || postable[code]
+			}
+			if !found {
+				t.Errorf("%s: akun sistem %s (%v) tidak ada", name, role, info.codes)
 			}
 		}
 	}

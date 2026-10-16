@@ -22,10 +22,31 @@ type CashAccount struct {
 	CreatedAt     time.Time
 }
 
+type CashReconItem struct {
+	ReconciliationID uuid.UUID
+	CompanyID        uuid.UUID
+	JournalLineID    uuid.UUID
+}
+
+type CashReconciliation struct {
+	ID               uuid.UUID
+	CompanyID        uuid.UUID
+	AccountID        uuid.UUID
+	StatementDate    civil.Date
+	StatementBalance money.Amount
+	OpeningBalance   money.Amount
+	Status           string
+	CreatedBy        *uuid.UUID
+	CreatedAt        time.Time
+	ClosedBy         *uuid.UUID
+	ClosedAt         *time.Time
+	Version          int32
+}
+
 type CashTransaction struct {
 	ID             uuid.UUID
 	CompanyID      uuid.UUID
-	Number         string
+	Number         *string
 	Kind           string
 	TrxDate        civil.Date
 	CashAccountID  uuid.UUID
@@ -34,12 +55,17 @@ type CashTransaction struct {
 	Memo           string
 	Reference      string
 	Status         string
-	JournalEntryID uuid.UUID
+	JournalEntryID *uuid.UUID
 	CreatedAt      time.Time
 	CreatedBy      *uuid.UUID
 	VoidedAt       *time.Time
 	VoidedBy       *uuid.UUID
 	VoidReason     *string
+	PostedAt       *time.Time
+	PostedBy       *uuid.UUID
+	Version        int32
+	BranchID       *uuid.UUID
+	DepartmentID   *uuid.UUID
 }
 
 type CashTransactionLine struct {
@@ -47,9 +73,51 @@ type CashTransactionLine struct {
 	CompanyID     uuid.UUID
 	TransactionID uuid.UUID
 	LineNo        int16
-	AccountID     uuid.UUID
+	AccountID     *uuid.UUID
 	Amount        money.Amount
 	Memo          string
+	ProjectID     *uuid.UUID
+	DepartmentID  *uuid.UUID
+}
+
+type ConsolAccountMap struct {
+	CompanyID uuid.UUID
+	AccountID uuid.UUID
+	GroupCode string
+	UpdatedAt time.Time
+	UpdatedBy *uuid.UUID
+}
+
+type ConsolGroupAccount struct {
+	Code       string
+	Name       string
+	ParentCode *string
+	Postable   bool
+	Class      int16
+	UpdatedAt  time.Time
+	UpdatedBy  *uuid.UUID
+}
+
+type ConsolIcLink struct {
+	ID              uuid.UUID
+	SourceCompanyID uuid.UUID
+	SourceType      string
+	SourceID        uuid.UUID
+	TargetCompanyID uuid.UUID
+	TargetType      string
+	TargetID        uuid.UUID
+	CreatedAt       time.Time
+	CreatedBy       *uuid.UUID
+}
+
+type CoreBranch struct {
+	ID        uuid.UUID
+	CompanyID uuid.UUID
+	Code      string
+	Name      string
+	Active    bool
+	CreatedAt time.Time
+	Version   int32
 }
 
 type CoreCompany struct {
@@ -65,34 +133,135 @@ type CoreCompany struct {
 	Version   int32
 	Pkp       bool
 	Address   string
+	Logo      []byte
 }
 
 type CoreContact struct {
-	ID               uuid.UUID
-	CompanyID        uuid.UUID
-	Name             string
-	IsCustomer       bool
-	IsSupplier       bool
-	Npwp             *string
-	Nik              *string
-	Nitku            *string
-	Pkp              bool
-	Address          string
-	Email            string
-	Phone            string
-	PaymentTermsDays int32
-	BankName         string
-	BankAccount      string
-	Active           bool
-	CreatedAt        time.Time
-	CreatedBy        *uuid.UUID
-	Version          int32
+	ID                 uuid.UUID
+	CompanyID          uuid.UUID
+	Name               string
+	IsCustomer         bool
+	IsSupplier         bool
+	Npwp               *string
+	Nik                *string
+	Nitku              *string
+	Pkp                bool
+	Address            string
+	Email              string
+	Phone              string
+	PaymentTermsDays   int32
+	BankName           string
+	BankAccount        string
+	Active             bool
+	CreatedAt          time.Time
+	CreatedBy          *uuid.UUID
+	Version            int32
+	LinkedCompanyID    *uuid.UUID
+	IcExpenseAccountID *uuid.UUID
+	IcRevenueAccountID *uuid.UUID
+	CreditLimit        *money.Amount
+	BillingContact     string
+	IcCashAccountID    *uuid.UUID
+}
+
+type CoreDepartment struct {
+	ID        uuid.UUID
+	CompanyID uuid.UUID
+	Code      string
+	Name      string
+	Active    bool
+	CreatedAt time.Time
+	Version   int32
 }
 
 type CoreUserCompanyRole struct {
 	UserID    uuid.UUID
 	CompanyID uuid.UUID
 	RoleID    uuid.UUID
+	BranchIds []uuid.UUID
+}
+
+type InventoryAdjustment struct {
+	ID         uuid.UUID
+	CompanyID  uuid.UUID
+	Number     string
+	Kind       string
+	AdjDate    civil.Date
+	AccountID  uuid.UUID
+	ProjectID  *uuid.UUID
+	Memo       string
+	Status     string
+	CreatedAt  time.Time
+	CreatedBy  *uuid.UUID
+	VoidedAt   *time.Time
+	VoidedBy   *uuid.UUID
+	VoidDate   *civil.Date
+	VoidReason *string
+}
+
+type InventoryAdjustmentLine struct {
+	ID           uuid.UUID
+	CompanyID    uuid.UUID
+	AdjustmentID uuid.UUID
+	LineNo       int16
+	ProductID    uuid.UUID
+	SystemQty    *money.Amount
+	CountedQty   *money.Amount
+	Qty          money.Amount
+	UnitCost     *money.Amount
+	Memo         string
+}
+
+type InventoryMovement struct {
+	ID               uuid.UUID
+	CompanyID        uuid.UUID
+	ProductID        uuid.UUID
+	Seq              *int64
+	MoveDate         civil.Date
+	Qty              money.Amount
+	Valuation        string
+	FixedValue       *money.Amount
+	MirrorOf         *uuid.UUID
+	Value            money.Amount
+	Owned            bool
+	PostedValue      money.Amount
+	CounterAccountID *uuid.UUID
+	ProjectID        *uuid.UUID
+	QtyAfter         money.Amount
+	ValueAfter       money.Amount
+	SourceType       string
+	SourceID         uuid.UUID
+	SourceNumber     string
+	Memo             string
+	CreatedAt        time.Time
+	CostOf           *uuid.UUID
+	BranchID         *uuid.UUID
+	DepartmentID     *uuid.UUID
+}
+
+type InventoryProduct struct {
+	ID                 uuid.UUID
+	CompanyID          uuid.UUID
+	Code               string
+	Name               string
+	Kind               string
+	Unit               string
+	SalePrice          money.Amount
+	PurchasePrice      money.Amount
+	RevenueAccountID   *uuid.UUID
+	ExpenseAccountID   *uuid.UUID
+	InventoryAccountID *uuid.UUID
+	Active             bool
+	CreatedAt          time.Time
+	CreatedBy          *uuid.UUID
+	Version            int32
+}
+
+type InventoryStock struct {
+	CompanyID uuid.UUID
+	ProductID uuid.UUID
+	Qty       money.Amount
+	Value     money.Amount
 }
 
 type LedgerAccount struct {
@@ -137,18 +306,49 @@ type LedgerJournalEntry struct {
 	VoidedAt    *time.Time
 	VoidedBy    *uuid.UUID
 	VoidReason  *string
+	Revision    int32
+	RevisedAt   *time.Time
+	RevisedBy   *uuid.UUID
 }
 
 type LedgerJournalLine struct {
+	ID           uuid.UUID
+	CompanyID    uuid.UUID
+	EntryID      uuid.UUID
+	EntryDate    civil.Date
+	LineNo       int16
+	AccountID    uuid.UUID
+	Debit        money.Amount
+	Credit       money.Amount
+	Memo         string
+	ProjectID    *uuid.UUID
+	BranchID     *uuid.UUID
+	DepartmentID *uuid.UUID
+}
+
+type LedgerJournalRevision struct {
 	ID        uuid.UUID
 	CompanyID uuid.UUID
 	EntryID   uuid.UUID
+	Revision  int32
 	EntryDate civil.Date
-	LineNo    int16
-	AccountID uuid.UUID
-	Debit     money.Amount
-	Credit    money.Amount
 	Memo      string
+	Total     money.Amount
+	Lines     []byte
+	Reason    string
+	RevisedAt time.Time
+	RevisedBy *uuid.UUID
+}
+
+type LedgerNumberFormat struct {
+	CompanyID uuid.UUID
+	Series    string
+	Prefix    string
+	Reset     string
+	Digits    int16
+	PerBranch bool
+	UpdatedBy *uuid.UUID
+	UpdatedAt time.Time
 }
 
 type LedgerPeriod struct {
@@ -158,6 +358,55 @@ type LedgerPeriod struct {
 	ChangedAt *time.Time
 	ChangedBy *uuid.UUID
 	Reason    *string
+}
+
+type LedgerProjectBalance struct {
+	CompanyID uuid.UUID
+	ProjectID uuid.UUID
+	AccountID uuid.UUID
+	Month     civil.Date
+	Debit     money.Amount
+	Credit    money.Amount
+}
+
+type LedgerRecurringJournal struct {
+	ID            uuid.UUID
+	CompanyID     uuid.UUID
+	Name          string
+	Kind          string
+	Memo          string
+	AutoReverse   bool
+	DayOfMonth    int16
+	NextDate      civil.Date
+	EndDate       *civil.Date
+	Active        bool
+	LastError     *string
+	LastRunAt     *time.Time
+	SourceEntryID *uuid.UUID
+	CreatedBy     *uuid.UUID
+	CreatedAt     time.Time
+	Version       int32
+}
+
+type LedgerRecurringLine struct {
+	ID           uuid.UUID
+	CompanyID    uuid.UUID
+	RecurringID  uuid.UUID
+	LineNo       int16
+	AccountID    uuid.UUID
+	Debit        money.Amount
+	Credit       money.Amount
+	Memo         string
+	ProjectID    *uuid.UUID
+	BranchID     *uuid.UUID
+	DepartmentID *uuid.UUID
+}
+
+type LedgerRecurringRun struct {
+	RecurringID uuid.UUID
+	RunDate     civil.Date
+	EntryID     uuid.UUID
+	CreatedAt   time.Time
 }
 
 type LedgerSequence struct {
@@ -172,6 +421,22 @@ type LedgerSetting struct {
 	FiscalYearStartMonth int16
 	UpdatedAt            time.Time
 	UpdatedBy            *uuid.UUID
+}
+
+type PlatformAttachment struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	ObjectType  string
+	ObjectID    uuid.UUID
+	FileName    string
+	Mime        string
+	SizeBytes   int64
+	Sha256      string
+	StoragePath string
+	UploadedBy  *uuid.UUID
+	UploadedAt  time.Time
+	DeletedAt   *time.Time
+	DeletedBy   *uuid.UUID
 }
 
 type PlatformAuditLog struct {
@@ -189,6 +454,37 @@ type PlatformAuditLog struct {
 	Hash       []byte
 }
 
+type PlatformBackup struct {
+	ID         uuid.UUID
+	Kind       string
+	Status     string
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	FileName   *string
+	SizeBytes  *int64
+	Sha256     *string
+	KeyID      *string
+	Copies     []byte
+	Error      *string
+	Pruned     bool
+	CreatedBy  *uuid.UUID
+}
+
+type PlatformBackupSetting struct {
+	Singleton   bool
+	Hour        int16
+	Keep        int32
+	CopyDir     *string
+	S3Endpoint  *string
+	S3Region    *string
+	S3Bucket    *string
+	S3Prefix    *string
+	S3AccessKey *string
+	S3Secret    []byte
+	Version     int32
+	UpdatedAt   time.Time
+}
+
 type PlatformIdempotencyKey struct {
 	UserID      uuid.UUID
 	Key         string
@@ -199,6 +495,78 @@ type PlatformIdempotencyKey struct {
 	CreatedAt   time.Time
 }
 
+type PlatformInstallation struct {
+	ID        uuid.UUID
+	Singleton bool
+	CreatedAt time.Time
+	SetupAt   *time.Time
+}
+
+type PlatformLicense struct {
+	Singleton    bool
+	ConsoleUrl   string
+	ClientID     string
+	LicenseKey   []byte
+	Token        *string
+	CheckedAt    *time.Time
+	AttemptedAt  *time.Time
+	ErrorCode    *string
+	ErrorMessage *string
+	HighWater    time.Time
+	UpdatedAt    time.Time
+}
+
+type PlatformLoginChallenge struct {
+	IDHash    []byte
+	UserID    uuid.UUID
+	Ip        *string
+	ExpiresAt time.Time
+	Attempts  int32
+}
+
+type PlatformMailOutbox struct {
+	ID             uuid.UUID
+	CompanyID      *uuid.UUID
+	Kind           string
+	DedupeKey      *string
+	ToAddrs        []string
+	CcAddrs        []string
+	Subject        string
+	BodyText       string
+	AttachmentName *string
+	AttachmentMime *string
+	Attachment     []byte
+	Status         string
+	Attempts       int32
+	NextAttemptAt  time.Time
+	LastError      *string
+	CreatedBy      *uuid.UUID
+	CreatedAt      time.Time
+	SentAt         *time.Time
+}
+
+type PlatformMailSetting struct {
+	Singleton bool
+	Enabled   bool
+	Host      string
+	Port      int32
+	Security  string
+	Username  string
+	Password  []byte
+	FromAddr  string
+	FromName  string
+	Version   int32
+	UpdatedAt time.Time
+}
+
+type PlatformRestoreTest struct {
+	ID       uuid.UUID
+	BackupID *uuid.UUID
+	TestedAt time.Time
+	Ok       bool
+	Detail   string
+}
+
 type PlatformRole struct {
 	ID          uuid.UUID
 	Key         string
@@ -206,6 +574,7 @@ type PlatformRole struct {
 	Builtin     bool
 	Permissions []string
 	CreatedAt   time.Time
+	Version     int32
 }
 
 type PlatformSession struct {
@@ -217,18 +586,53 @@ type PlatformSession struct {
 	ExpiresAt       time.Time
 	Ip              *string
 	UserAgent       *string
+	MfaSetup        bool
 }
 
 type PlatformUser struct {
-	ID           uuid.UUID
-	Email        string
-	Name         string
-	PasswordHash string
-	Active       bool
-	FailedLogins int32
-	LockedUntil  *time.Time
-	CreatedAt    time.Time
-	Version      int32
+	ID            uuid.UUID
+	Email         string
+	Name          string
+	PasswordHash  string
+	Active        bool
+	FailedLogins  int32
+	LockedUntil   *time.Time
+	CreatedAt     time.Time
+	Version       int32
+	TotpSecret    []byte
+	TotpEnabledAt *time.Time
+	TotpLastStep  int64
+	LastLoginAt   *time.Time
+}
+
+type ProjectBudgetLine struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	ProjectID   uuid.UUID
+	LineNo      int16
+	AccountID   uuid.UUID
+	Description string
+	Amount      money.Amount
+}
+
+type ProjectProject struct {
+	ID               uuid.UUID
+	CompanyID        uuid.UUID
+	Code             string
+	Name             string
+	CustomerID       *uuid.UUID
+	ContractValue    money.Amount
+	DpPct            money.Amount
+	RetentionPct     money.Amount
+	PphCode          *string
+	RevenueAccountID *uuid.UUID
+	StartDate        *civil.Date
+	EndDate          *civil.Date
+	Status           string
+	Notes            string
+	CreatedAt        time.Time
+	CreatedBy        *uuid.UUID
+	Version          int32
 }
 
 type PurchaseBill struct {
@@ -259,6 +663,9 @@ type PurchaseBill struct {
 	VoidedBy          *uuid.UUID
 	VoidReason        *string
 	Version           int32
+	Opening           bool
+	BranchID          *uuid.UUID
+	DepartmentID      *uuid.UUID
 }
 
 type PurchaseBillLine struct {
@@ -276,6 +683,54 @@ type PurchaseBillLine struct {
 	TaxCode     string
 	OtherDpp    money.Amount
 	Vat         money.Amount
+	ProductID   *uuid.UUID
+	ProjectID   *uuid.UUID
+}
+
+type PurchaseDebitNote struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	Status         string
+	SupplierID     uuid.UUID
+	BillID         uuid.UUID
+	NoteDate       civil.Date
+	Memo           string
+	Subtotal       money.Amount
+	Discount       money.Amount
+	Dpp            money.Amount
+	OtherDpp       money.Amount
+	Vat            money.Amount
+	Withholding    money.Amount
+	Total          money.Amount
+	Payable        money.Amount
+	Applied        money.Amount
+	JournalEntryID uuid.UUID
+	CreatedAt      time.Time
+	CreatedBy      *uuid.UUID
+	VoidedAt       *time.Time
+	VoidedBy       *uuid.UUID
+	VoidReason     *string
+}
+
+type PurchaseDebitNoteLine struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	DebitNoteID uuid.UUID
+	LineNo      int16
+	BillLineID  uuid.UUID
+	Description string
+	AccountID   uuid.UUID
+	ProductID   *uuid.UUID
+	ProjectID   *uuid.UUID
+	Qty         money.Amount
+	UnitPrice   money.Amount
+	DiscountPct money.Amount
+	Discount    money.Amount
+	Net         money.Amount
+	TaxCode     string
+	OtherDpp    money.Amount
+	Vat         money.Amount
 }
 
 type PurchasePayment struct {
@@ -284,7 +739,7 @@ type PurchasePayment struct {
 	Number         string
 	SupplierID     uuid.UUID
 	PaymentDate    civil.Date
-	CashAccountID  uuid.UUID
+	CashAccountID  *uuid.UUID
 	Amount         money.Amount
 	Memo           string
 	Status         string
@@ -294,6 +749,9 @@ type PurchasePayment struct {
 	VoidedAt       *time.Time
 	VoidedBy       *uuid.UUID
 	VoidReason     *string
+	Kind           string
+	Advance        money.Amount
+	FromAdvance    money.Amount
 }
 
 type PurchasePaymentAllocation struct {
@@ -302,6 +760,95 @@ type PurchasePaymentAllocation struct {
 	PaymentID uuid.UUID
 	BillID    uuid.UUID
 	Amount    money.Amount
+}
+
+type SalesCreditNote struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	Status         string
+	CustomerID     uuid.UUID
+	InvoiceID      uuid.UUID
+	NoteDate       civil.Date
+	Memo           string
+	Subtotal       money.Amount
+	Discount       money.Amount
+	Dpp            money.Amount
+	OtherDpp       money.Amount
+	Vat            money.Amount
+	Total          money.Amount
+	Applied        money.Amount
+	JournalEntryID uuid.UUID
+	CreatedAt      time.Time
+	CreatedBy      *uuid.UUID
+	VoidedAt       *time.Time
+	VoidedBy       *uuid.UUID
+	VoidReason     *string
+}
+
+type SalesCreditNoteLine struct {
+	ID            uuid.UUID
+	CompanyID     uuid.UUID
+	CreditNoteID  uuid.UUID
+	LineNo        int16
+	InvoiceLineID uuid.UUID
+	Description   string
+	AccountID     uuid.UUID
+	ProductID     *uuid.UUID
+	Qty           money.Amount
+	UnitPrice     money.Amount
+	DiscountPct   money.Amount
+	Discount      money.Amount
+	Net           money.Amount
+	TaxCode       string
+	OtherDpp      money.Amount
+	Vat           money.Amount
+	Restock       bool
+}
+
+type SalesDailySale struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	Status         string
+	SaleDate       civil.Date
+	Store          string
+	Memo           string
+	Dpp            money.Amount
+	OtherDpp       money.Amount
+	Vat            money.Amount
+	Total          money.Amount
+	JournalEntryID uuid.UUID
+	CreatedAt      time.Time
+	CreatedBy      *uuid.UUID
+	VoidedAt       *time.Time
+	VoidedBy       *uuid.UUID
+	VoidReason     *string
+	BranchID       *uuid.UUID
+}
+
+type SalesDailySaleLine struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	DailySaleID uuid.UUID
+	LineNo      int16
+	ProductID   *uuid.UUID
+	Description string
+	AccountID   uuid.UUID
+	Qty         money.Amount
+	Amount      money.Amount
+	TaxCode     string
+	Net         money.Amount
+	OtherDpp    money.Amount
+	Vat         money.Amount
+}
+
+type SalesDailySalePayment struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	DailySaleID uuid.UUID
+	AccountID   uuid.UUID
+	Amount      money.Amount
 }
 
 type SalesInvoice struct {
@@ -328,23 +875,32 @@ type SalesInvoice struct {
 	VoidedBy       *uuid.UUID
 	VoidReason     *string
 	Version        int32
+	Kind           string
+	ProjectID      *uuid.UUID
+	ProgressPct    *money.Amount
+	Retention      money.Amount
+	Receivable     *money.Amount
+	BranchID       *uuid.UUID
+	DepartmentID   *uuid.UUID
 }
 
 type SalesInvoiceLine struct {
-	ID          uuid.UUID
-	CompanyID   uuid.UUID
-	InvoiceID   uuid.UUID
-	LineNo      int16
-	Description string
-	AccountID   uuid.UUID
-	Qty         money.Amount
-	UnitPrice   money.Amount
-	DiscountPct money.Amount
-	Discount    money.Amount
-	Net         money.Amount
-	TaxCode     string
-	OtherDpp    money.Amount
-	Vat         money.Amount
+	ID            uuid.UUID
+	CompanyID     uuid.UUID
+	InvoiceID     uuid.UUID
+	LineNo        int16
+	Description   string
+	AccountID     uuid.UUID
+	Qty           money.Amount
+	UnitPrice     money.Amount
+	DiscountPct   money.Amount
+	Discount      money.Amount
+	Net           money.Amount
+	TaxCode       string
+	OtherDpp      money.Amount
+	Vat           money.Amount
+	ProductID     *uuid.UUID
+	DiscountFixed bool
 }
 
 type SalesReceipt struct {
@@ -353,7 +909,7 @@ type SalesReceipt struct {
 	Number         string
 	CustomerID     uuid.UUID
 	ReceiptDate    civil.Date
-	CashAccountID  uuid.UUID
+	CashAccountID  *uuid.UUID
 	Amount         money.Amount
 	Memo           string
 	Status         string
@@ -363,6 +919,9 @@ type SalesReceipt struct {
 	VoidedAt       *time.Time
 	VoidedBy       *uuid.UUID
 	VoidReason     *string
+	Kind           string
+	Advance        money.Amount
+	FromAdvance    money.Amount
 }
 
 type SalesReceiptAllocation struct {
