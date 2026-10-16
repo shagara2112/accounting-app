@@ -157,3 +157,72 @@ func (a *Amount) ScanNumeric(v pgtype.Numeric) error {
 func (a Amount) NumericValue() (pgtype.Numeric, error) {
 	return pgtype.Numeric{Int: new(big.Int).Set(a.units()), Exp: -Scale, Valid: true}, nil
 }
+
+// Rounding menentukan cara membulatkan hasil perkalian.
+type Rounding int
+
+const (
+	HalfUp Rounding = iota // ≥ 0,5 dibulatkan menjauhi nol; dipakai untuk harga dan diskon
+	Down                   // dipotong ke arah nol; dipakai untuk PPN dan PPh terutang
+)
+
+var one = big.NewInt(1)
+
+func pow10(n int) *big.Int { return new(big.Int).Exp(ten, big.NewInt(int64(n)), nil) }
+
+// round membagi n dengan d lalu membulatkan sesuai mode.
+func round(n, d *big.Int, mode Rounding) *big.Int {
+	q, r := new(big.Int).QuoRem(n, d, new(big.Int))
+	if mode == HalfUp && r.Sign() != 0 {
+		twice := new(big.Int).Lsh(new(big.Int).Abs(r), 1)
+		if twice.Cmp(new(big.Int).Abs(d)) >= 0 {
+			if (n.Sign() < 0) != (d.Sign() < 0) {
+				q.Sub(q, one)
+			} else {
+				q.Add(q, one)
+			}
+		}
+	}
+	return q
+}
+
+func checkPlaces(places int) {
+	if places < 0 || places > Scale {
+		panic(fmt.Sprintf("money: places %d di luar 0–%d", places, Scale))
+	}
+}
+
+// MulFrac mengalikan a dengan num/den, lalu membulatkan ke places angka desimal (0–4).
+// Contoh: PPN non-mewah = dpp.MulFrac(11×1200, 12×10000, 0, Down).
+func (a Amount) MulFrac(num, den int64, places int, mode Rounding) Amount {
+	checkPlaces(places)
+	if den <= 0 {
+		panic("money: pembagi harus positif")
+	}
+	step := pow10(Scale - places)
+	n := new(big.Int).Mul(a.units(), big.NewInt(num))
+	q := round(n, new(big.Int).Mul(big.NewInt(den), step), mode)
+	return Amount{u: q.Mul(q, step)}
+}
+
+// Mul mengalikan dua nilai berskala 4 (mis. kuantitas × harga satuan), lalu membulatkan.
+func (a Amount) Mul(b Amount, places int, mode Rounding) Amount {
+	checkPlaces(places)
+	step := pow10(Scale - places)
+	n := new(big.Int).Mul(a.units(), b.units())
+	q := round(n, new(big.Int).Mul(unit, step), mode)
+	return Amount{u: q.Mul(q, step)}
+}
+
+// MulDiv menghitung a × num ÷ den lalu membulatkan ke places angka desimal (0–4), tanpa
+// pembulatan antara. Dipakai untuk biaya rata-rata: nilai stok × qty keluar ÷ qty stok.
+func (a Amount) MulDiv(num, den Amount, places int, mode Rounding) Amount {
+	checkPlaces(places)
+	if den.Sign() == 0 {
+		panic("money: pembagi nol")
+	}
+	step := pow10(Scale - places)
+	n := new(big.Int).Mul(a.units(), num.units())
+	q := round(n, new(big.Int).Mul(den.units(), step), mode)
+	return Amount{u: q.Mul(q, step)}
+}

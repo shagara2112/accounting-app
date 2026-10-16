@@ -88,3 +88,24 @@ func TestClassFromCode(t *testing.T) {
 		}
 	}
 }
+
+// Akun sistem yang dipakai aturan posting modul harus ada sebagai akun detail di setiap
+// template industri, supaya PT baru langsung bisa memposting faktur, tagihan, dan pelunasan.
+func TestRoleAccountsExistInEveryTemplate(t *testing.T) {
+	for _, name := range []string{"jasa", "konstruksi", "retail"} {
+		accounts, _ := Template(name)
+		postable := map[string]bool{}
+		for _, a := range accounts {
+			postable[a.Code] = !a.Header
+		}
+		for role, info := range roles {
+			found := false
+			for _, code := range info.codes {
+				found = found || postable[code]
+			}
+			if !found {
+				t.Errorf("%s: akun sistem %s (%v) tidak ada", name, role, info.codes)
+			}
+		}
+	}
+}

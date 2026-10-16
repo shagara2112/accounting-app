@@ -38,12 +38,23 @@ func Routes(svc Service) []api.Route {
 		idempotent(write(http.MethodPost, "/api/v1/adjustments", rbac.AdjustmentPost, h.postAdjustment)),
 		read(http.MethodGet, "/api/v1/journals/{id}", rbac.LedgerView, h.entry),
 		idempotent(write(http.MethodPost, "/api/v1/journals/{id}/void", rbac.JournalVoid, h.void)),
+		write(http.MethodPut, "/api/v1/journals/{id}", rbac.JournalEdit, h.revise),
 
 		read(http.MethodGet, "/api/v1/ledger/worksheet", rbac.LedgerView, h.worksheet),
 		read(http.MethodGet, "/api/v1/ledger/periods", rbac.LedgerView, h.periods),
 		write(http.MethodPost, "/api/v1/ledger/periods/{month}/status", rbac.PeriodManage, h.setPeriodStatus),
 		read(http.MethodGet, "/api/v1/ledger/settings", rbac.LedgerView, h.settings),
 		write(http.MethodPut, "/api/v1/ledger/settings", rbac.PeriodManage, h.updateSettings),
+
+		read(http.MethodGet, "/api/v1/ledger/number-formats", rbac.LedgerView, h.numberFormats),
+		write(http.MethodPut, "/api/v1/ledger/number-formats/{series}", rbac.PeriodManage, h.saveNumberFormat),
+
+		read(http.MethodGet, "/api/v1/ledger/recurring", rbac.LedgerView, h.recurringList),
+		idempotent(write(http.MethodPost, "/api/v1/ledger/recurring", rbac.JournalCreate, h.createRecurring)),
+		read(http.MethodGet, "/api/v1/ledger/recurring/{id}", rbac.LedgerView, h.recurring),
+		write(http.MethodPut, "/api/v1/ledger/recurring/{id}", rbac.JournalCreate, h.updateRecurring),
+		write(http.MethodDelete, "/api/v1/ledger/recurring/{id}", rbac.JournalCreate, h.deleteRecurring),
+		idempotent(write(http.MethodPost, "/api/v1/ledger/recurring/{id}/run", rbac.JournalCreate, h.runRecurring)),
 	}
 }
 
@@ -201,6 +212,34 @@ func (h handlers) post(w http.ResponseWriter, r *http.Request, kind Kind) error 
 	return httpx.WriteJSON(w, http.StatusCreated, out)
 }
 
+// revise mengubah jurnal manual. Jurnal penyesuaian juga butuh izin memposting penyesuaian,
+// sama seperti saat membuatnya.
+func (h handlers) revise(w http.ResponseWriter, r *http.Request) error {
+	id, err := api.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	var in ReviseInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	e, err := h.svc.Entry(r.Context(), company(r), id)
+	if err != nil {
+		return err
+	}
+	if e.Kind == Adjustment && !api.Can(r, rbac.AdjustmentPost) {
+		return httpx.Forbidden("forbidden", "Anda tidak punya izin mengubah jurnal penyesuaian.")
+	}
+	if _, err := h.svc.Revise(r.Context(), company(r), id, in, actor(r)); err != nil {
+		return err
+	}
+	out, err := h.svc.Entry(r.Context(), company(r), id)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
+}
+
 func (h handlers) entries(w http.ResponseWriter, r *http.Request) error {
 	t := today()
 	from, err := dateParam(r, "from", t.MonthStart())
@@ -322,4 +361,102 @@ func (h handlers) updateSettings(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+func (h handlers) numberFormats(w http.ResponseWriter, r *http.Request) error {
+	list, err := h.svc.NumberFormats(r.Context(), company(r), today())
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h handlers) saveNumberFormat(w http.ResponseWriter, r *http.Request) error {
+	var in NumberFormat
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	in.Series = chi.URLParam(r, "series")
+	f, err := h.svc.SaveNumberFormat(r.Context(), company(r), in, actor(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, f)
+}
+
+func (h handlers) recurringList(w http.ResponseWriter, r *http.Request) error {
+	list, err := h.svc.RecurringJournals(r.Context(), company(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h handlers) recurring(w http.ResponseWriter, r *http.Request) error {
+	id, err := api.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	rc, err := h.svc.RecurringJournal(r.Context(), company(r), id)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, rc)
+}
+
+func (h handlers) createRecurring(w http.ResponseWriter, r *http.Request) error {
+	var in RecurringInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	rc, err := h.svc.CreateRecurring(r.Context(), company(r), in, actor(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusCreated, rc)
+}
+
+func (h handlers) updateRecurring(w http.ResponseWriter, r *http.Request) error {
+	id, err := api.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	var in RecurringInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	rc, err := h.svc.UpdateRecurring(r.Context(), company(r), id, in, actor(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, rc)
+}
+
+func (h handlers) deleteRecurring(w http.ResponseWriter, r *http.Request) error {
+	id, err := api.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	if err := h.svc.DeleteRecurring(r.Context(), company(r), id, actor(r)); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// runRecurring memposting sekarang semua jadwal yang sudah jatuh tempo.
+func (h handlers) runRecurring(w http.ResponseWriter, r *http.Request) error {
+	id, err := api.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	n, err := h.svc.RunRecurring(r.Context(), company(r), id, today(), actor(r))
+	if err != nil {
+		return err
+	}
+	rc, err := h.svc.RecurringJournal(r.Context(), company(r), id)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"posted": n, "recurring": rc})
 }

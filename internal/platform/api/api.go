@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lajur/internal/platform/auth"
+	"lajur/internal/platform/civil"
 	"lajur/internal/platform/db"
 	"lajur/internal/platform/httpx"
 	"lajur/internal/platform/license"
@@ -46,6 +47,17 @@ type Route struct {
 	// Idempotent: POST dokumen keuangan. Wajib header Idempotency-Key; pengiriman ulang
 	// dengan kunci yang sama mendapat respons pertama, bukan dokumen kedua.
 	Idempotent bool
+	// AllowMFASetup: route boleh dipakai sesi yang masih wajib memasang 2FA
+	// (profil, logout, pemasangan 2FA). Route lain menolak sesi seperti itu.
+	AllowMFASetup bool
+	// Stream: respons ditulis langsung tanpa transaksi dan tanpa ditahan di memori,
+	// untuk unduhan berkas besar seperti file backup. Hanya untuk GET.
+	Stream bool
+	// MaxBody: batas body route idempoten (default 1 MB), mis. untuk unggahan berkas impor.
+	MaxBody int64
+	// WholeCompany: tampilan seluruh PT (buku besar, neraca, pajak, konsolidasi) yang ditolak
+	// untuk pengguna yang dibatasi ke cabang tertentu (PLT-12).
+	WholeCompany bool
 }
 
 type Deps struct {
@@ -72,6 +84,9 @@ func (a *API) Add(rt Route) {
 	}
 	if rt.Access == Permission && rt.Perm == "" {
 		panic(fmt.Sprintf("route %s %s wajib menyatakan izin", rt.Method, rt.Path))
+	}
+	if rt.Stream && rt.Method != http.MethodGet {
+		panic(fmt.Sprintf("route %s %s: stream hanya untuk GET", rt.Method, rt.Path))
 	}
 	if rt.Idempotent && (rt.Method != http.MethodPost || rt.Access == Public) {
 		panic(fmt.Sprintf("route %s %s: idempotensi hanya untuk POST yang butuh sesi", rt.Method, rt.Path))
@@ -115,6 +130,9 @@ func (a *API) serve(w http.ResponseWriter, r *http.Request, rt Route) error {
 			return err
 		}
 		ctx = auth.WithSession(ctx, sess)
+		if sess.MFASetup && !rt.AllowMFASetup {
+			return httpx.Forbidden("auth.mfa_setup_required", "Pasang 2FA dulu sebelum memakai Lajur.")
+		}
 
 		if rt.Access == Permission {
 			scope, err := a.scope(r, sess)
@@ -124,10 +142,16 @@ func (a *API) serve(w http.ResponseWriter, r *http.Request, rt Route) error {
 			if !scope.Role.Perms.Has(rt.Perm) {
 				return httpx.Forbidden("rbac.denied", "Peran Anda di PT ini tidak mengizinkan aksi ini.")
 			}
+			if rt.WholeCompany && scope.Role.Restricted() {
+				return httpx.Forbidden("branch.restricted", "Akses Anda dibatasi ke cabang tertentu, sehingga tampilan seluruh PT ini tidak tersedia. Gunakan laporan laba rugi per cabang.")
+			}
 			ctx = rbac.WithScope(ctx, scope)
 		}
 	}
 
+	if rt.Stream {
+		return rt.Handle(w, r.WithContext(ctx))
+	}
 	opts := pgx.TxOptions{}
 	if r.Method == http.MethodGet {
 		opts.AccessMode = pgx.ReadOnly
@@ -154,8 +178,16 @@ func (a *API) idempotent(w *httpx.BufferedWriter, r *http.Request, rt Route) err
 	if len(key) < 8 || len(key) > 100 {
 		return httpx.BadRequest("idempotency.key_required", "Header Idempotency-Key wajib diisi (8–100 karakter).")
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 1<<20))
+	limit := rt.MaxBody
+	if limit <= 0 {
+		limit = 1 << 20
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, limit))
 	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			return httpx.Unprocessable("request.too_large", fmt.Sprintf("Ukuran kiriman maksimal %d MB.", limit>>20))
+		}
 		return httpx.BadRequest("request.body", "Body request tidak bisa dibaca.")
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
@@ -226,4 +258,66 @@ func sameOrigin(r *http.Request) bool {
 	}
 	u, err := url.Parse(origin)
 	return err == nil && u.Host == r.Host
+}
+
+// CompanyID adalah PT aktif request ini, yang sudah diperiksa terhadap hak akses sesi.
+func CompanyID(r *http.Request) uuid.UUID {
+	s, _ := rbac.ScopeFrom(r.Context())
+	return s.CompanyID
+}
+
+// Branches adalah cabang yang boleh diakses pengguna di PT aktif (PLT-12); kosong = semua.
+func Branches(r *http.Request) []uuid.UUID {
+	s, _ := rbac.ScopeFrom(r.Context())
+	return s.Role.Branches
+}
+
+// WholeCompany menolak pengguna yang aksesnya dibatasi ke cabang tertentu dari tampilan yang
+// mencakup seluruh PT (buku besar, neraca, arus kas).
+func WholeCompany(r *http.Request) error {
+	if s, _ := rbac.ScopeFrom(r.Context()); s.Role.Restricted() {
+		return httpx.Forbidden("branch.restricted", "Akses Anda dibatasi ke cabang tertentu, sehingga tampilan seluruh PT ini tidak tersedia. Gunakan laporan laba rugi per cabang.")
+	}
+	return nil
+}
+
+// Can memeriksa izin tambahan di dalam handler, mis. menghapus draf milik orang lain.
+func Can(r *http.Request, perm string) bool {
+	s, ok := rbac.ScopeFrom(r.Context())
+	return ok && s.Role.Perms.Has(perm)
+}
+
+// PathID membaca parameter UUID dari path; nilai yang tidak valid dijawab 404.
+func PathID(r *http.Request, name string) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, name))
+	if err != nil {
+		return uuid.Nil, httpx.NotFound("not_found", "Data tidak ditemukan.")
+	}
+	return id, nil
+}
+
+// DateQuery membaca parameter query yyyy-mm-dd; kosong menghasilkan def.
+func DateQuery(r *http.Request, name string, def civil.Date) (civil.Date, error) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return def, nil
+	}
+	d, err := civil.Parse(v)
+	if err != nil {
+		return civil.Date{}, httpx.BadRequest("request.query", err.Error())
+	}
+	return d, nil
+}
+
+// UUIDQuery membaca parameter query UUID opsional.
+func UUIDQuery(r *http.Request, name string) (*uuid.UUID, error) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(v)
+	if err != nil {
+		return nil, httpx.BadRequest("request.query", "Parameter "+name+" tidak valid.")
+	}
+	return &id, nil
 }

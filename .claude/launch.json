@@ -4,8 +4,21 @@
     {
       "name": "lajur",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "set -a && source .env && exec ./bin/lajur serve"],
-      "port": 8080
+      "runtimeArgs": [
+        "-c",
+        "set -a && source .env && LAJUR_LISTEN=:${PORT:-8080} exec ./bin/lajur serve"
+      ],
+      "port": 8080,
+      "autoPort": true
+    },
+    {
+      "name": "lajur-verify",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "set -a && source .env && LAJUR_LISTEN=:8081 exec ./bin/lajur serve"
+      ],
+      "port": 8081
     }
   ]
 }

@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+// trustDevKeys: build pengembangan mempercayai kunci License Console tiruan (keys/dev).
+const trustDevKeys = true
+
+// DevBuild: build pengembangan (boleh memakai License Console tiruan di http://localhost).
+const DevBuild = true
+
 // local mensimulasikan lisensi untuk pengembangan, seperti provider LOCAL di pos-app.
 // Build rilis (tag release) tidak menyertakan file ini, sehingga mode local ditolak.
 type local struct {

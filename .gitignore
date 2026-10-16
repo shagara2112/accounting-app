@@ -1,5 +1,7 @@
 /bin/
+/lajur
 /.env
+/.data/
 *.test
 .DS_Store
 
@@ -7,3 +9,6 @@ web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
 *.tsbuildinfo
+
+# Kunci privat pengembangan (License Console tiruan dan manifest pembaruan) tidak masuk git.
+deploy/dev/*.pem

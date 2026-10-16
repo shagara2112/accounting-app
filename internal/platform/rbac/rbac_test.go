@@ -63,3 +63,21 @@ func TestBuiltinRolesUseCatalogOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogCoversEveryPermissionOnce(t *testing.T) {
+	seen := map[string]int{}
+	for _, g := range Catalog {
+		for _, p := range g.Perms {
+			seen[p.Key]++
+		}
+	}
+	for _, p := range All {
+		if seen[p] != 1 {
+			t.Errorf("izin %s muncul %d kali di Catalog", p, seen[p])
+		}
+		delete(seen, p)
+	}
+	for p := range seen {
+		t.Errorf("izin %s ada di Catalog tetapi tidak di All", p)
+	}
+}

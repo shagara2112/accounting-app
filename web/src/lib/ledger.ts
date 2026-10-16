@@ -1,4 +1,5 @@
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
+import { useInvalidateCompany } from './invalidate'
 import {
   api,
   query,
@@ -20,13 +21,8 @@ import {
 // semua tampilan PT itu setelah posting, void, atau tutup buku.
 const key = (companyId: string | null, ...rest: unknown[]) => ['ledger', companyId, ...rest]
 
-function useInvalidateLedger(companyId: string | null) {
-  const qc = useQueryClient()
-  return () => {
-    void qc.invalidateQueries({ queryKey: ['ledger', companyId] })
-    void qc.invalidateQueries({ queryKey: ['audit', companyId] })
-  }
-}
+// Posting jurnal juga mengubah saldo kas dan laporan modul lain, jadi semua data PT disegarkan.
+const useInvalidateLedger = useInvalidateCompany
 
 export function useAccounts(companyId: string | null) {
   return useQuery({
@@ -92,6 +88,17 @@ export function usePostJournal(companyId: string | null) {
   return useMutation({
     mutationFn: ({ kind, input, idempotencyKey }: { kind: 'umum' | 'penyesuaian'; input: JournalInput; idempotencyKey: string }) =>
       api<Posted>('POST', kind === 'umum' ? '/journals' : '/adjustments', input, { idempotencyKey }),
+    onSuccess: invalidate,
+  })
+}
+
+export type ReviseInput = { date: string; memo: string; lines: LineInput[]; reason: string; revision: number }
+
+/** Mengubah jurnal manual yang periodenya belum dikunci; versi lama disimpan di riwayat. */
+export function useReviseJournal(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({
+    mutationFn: ({ id, ...input }: ReviseInput & { id: string }) => api<EntryDetail>('PUT', `/journals/${id}`, input),
     onSuccess: invalidate,
   })
 }

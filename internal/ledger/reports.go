@@ -65,6 +65,25 @@ func (l *ledger) Entries(ctx context.Context, companyID uuid.UUID, f EntryFilter
 	return out, nil
 }
 
+func (l *ledger) EntriesBySource(ctx context.Context, companyID uuid.UUID, sourceType string) ([]EntrySummary, error) {
+	rows, err := l.q(ctx).EntriesBySource(ctx, store.EntriesBySourceParams{CompanyID: companyID, SourceType: sourceType})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EntrySummary, len(rows))
+	for i, r := range rows {
+		out[i] = EntrySummary{
+			ID: r.ID, Number: r.Number, Kind: Kind(r.Kind), Date: r.EntryDate, Memo: r.Memo, SourceType: r.SourceType,
+			SourceID: r.SourceID, Total: r.Total, Status: r.Status, ReversalOf: r.ReversalOf,
+		}
+	}
+	return out, nil
+}
+
+func (l *ledger) AccountNet(ctx context.Context, companyID, accountID uuid.UUID) (money.Amount, error) {
+	return l.q(ctx).AccountNetAllTime(ctx, store.AccountNetAllTimeParams{CompanyID: companyID, AccountID: accountID})
+}
+
 func encodeCursor(d civil.Date, id uuid.UUID) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(d.String() + "|" + id.String()))
 }
@@ -99,11 +118,18 @@ func (l *ledger) Entry(ctx context.Context, companyID, entryID uuid.UUID) (Entry
 	out := EntryDetail{
 		EntrySummary: EntrySummary{
 			ID: e.ID, Number: e.Number, Kind: Kind(e.Kind), Date: e.EntryDate, Memo: e.Memo,
-			SourceType: e.SourceType, Total: e.Total, Status: e.Status, ReversalOf: e.ReversalOf,
+			SourceType: e.SourceType, SourceID: e.SourceID, Total: e.Total, Status: e.Status, ReversalOf: e.ReversalOf,
 		},
 		AutoReverse: e.AutoReverse, PostedAt: e.PostedAt, PostedBy: e.PostedByName,
 		VoidedAt: e.VoidedAt, VoidedBy: e.VoidedByName, VoidReason: e.VoidReason,
 		Reversals: []RelatedEntry{},
+		Revision:  int(e.Revision), RevisedAt: e.RevisedAt, RevisedBy: e.RevisedByName,
+	}
+	if out.Editable, out.EditBlock, err = editState(ctx, q, e); err != nil {
+		return EntryDetail{}, err
+	}
+	if out.Revisions, err = revisions(ctx, q, companyID, entryID); err != nil {
+		return EntryDetail{}, err
 	}
 	lines, err := q.EntryLines(ctx, store.EntryLinesParams{CompanyID: companyID, EntryID: entryID})
 	if err != nil {
@@ -112,7 +138,8 @@ func (l *ledger) Entry(ctx context.Context, companyID, entryID uuid.UUID) (Entry
 	for _, ln := range lines {
 		out.Lines = append(out.Lines, EntryLine{
 			LineNo: int(ln.LineNo), AccountID: ln.AccountID, AccountCode: ln.AccountCode, AccountName: ln.AccountName,
-			Debit: ln.Debit, Credit: ln.Credit, Memo: ln.Memo,
+			Debit: ln.Debit, Credit: ln.Credit, Memo: ln.Memo, ProjectID: ln.ProjectID,
+			BranchID: ln.BranchID, DepartmentID: ln.DepartmentID, BranchCode: deref(ln.BranchCode), DepartmentCode: deref(ln.DepartmentCode),
 		})
 	}
 	if e.ReversalOf != nil {
@@ -282,7 +309,7 @@ func (l *ledger) AccountLedger(ctx context.Context, companyID, accountID uuid.UU
 		}
 		out.Lines = append(out.Lines, LedgerLine{
 			EntryID: r.EntryID, Number: r.Number, Kind: Kind(r.Kind), Status: r.Status, Date: r.EntryDate,
-			Memo: memo, Debit: r.Debit, Credit: r.Credit, Balance: class.Present(running),
+			Memo: memo, Debit: r.Debit, Credit: r.Credit, Balance: class.Present(running), ProjectID: r.ProjectID,
 		})
 		out.TotalDebit = out.TotalDebit.Add(r.Debit)
 		out.TotalCredit = out.TotalCredit.Add(r.Credit)
@@ -291,6 +318,56 @@ func (l *ledger) AccountLedger(ctx context.Context, companyID, accountID uuid.UU
 }
 
 // VerifyBalances menghitung sel saldo yang tidak cocok dengan baris jurnal; seharusnya 0.
+// Saldo per proyek ikut diperiksa.
 func (l *ledger) VerifyBalances(ctx context.Context, companyID uuid.UUID) (int64, error) {
-	return l.q(ctx).BalanceMismatches(ctx, companyID)
+	q := l.q(ctx)
+	n, err := q.BalanceMismatches(ctx, companyID)
+	if err != nil {
+		return 0, err
+	}
+	m, err := q.ProjectBalanceMismatches(ctx, companyID)
+	return n + m, err
+}
+
+func (l *ledger) ProjectBalances(ctx context.Context, companyID uuid.UUID, projectID *uuid.UUID, from, to civil.Date) ([]ProjectBalance, error) {
+	rows, err := l.q(ctx).ProjectNet(ctx, store.ProjectNetParams{
+		CompanyID: companyID, FromMonth: from.MonthStart(), ToMonth: to.MonthStart(), ProjectID: projectID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProjectBalance, len(rows))
+	for i, r := range rows {
+		out[i] = ProjectBalance{ProjectID: r.ProjectID, AccountID: r.AccountID, Debit: r.Debit, Credit: r.Credit}
+	}
+	return out, nil
+}
+
+func (l *ledger) ProjectLines(ctx context.Context, companyID, projectID uuid.UUID, accountID *uuid.UUID, from, to civil.Date) ([]ProjectLine, bool, error) {
+	rows, err := l.q(ctx).ProjectLines(ctx, store.ProjectLinesParams{
+		CompanyID: companyID, ProjectID: &projectID, AccountID: accountID, FromDate: from, ToDate: to, RowLimit: maxLedgerLines,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]ProjectLine, len(rows))
+	for i, r := range rows {
+		memo := r.Memo
+		if memo == "" {
+			memo = r.EntryMemo
+		}
+		out[i] = ProjectLine{
+			EntryID: r.EntryID, Number: r.Number, Status: r.Status, SourceType: r.SourceType, SourceID: r.SourceID,
+			Date: r.EntryDate, Memo: memo, AccountID: r.AccountID, AccountCode: r.AccountCode, AccountName: r.AccountName,
+			Debit: r.Debit, Credit: r.Credit,
+		}
+	}
+	return out, len(rows) == maxLedgerLines, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

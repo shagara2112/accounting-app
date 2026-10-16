@@ -28,6 +28,8 @@ type Session struct {
 	Name            string
 	ActiveCompanyID *uuid.UUID
 	ExpiresAt       time.Time
+	// MFASetup: pengguna wajib 2FA tetapi belum memasangnya; sesi hanya boleh dipakai untuk memasang 2FA.
+	MFASetup bool
 }
 
 // Sessions mengelola sesi di server: berakhir setelah 30 menit tidak aktif atau 12 jam sejak login.
@@ -48,15 +50,19 @@ func hashToken(token string) []byte {
 	return h[:]
 }
 
-// Create membuat sesi baru di transaksi yang sedang berjalan dan mengembalikan tokennya.
-func (s *Sessions) Create(ctx context.Context, userID uuid.UUID, company *uuid.UUID, ip, userAgent string) (string, time.Time, error) {
+func newToken() string {
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw)
-	token := base64.RawURLEncoding.EncodeToString(raw)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// Create membuat sesi baru di transaksi yang sedang berjalan dan mengembalikan tokennya.
+func (s *Sessions) Create(ctx context.Context, userID uuid.UUID, company *uuid.UUID, ip, userAgent string, mfaSetup bool) (string, time.Time, error) {
+	token := newToken()
 	exp := s.Now().Add(s.Absolute)
 	err := store.New(db.Conn(ctx, s.pool)).CreateSession(ctx, store.CreateSessionParams{
 		IDHash: hashToken(token), UserID: userID, ActiveCompanyID: company,
-		ExpiresAt: exp, Ip: &ip, UserAgent: &userAgent,
+		ExpiresAt: exp, Ip: &ip, UserAgent: &userAgent, MfaSetup: mfaSetup,
 	})
 	return token, exp, err
 }
@@ -86,7 +92,7 @@ func (s *Sessions) FromRequest(ctx context.Context, r *http.Request) (*Session, 
 	}
 	return &Session{
 		TokenHash: h, UserID: row.UserID, Email: row.Email, Name: row.Name,
-		ActiveCompanyID: row.ActiveCompanyID, ExpiresAt: row.ExpiresAt,
+		ActiveCompanyID: row.ActiveCompanyID, ExpiresAt: row.ExpiresAt, MFASetup: row.MfaSetup,
 	}, nil
 }
 

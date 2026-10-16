@@ -163,7 +163,7 @@ const coaTemplate = `
       1-1112 Bank Mandiri
     1-1200 Piutang
       1-1201 Piutang usaha
-      1-1202 Piutang retensi @konstruksi
+      1-1202 Piutang retensi
       1-1203 Piutang kartu dan QRIS @retail
       1-1204 Piutang karyawan
       1-1205 Piutang lain-lain
@@ -289,10 +289,11 @@ const coaTemplate = `
     8-1002 Beban bunga pinjaman
     8-1003 Rugi selisih kurs
     8-1004 PPh final jasa giro
+    8-1005 Rugi pelepasan aset tetap
     8-1009 Beban lain-lain
 9 Pajak penghasilan
   9-1000 Pajak penghasilan
     9-1001 Beban pajak kini
     9-1002 Beban pajak tangguhan
-    9-1003 Beban PPh final jasa konstruksi @konstruksi
+    9-1003 Beban PPh final
 `

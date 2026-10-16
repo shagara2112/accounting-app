@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -92,45 +93,65 @@ func (l *ledger) Post(ctx context.Context, d EntryDraft) (Posted, error) {
 	return out, err
 }
 
-// post menulis satu jurnal lengkap. Harus berjalan di dalam transaksi (lihat db.Run).
-func (l *ledger) post(ctx context.Context, e entry) (Ref, error) {
+// check menjalankan semua pemeriksaan jurnal sebelum ditulis (isi, akun, proyek, dimensi, dan
+// periode) dan mengembalikan totalnya. Dipakai posting baru maupun revisi.
+func (l *ledger) check(ctx context.Context, q *store.Queries, e entry) (money.Amount, error) {
 	total, err := validate(e.EntryDraft)
 	if err != nil {
-		return Ref{}, err
+		return money.Amount{}, err
 	}
-	q := l.q(ctx)
 	if err := checkAccounts(ctx, q, e.CompanyID, e.Lines); err != nil {
-		return Ref{}, err
+		return money.Amount{}, err
 	}
-	month := e.Date.MonthStart()
-	if err := checkPeriod(ctx, q, e.CompanyID, month, e.Kind); err != nil {
+	if err := l.checkProjects(ctx, e); err != nil {
+		return money.Amount{}, err
+	}
+	if err := checkDimensions(ctx, q, e); err != nil {
+		return money.Amount{}, err
+	}
+	if err := checkPeriod(ctx, q, e.CompanyID, e.Date.MonthStart(), e.Kind); err != nil {
+		return money.Amount{}, err
+	}
+	return total, nil
+}
+
+// insertLines menulis baris jurnal; trigger basis data memastikan akun detail, saldo agregat,
+// dan jurnal seimbang saat commit.
+func insertLines(ctx context.Context, q *store.Queries, companyID, entryID uuid.UUID, date civil.Date, lines []LineDraft) error {
+	rows := make([]store.InsertLinesParams, len(lines))
+	for i, ln := range lines {
+		rows[i] = store.InsertLinesParams{
+			ID: uuid.Must(uuid.NewV7()), CompanyID: companyID, EntryID: entryID, EntryDate: date,
+			LineNo: int16(i + 1), AccountID: ln.AccountID, Debit: ln.Debit, Credit: ln.Credit,
+			Memo: strings.TrimSpace(ln.Memo), ProjectID: ln.ProjectID, BranchID: ln.BranchID, DepartmentID: ln.DepartmentID,
+		}
+	}
+	_, err := q.InsertLines(ctx, rows)
+	return err
+}
+
+// post menulis satu jurnal lengkap. Harus berjalan di dalam transaksi (lihat db.Run).
+func (l *ledger) post(ctx context.Context, e entry) (Ref, error) {
+	q := l.q(ctx)
+	total, err := l.check(ctx, q, e)
+	if err != nil {
 		return Ref{}, err
 	}
 
-	n, err := q.NextNumber(ctx, store.NextNumberParams{CompanyID: e.CompanyID, Series: e.series, Month: month})
-	if err != nil {
-		return Ref{}, err
-	}
-	ref := Ref{
-		ID:     uuid.Must(uuid.NewV7()),
-		Number: fmt.Sprintf("%s/%04d/%02d/%04d", e.series, month.Year(), int(month.Month()), n),
+	ref := Ref{ID: uuid.Must(uuid.NewV7()), Number: e.Number}
+	if ref.Number == "" {
+		if ref.Number, err = nextNumber(ctx, q, e.CompanyID, e.series, e.Date, nil); err != nil {
+			return Ref{}, err
+		}
 	}
 	if err := q.InsertEntry(ctx, store.InsertEntryParams{
 		ID: ref.ID, CompanyID: e.CompanyID, Number: ref.Number, Kind: string(e.Kind), EntryDate: e.Date,
 		Memo: strings.TrimSpace(e.Memo), SourceType: e.SourceType, SourceID: e.SourceID,
-		ReversalOf: e.reversalOf, AutoReverse: e.AutoReverse, Total: total, PostedBy: userRef(e.Actor),
+		ReversalOf: e.reversalOf, AutoReverse: e.AutoReverse, Total: total, PostedBy: e.Actor.UserRef(),
 	}); err != nil {
 		return Ref{}, err
 	}
-	rows := make([]store.InsertLinesParams, len(e.Lines))
-	for i, ln := range e.Lines {
-		rows[i] = store.InsertLinesParams{
-			ID: uuid.Must(uuid.NewV7()), CompanyID: e.CompanyID, EntryID: ref.ID, EntryDate: e.Date,
-			LineNo: int16(i + 1), AccountID: ln.AccountID, Debit: ln.Debit, Credit: ln.Credit,
-			Memo: strings.TrimSpace(ln.Memo),
-		}
-	}
-	if _, err := q.InsertLines(ctx, rows); err != nil {
+	if err := insertLines(ctx, q, e.CompanyID, ref.ID, e.Date, e.Lines); err != nil {
 		return Ref{}, err
 	}
 
@@ -229,6 +250,26 @@ func checkAccounts(ctx context.Context, q *store.Queries, companyID uuid.UUID, l
 	return nil
 }
 
+// checkProjects menjalankan pemeriksaan proyek untuk jurnal baru. Jurnal pembalik (void dan
+// balik otomatis) tidak diperiksa: pembatalan harus selalu bisa, apa pun status proyeknya.
+func (l *ledger) checkProjects(ctx context.Context, e entry) error {
+	if l.projectCheck == nil || e.reversalOf != nil {
+		return nil
+	}
+	var ids []uuid.UUID
+	seen := map[uuid.UUID]bool{}
+	for _, ln := range e.Lines {
+		if ln.ProjectID != nil && !seen[*ln.ProjectID] {
+			seen[*ln.ProjectID] = true
+			ids = append(ids, *ln.ProjectID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return l.projectCheck(ctx, e.CompanyID, ids)
+}
+
 // checkPeriod menolak posting ke periode yang sudah ditutup. Baris periode dikunci FOR SHARE,
 // sehingga periode tidak bisa ditutup selagi posting ini belum selesai.
 func checkPeriod(ctx context.Context, q *store.Queries, companyID uuid.UUID, month civil.Date, kind Kind) error {
@@ -253,9 +294,43 @@ func checkPeriod(ctx context.Context, q *store.Queries, companyID uuid.UUID, mon
 	}
 }
 
-// Void membatalkan jurnal dengan jurnal pembalik bertanggal void; jurnal aslinya tidak
+// Void membatalkan jurnal manual dengan jurnal pembalik bertanggal void; jurnal aslinya tidak
 // pernah diubah selain statusnya. Pembalik otomatis milik jurnal itu ikut dibatalkan.
 func (l *ledger) Void(ctx context.Context, companyID, entryID uuid.UUID, date civil.Date, reason string, actor Actor) (Voided, error) {
+	return l.void(ctx, companyID, entryID, date, reason, actor, func(ctx context.Context, q *store.Queries, e store.LedgerJournalEntry) error {
+		switch e.SourceType {
+		case SourceManual, SourceOpening:
+			return nil
+		case SourceAutoReversal:
+			origin := "jurnal penyesuaiannya"
+			if e.ReversalOf != nil {
+				if o, err := q.GetEntry(ctx, store.GetEntryParams{CompanyID: companyID, ID: *e.ReversalOf}); err == nil {
+					origin = o.Number
+				}
+			}
+			return httpx.Unprocessable("journal.void_auto_reversal", fmt.Sprintf(
+				"%s dibuat otomatis dari %s. Void %s; jurnal pembalik ini ikut dibatalkan.", e.Number, origin, origin))
+		case SourceVoid:
+			return httpx.Unprocessable("journal.void_reversal", fmt.Sprintf("%s adalah jurnal pembatalan dan tidak bisa di-void.", e.Number))
+		default:
+			return httpx.Unprocessable("journal.void_via_source", fmt.Sprintf(
+				"%s berasal dari dokumen %s; batalkan lewat dokumen itu.", e.Number, e.SourceType))
+		}
+	})
+}
+
+// VoidSource dipakai modul untuk membatalkan jurnal dokumennya sendiri, mis. faktur yang di-void.
+func (l *ledger) VoidSource(ctx context.Context, companyID, entryID uuid.UUID, sourceType string, date civil.Date, reason string, actor Actor) (Voided, error) {
+	return l.void(ctx, companyID, entryID, date, reason, actor, func(_ context.Context, _ *store.Queries, e store.LedgerJournalEntry) error {
+		if e.SourceType != sourceType {
+			return fmt.Errorf("jurnal %s bersumber %s, bukan %s", e.Number, e.SourceType, sourceType)
+		}
+		return nil
+	})
+}
+
+func (l *ledger) void(ctx context.Context, companyID, entryID uuid.UUID, date civil.Date, reason string, actor Actor,
+	allowed func(context.Context, *store.Queries, store.LedgerJournalEntry) error) (Voided, error) {
 	reason = strings.TrimSpace(reason)
 	if n := utf8.RuneCountInString(reason); n < 5 || n > maxVoidReason {
 		msg := fmt.Sprintf("Tulis alasan void (5–%d karakter).", maxVoidReason)
@@ -278,22 +353,8 @@ func (l *ledger) Void(ctx context.Context, companyID, entryID uuid.UUID, date ci
 		if e.Status == "void" {
 			return httpx.Conflict("journal.already_void", fmt.Sprintf("Jurnal %s sudah di-void.", e.Number))
 		}
-		switch e.SourceType {
-		case SourceManual:
-		case SourceAutoReversal:
-			origin := "jurnal penyesuaiannya"
-			if e.ReversalOf != nil {
-				if o, err := q.GetEntry(ctx, store.GetEntryParams{CompanyID: companyID, ID: *e.ReversalOf}); err == nil {
-					origin = o.Number
-				}
-			}
-			return httpx.Unprocessable("journal.void_auto_reversal", fmt.Sprintf(
-				"%s dibuat otomatis dari %s. Void %s; jurnal pembalik ini ikut dibatalkan.", e.Number, origin, origin))
-		case SourceVoid:
-			return httpx.Unprocessable("journal.void_reversal", fmt.Sprintf("%s adalah jurnal pembatalan dan tidak bisa di-void.", e.Number))
-		default:
-			return httpx.Unprocessable("journal.void_via_source", fmt.Sprintf(
-				"%s berasal dari dokumen %s; batalkan lewat dokumen itu.", e.Number, e.SourceType))
+		if err := allowed(ctx, q, e); err != nil {
+			return err
 		}
 		if date.Before(e.EntryDate) {
 			msg := fmt.Sprintf("Tanggal void tidak boleh sebelum tanggal jurnal (%s).", e.EntryDate.Indonesian())
@@ -360,7 +421,8 @@ func (l *ledger) reverse(ctx context.Context, q *store.Queries, e store.LedgerJo
 	}
 	drafts := make([]LineDraft, len(lines))
 	for i, ln := range lines {
-		drafts[i] = LineDraft{AccountID: ln.AccountID, Debit: ln.Credit, Credit: ln.Debit, Memo: ln.Memo}
+		drafts[i] = LineDraft{AccountID: ln.AccountID, Debit: ln.Credit, Credit: ln.Debit, Memo: ln.Memo, ProjectID: ln.ProjectID,
+			BranchID: ln.BranchID, DepartmentID: ln.DepartmentID}
 	}
 	if utf8.RuneCountInString(memo) > maxMemo {
 		memo = string([]rune(memo)[:maxMemo])
@@ -388,18 +450,15 @@ func markVoid(ctx context.Context, q *store.Queries, e store.LedgerJournalEntry,
 func swap(lines []LineDraft) []LineDraft {
 	out := make([]LineDraft, len(lines))
 	for i, ln := range lines {
-		out[i] = LineDraft{AccountID: ln.AccountID, Debit: ln.Credit, Credit: ln.Debit, Memo: ln.Memo}
+		out[i] = LineDraft{AccountID: ln.AccountID, Debit: ln.Credit, Credit: ln.Debit, Memo: ln.Memo, ProjectID: ln.ProjectID,
+			BranchID: ln.BranchID, DepartmentID: ln.DepartmentID}
 	}
 	return out
 }
 
-func userRef(a Actor) *uuid.UUID {
-	if a.UserID == uuid.Nil {
-		return nil
-	}
-	id := a.UserID
-	return &id
-}
+func userRef(a Actor) *uuid.UUID { return a.UserRef() }
+
+var seriesPattern = regexp.MustCompile(`^[A-Z]{2,4}$`)
 
 // firstMessage mengambil pesan field pertama (urut kunci) sebagai ringkasan problem.
 func firstMessage(fields map[string]string) string {
@@ -422,3 +481,53 @@ func fieldOrder(k string) string {
 }
 
 func isNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
+
+// checkDimensions memastikan cabang dan departemen di baris jurnal ada di PT ini dan aktif.
+// Jurnal pembalik tidak diperiksa keaktifannya: pembatalan harus selalu bisa.
+func checkDimensions(ctx context.Context, q *store.Queries, e entry) error {
+	var branches, departments []uuid.UUID
+	for _, ln := range e.Lines {
+		if ln.BranchID != nil {
+			branches = append(branches, *ln.BranchID)
+		}
+		if ln.DepartmentID != nil {
+			departments = append(departments, *ln.DepartmentID)
+		}
+	}
+	if len(branches) == 0 && len(departments) == 0 {
+		return nil
+	}
+	rows, err := q.Dimensions(ctx, store.DimensionsParams{CompanyID: e.CompanyID, BranchIds: branches, DepartmentIds: departments})
+	if err != nil {
+		return err
+	}
+	type dim struct {
+		code   string
+		active bool
+	}
+	found := map[uuid.UUID]dim{}
+	for _, r := range rows {
+		found[r.ID] = dim{r.Code, r.Active}
+	}
+	fields := map[string]string{}
+	check := func(i int, id *uuid.UUID, field, label string) {
+		if id == nil {
+			return
+		}
+		d, ok := found[*id]
+		switch {
+		case !ok:
+			fields[fmt.Sprintf("lines.%d.%s", i, field)] = label + " tidak ditemukan di PT ini."
+		case !d.active && e.reversalOf == nil:
+			fields[fmt.Sprintf("lines.%d.%s", i, field)] = fmt.Sprintf("%s %s nonaktif.", label, d.code)
+		}
+	}
+	for i, ln := range e.Lines {
+		check(i, ln.BranchID, "branchId", "Cabang")
+		check(i, ln.DepartmentID, "departmentId", "Departemen")
+	}
+	if len(fields) > 0 {
+		return httpx.Unprocessable("journal.dimension", firstMessage(fields)).WithFields(fields)
+	}
+	return nil
+}

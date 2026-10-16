@@ -38,6 +38,9 @@ func (r iteratorForInsertLines) Values() ([]interface{}, error) {
 		r.rows[0].Debit,
 		r.rows[0].Credit,
 		r.rows[0].Memo,
+		r.rows[0].ProjectID,
+		r.rows[0].BranchID,
+		r.rows[0].DepartmentID,
 	}, nil
 }
 
@@ -46,5 +49,5 @@ func (r iteratorForInsertLines) Err() error {
 }
 
 func (q *Queries) InsertLines(ctx context.Context, arg []InsertLinesParams) (int64, error) {
-	return q.db.CopyFrom(ctx, []string{"ledger", "journal_lines"}, []string{"id", "company_id", "entry_id", "entry_date", "line_no", "account_id", "debit", "credit", "memo"}, &iteratorForInsertLines{rows: arg})
+	return q.db.CopyFrom(ctx, []string{"ledger", "journal_lines"}, []string{"id", "company_id", "entry_id", "entry_date", "line_no", "account_id", "debit", "credit", "memo", "project_id", "branch_id", "department_id"}, &iteratorForInsertLines{rows: arg})
 }

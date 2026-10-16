@@ -273,3 +273,35 @@ func toAccount(r store.LedgerAccount) Account {
 		Level: int(r.Level), Postable: r.Postable, Active: r.Active, Version: int(r.Version),
 	}
 }
+
+// CheckAccount memastikan akun ada di PT ini, akun detail yang aktif, dan kelasnya termasuk
+// classes. Dipakai modul lain untuk memvalidasi akun default, mis. akun dokumen cerminan.
+func (l *ledger) CheckAccount(ctx context.Context, companyID, accountID uuid.UUID, classes []int) error {
+	r, err := l.q(ctx).GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: accountID})
+	if isNoRows(err) {
+		return httpx.Unprocessable("ledger.account", "Akun tidak ditemukan di PT ini.")
+	}
+	if err != nil {
+		return err
+	}
+	if !r.Postable || !r.Active {
+		return httpx.Unprocessable("ledger.account", fmt.Sprintf("%s %s bukan akun detail yang aktif.", r.Code, r.Name))
+	}
+	for _, c := range classes {
+		if int(r.Class) == c {
+			return nil
+		}
+	}
+	return httpx.Unprocessable("ledger.account", fmt.Sprintf("%s %s tidak bisa dipakai di sini; pilih akun berkepala %s.", r.Code, r.Name, classList(classes)))
+}
+
+func classList(classes []int) string {
+	parts := make([]string, len(classes))
+	for i, c := range classes {
+		parts[i] = fmt.Sprint(c)
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " atau " + parts[len(parts)-1]
+}
