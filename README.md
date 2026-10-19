@@ -89,6 +89,11 @@ Status:
 - **Revisi klien (16 Okt 2026)**: departemen per baris di transaksi kas, dan jurnal manual bisa
   diubah selama periodenya belum dikunci (nomor tetap, riwayat versi, audit trail).
 
+- **Menu Panduan**: panduan penggunaan per menu di dalam aplikasi (`/panduan`), dengan pencarian
+  (termasuk sinonim seperti "inventaris"), pertanyaan umum, dan versi cetak/PDF. Tombol Panduan di bar
+  atas membuka topik halaman yang sedang dibuka. Topik yang menunya tidak bisa dibuka pengguna
+  disembunyikan. Isinya ada di `web/src/lib/guide.ts`; perbarui bila alur sebuah halaman berubah.
+
 - **Faktur masukan dan bukti potong (TAX-07, TAX-08)**: nomor faktur pajak pemasok, masa
   pengkreditan (paling lama tiga masa sesudah masa faktur), PPN tidak dikreditkan yang dijurnal ke
   biaya, dan pencocokan dengan daftar pajak masukan Coretax. Bukti potong PPh 23, 4(2), dan 26 per
