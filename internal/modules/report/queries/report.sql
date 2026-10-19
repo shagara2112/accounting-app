@@ -36,6 +36,7 @@ ORDER BY b.month;
 -- Mutasi per akun dari baris jurnal untuk rentang tanggal, disaring cabang dan/atau departemen
 -- (GL-09). Tanpa jurnal penutup. branch_null/department_null memilih baris tanpa dimensi itu.
 SELECT l.account_id, coalesce(l.branch_id, '00000000-0000-0000-0000-000000000000'::uuid) AS branch_id,
+       coalesce(l.department_id, '00000000-0000-0000-0000-000000000000'::uuid) AS department_id,
        sum(l.debit)::numeric AS debit, sum(l.credit)::numeric AS credit
 FROM ledger.journal_lines l
 JOIN ledger.journal_entries e ON e.id = l.entry_id
@@ -44,4 +45,4 @@ WHERE l.company_id = @company_id AND l.entry_date >= @from_date AND l.entry_date
   AND (NOT @branch_null::boolean OR l.branch_id IS NULL)
   AND (sqlc.narg(department_id)::uuid IS NULL OR l.department_id = sqlc.narg(department_id)::uuid)
   AND (NOT @department_null::boolean OR l.department_id IS NULL)
-GROUP BY l.account_id, coalesce(l.branch_id, '00000000-0000-0000-0000-000000000000'::uuid);
+GROUP BY 1, 2, 3;

@@ -47,7 +47,10 @@ export function Home({ me }: { me: Me }) {
         <h1 className="text-[26px] font-bold tracking-tight">Selamat datang, {firstName}</h1>
         <p className="mt-1.5 text-sm text-muted">
           {company ? `Anda masuk sebagai ${company.roleName} di ${company.name}.` : 'Akun Anda belum diberi akses ke PT mana pun. Hubungi Admin perusahaan.'}
-          {myBranches.length > 0 && ` Akses Anda dibatasi ke cabang ${myBranches.map((b) => b.name).join(', ')}.`}
+          {myBranches.length > 0 && ` Akses Anda dibatasi ke cabang ${myBranches.map((b) => b.name).join(', ')}.`}{' '}
+          <Link to="/panduan" className="font-semibold text-accent hover:underline">
+            Buka panduan penggunaan →
+          </Link>
         </p>
       </div>
       {can(me, 'report.view') && !isRestricted(me) && <Dashboard me={me} />}

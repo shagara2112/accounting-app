@@ -36,6 +36,10 @@ type Column struct {
 	Label string     `json:"label"`
 	From  civil.Date `json:"from"`
 	To    civil.Date `json:"to"`
+	// Saringan cabang/departemen kolom ini (id, atau "none" untuk tanpa dimensi); dipakai
+	// tautan ke buku besar supaya rinciannya sama dengan angka di kolom.
+	Branch     string `json:"branch,omitempty"`
+	Department string `json:"department,omitempty"`
 }
 
 // Jenis baris laporan.

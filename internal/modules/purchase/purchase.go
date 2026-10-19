@@ -158,6 +158,11 @@ type Service interface {
 
 	Aging(ctx context.Context, companyID uuid.UUID, asOf civil.Date) (trade.Aging, error)
 
+	// Data pendukung faktur pajak masukan dan bukti potong (TAX-07, TAX-08), lihat taxdata.go.
+	InputBills(ctx context.Context, companyID uuid.UUID, from, to civil.Date) ([]InputBill, error)
+	InputCredits(ctx context.Context, companyID uuid.UUID, from, to civil.Date) ([]InputCredit, error)
+	BillVAT(ctx context.Context, companyID, billID uuid.UUID) (BillVAT, error)
+	WithholdingBills(ctx context.Context, companyID uuid.UUID, from, to civil.Date) ([]WithholdingBill, error)
 	// VATByMonth dan Withheld adalah data pendukung modul pajak (TAX-06, TAX-08).
 	VATByMonth(ctx context.Context, companyID uuid.UUID, from, to civil.Date) ([]trade.MonthVAT, error)
 	Withheld(ctx context.Context, companyID uuid.UUID, from, to civil.Date) ([]Withheld, error)
@@ -189,9 +194,27 @@ type Deps struct {
 	// AfterPaymentPost dan AfterPaymentVoid sama untuk pembayaran. Boleh nil.
 	AfterPaymentPost func(ctx context.Context, companyID, paymentID uuid.UUID, actor audit.Actor) error
 	AfterPaymentVoid func(ctx context.Context, companyID, paymentID uuid.UUID, date civil.Date, reason string, actor audit.Actor) error
+	// VoidGuard dipanggil sebelum tagihan di-void, mis. untuk menolak tagihan yang bukti
+	// potongnya sudah terbit di Coretax. Boleh nil.
+	VoidGuard func(ctx context.Context, companyID, billID uuid.UUID) error
+	// NoteGuard dipanggil sebelum nota debit atas tagihan dibuat atau di-void, mis. untuk menolak
+	// tagihan yang PPN masukannya sudah dijurnal tidak dikreditkan. Boleh nil.
+	NoteGuard func(ctx context.Context, companyID, billID uuid.UUID) error
 }
 
 func New(d Deps) Service { return &service{d} }
+
+// withholdingRole adalah akun utang PPh untuk pasal kode PPh yang dipotong dari pemasok.
+func withholdingRole(article string) ledger.Role {
+	switch article {
+	case tax.ArticleFinal:
+		return ledger.WithholdingPPhFinal
+	case tax.ArticlePPh26:
+		return ledger.WithholdingPPh26
+	default:
+		return ledger.WithholdingPPh23
+	}
+}
 
 type service struct{ Deps }
 
@@ -323,6 +346,14 @@ func (s *service) prepare(ctx context.Context, companyID uuid.UUID, in *BillInpu
 		}
 		if code.Kind != tax.KindPPh {
 			msg := fmt.Sprintf("%s bukan kode PPh.", code.Code)
+			return prepared{}, httpx.Unprocessable("bill.invalid", msg).WithFields(map[string]string{"withholdingCode": msg})
+		}
+		// PPh 26 khusus pemasok luar negeri; pemasok dalam negeri dipotong PPh 23 atau 4(2).
+		if foreign := supplier.Foreign(); foreign != (code.Article == tax.ArticlePPh26) {
+			msg := "PPh 26 hanya untuk pemasok luar negeri; isi negara pemasok di menu Kontak."
+			if foreign {
+				msg = fmt.Sprintf("%s adalah pemasok luar negeri, sehingga dipotong PPh 26, bukan %s.", supplier.Name, code.Name)
+			}
 			return prepared{}, httpx.Unprocessable("bill.invalid", msg).WithFields(map[string]string{"withholdingCode": msg})
 		}
 		p.whCode = &code
@@ -569,11 +600,7 @@ func (s *service) PostBill(ctx context.Context, companyID, id uuid.UUID, actor a
 		}
 		drafts = append(drafts, ledger.LineDraft{AccountID: payableAcc.ID, Credit: payable, Memo: memo})
 		if p.withholding.Sign() > 0 {
-			role := ledger.WithholdingPPh23
-			if p.whCode.Article == tax.ArticleFinal {
-				role = ledger.WithholdingPPhFinal
-			}
-			acc, err := s.Ledger.RoleAccount(ctx, companyID, role)
+			acc, err := s.Ledger.RoleAccount(ctx, companyID, withholdingRole(p.whCode.Article))
 			if err != nil {
 				return err
 			}
@@ -689,6 +716,11 @@ func (s *service) VoidBill(ctx context.Context, companyID, id uuid.UUID, date ci
 			return httpx.Conflict("bill.is_draft", "Draf belum diposting; hapus saja drafnya.")
 		case "void":
 			return httpx.Conflict("bill.already_void", fmt.Sprintf("Tagihan %s sudah di-void.", deref(b.Number)))
+		}
+		if s.VoidGuard != nil {
+			if err := s.VoidGuard(ctx, companyID, id); err != nil {
+				return err
+			}
 		}
 		pays, err := q.BillPayments(ctx, store.BillPaymentsParams{CompanyID: companyID, BillID: id})
 		if err != nil {

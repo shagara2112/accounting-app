@@ -155,6 +155,15 @@ export function useAdminCompanies() {
   return useQuery({ queryKey: ['admin', 'companies'], queryFn: () => api<{ items: AdminCompany[]; industries: Industry[] }>('GET', '/admin/companies') })
 }
 
+export function useRenameCompany() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...v }: { id: string; name: string; shortName: string }) => api<AdminCompany>('PUT', `/admin/companies/${id}`, v),
+    // Nama PT tampil di bar atas, pilihan PT (/me), dan daftar admin.
+    onSuccess: () => qc.invalidateQueries(),
+  })
+}
+
 export function useCreateCompany() {
   const qc = useQueryClient()
   return useMutation({

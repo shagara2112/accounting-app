@@ -207,6 +207,7 @@ const coaTemplate = `
       2-1203 Utang PPh 23
       2-1204 Utang PPh 4(2)
       2-1205 Utang PPh 29
+      2-1206 Utang PPh 26
     2-1300 Beban yang masih harus dibayar
       2-1301 Gaji yang masih harus dibayar
       2-1302 Beban yang masih harus dibayar lainnya
@@ -277,6 +278,7 @@ const coaTemplate = `
   6-4000 Beban umum lainnya
     6-4001 Beban kerugian piutang
     6-4002 Beban administrasi umum
+    6-4003 Beban PPN masukan tidak dapat dikreditkan
 7 Pendapatan lain-lain
   7-1000 Pendapatan lain-lain
     7-1001 Pendapatan jasa giro dan bunga

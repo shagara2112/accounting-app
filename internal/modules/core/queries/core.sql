@@ -51,8 +51,8 @@ SELECT * FROM core.contacts WHERE company_id = $1 AND id = $2;
 INSERT INTO core.contacts
   (id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone,
    payment_terms_days, bank_name, bank_account, created_by, linked_company_id, ic_expense_account_id,
-   ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+   ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 RETURNING *;
 
 -- name: UpdateContact :one
@@ -62,7 +62,8 @@ SET name = @name, is_customer = @is_customer, is_supplier = @is_supplier, npwp =
     payment_terms_days = @payment_terms_days, bank_name = @bank_name, bank_account = @bank_account,
     active = @active, linked_company_id = @linked_company_id, ic_expense_account_id = @ic_expense_account_id,
     ic_revenue_account_id = @ic_revenue_account_id, credit_limit = sqlc.narg(credit_limit),
-    billing_contact = @billing_contact, ic_cash_account_id = sqlc.narg(ic_cash_account_id), version = version + 1
+    billing_contact = @billing_contact, ic_cash_account_id = sqlc.narg(ic_cash_account_id),
+    country_code = @country_code, foreign_tin = @foreign_tin, version = version + 1
 WHERE company_id = @company_id AND id = @id AND version = @version
 RETURNING *;
 

@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"lajur/internal/modules/admin/internal/store"
 	"lajur/internal/modules/core"
@@ -164,6 +165,73 @@ func (s *service) CreateCompany(ctx context.Context, in NewCompany, creatorRole 
 		for _, x := range list {
 			if x.ID == c.ID {
 				out = x
+			}
+		}
+		return nil
+	})
+	return out, err
+}
+
+type CompanyNames struct {
+	Name      string `json:"name"`
+	ShortName string `json:"shortName"`
+}
+
+// RenameCompany mengganti nama dan nama singkat PT. Data dan dokumennya tetap; PDF faktur dan
+// laporan yang dibuat sesudahnya memakai nama baru, yang sudah terkirim tidak berubah.
+func (s *service) RenameCompany(ctx context.Context, id uuid.UUID, in CompanyNames, actor audit.Actor) (Company, error) {
+	in.Name, in.ShortName = strings.TrimSpace(in.Name), strings.TrimSpace(in.ShortName)
+	var out Company
+	err := db.Run(ctx, s.Pool, func(ctx context.Context) error {
+		q := s.q(ctx)
+		before, err := q.LockCompanyNames(ctx, id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NotFound("company.not_found", "PT tidak ditemukan.")
+		}
+		if err != nil {
+			return err
+		}
+		fields := map[string]string{}
+		switch {
+		case in.Name == "":
+			fields["name"] = "Nama PT wajib diisi."
+		case utf8.RuneCountInString(in.Name) > 120:
+			fields["name"] = "Nama PT maksimal 120 karakter."
+		default:
+			taken, err := q.CompanyNameTakenByOther(ctx, store.CompanyNameTakenByOtherParams{Name: in.Name, ID: id})
+			if err != nil {
+				return err
+			}
+			if taken {
+				fields["name"] = "Sudah ada PT lain dengan nama ini."
+			}
+		}
+		switch {
+		case in.ShortName == "":
+			fields["shortName"] = "Nama singkat wajib diisi."
+		case utf8.RuneCountInString(in.ShortName) > 24:
+			fields["shortName"] = "Nama singkat maksimal 24 karakter."
+		}
+		if err := invalid(fields); err != nil {
+			return err
+		}
+		if err := q.RenameCompany(ctx, store.RenameCompanyParams{ID: id, Name: in.Name, ShortName: in.ShortName}); err != nil {
+			return err
+		}
+		if _, err := audit.Write(ctx, db.Conn(ctx, s.Pool), audit.Entry{
+			UserID: actor.UserRef(), CompanyID: &id, Action: "core.company.rename", ObjectType: "company", ObjectID: id.String(), IP: actor.IP,
+			Before: map[string]any{"name": before.Name, "shortName": before.ShortName},
+			After:  map[string]any{"name": in.Name, "shortName": in.ShortName},
+		}); err != nil {
+			return err
+		}
+		list, err := s.Companies(ctx)
+		if err != nil {
+			return err
+		}
+		for _, c := range list {
+			if c.ID == id {
+				out = c
 			}
 		}
 		return nil

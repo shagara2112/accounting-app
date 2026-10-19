@@ -200,6 +200,8 @@ Semua angka di Lajur lewat satu fungsi, `ledger.Post`. Fungsi ini memvalidasi, m
 **Kode akun dan jurnal penyesuaian (GL-01, GL-08, GL-11, GL-12)**
 
 - Kode akun divalidasi saat dibuat: angka kepala 1–9 menentukan `class`, dan dari kelas itu diturunkan saldo normal, letak di laporan, serta apakah akun ditutup ke laba ditahan di akhir tahun.
+- Kode akun bisa dikoreksi (salah ketik) selama angka kepalanya sama, sehingga kelas dan letaknya di laporan tetap; baris jurnal menunjuk akun lewat id, jadi riwayatnya ikut memakai kode baru. Akun kelompok dan akun sistem (kode di `roles.go`, dicari posting otomatis lewat kodenya) tidak bisa diganti kodenya. Trigger `ledger.guard_account` (migrasi 00023) tetap mengunci kelas, induk, level, dan jenis akun, serta melarang hapus.
+- Nama dan nama singkat PT bisa dikoreksi admin (`PUT /api/v1/admin/companies/{id}`, izin kelola sistem), unik di grup dan tercatat di audit trail.
 - Kolom `journal_entries.kind` membedakan jurnal `umum`, `penyesuaian`, `pembalik`, dan `penutup`. Jurnal penyesuaian punya seri nomor sendiri, `JP/{tahun}/{bulan}/{nomor}`.
 - Jurnal penyesuaian bertanda `auto_reverse` langsung membuat jurnal pembalik (seri JB) bertanggal hari pertama bulan berikutnya, di transaksi yang sama dan tertaut lewat `reversal_of`. Void jurnal penyesuaian ikut membatalkan pembaliknya, pada tanggal yang tidak lebih awal dari tanggal pembalik itu.
 - Template penyesuaian berulang (mis. penyusutan, amortisasi sewa dibayar di muka) disimpan di `ledger.adjustment_templates`.
@@ -240,7 +242,7 @@ Setiap dokumen bisnis mengikuti siklus status yang sama: draft → posted → (l
 **Pembelian (AP)**
 
 - Strukturnya mencerminkan AR: `purchase.bills`, `purchase.payments`, `payment_allocations`.
-- PPh yang dipotong dicatat sebagai utang PPh saat tagihan diposting, sehingga yang dibayar ke pemasok adalah total dikurangi PPh; draf bukti potong di modul pajak menyusul (TAX-08). Tagihan dengan pemasok dan nomor faktur pemasok yang sama memunculkan peringatan, bukan ditolak.
+- PPh yang dipotong dicatat sebagai utang PPh saat tagihan diposting, sehingga yang dibayar ke pemasok adalah total dikurangi PPh; bukti potongnya disusun modul pajak (TAX-08, lihat bagian pajak). PPh 26 hanya untuk pemasok luar negeri (kontak dengan negara selain IDN) dan dicatat ke 2-1206 Utang PPh 26; pemasok luar negeri tidak boleh dipotong PPh 23/4(2). Tagihan dengan pemasok dan nomor faktur pemasok yang sama memunculkan peringatan, bukan ditolak.
 - PT non-PKP tetap membayar PPN ke pemasok PKP, tetapi PPN itu tidak bisa dikreditkan: saat posting, PPN dibebankan ke akun baris tagihan, bukan ke PPN masukan.
 
 **Nota kredit, nota debit, dan retur (AR-05, AP-05, tahap 9C)**
@@ -305,9 +307,25 @@ Master produk dan jasa ada di modul persediaan (`inventory.products`), karena ba
 - `tax.tax_codes` bertanggal berlaku: tarif, rasio DPP (mis. 11/12), dan akun. Perhitungan ada di fungsi murni `tax.Calculate(lines, tanggal)` sehingga mudah diuji.
 - Eksportir XML Coretax disimpan per versi template (saat ini `coretax-faktur-keluaran/v1`, struktur `TaxInvoiceBulk`) dengan struct `encoding/xml` dan tes golden. Versi v1 disusun dari struktur impor massal yang dipakai luas, belum dari TaxInvoice.xsd resmi; sebelum dipakai pelanggan, uji dengan file contoh resmi DJP dan satu unggahan percobaan di Coretax.
 - Status faktur pajak keluaran disimpan modul pajak (`tax.output_invoices`): siap → diekspor → terbit (nomor faktur tercatat) → dibatalkan atau diganti. Data fakturnya dibaca lewat service penjualan. Kode transaksi default 04 bila DPP nilai lain dipakai, selain itu 01. Faktur penjualan yang faktur pajaknya terbit tidak bisa di-void sampai faktur pajaknya ditandai dibatalkan (pengunci dipasang lewat hook di service penjualan, tanpa dependensi melingkar).
-- Rekap PPN per masa dihitung dari faktur dan tagihan yang diposting; lebih bayar otomatis dikompensasikan ke masa berikutnya. Rekap ini juga memuat nota kredit/debit (mengurangi PPN di masa notanya) dan PPN digunggung dari rekap penjualan harian. Restitusi, faktur pajak masukan (TAX-07), dan bukti potong (TAX-08) belum dibangun.
+- Rekap PPN per masa dihitung dari faktur dan tagihan yang diposting; lebih bayar otomatis dikompensasikan ke masa berikutnya. Rekap ini juga memuat nota kredit/debit (mengurangi PPN di masa notanya) dan PPN digunggung dari rekap penjualan harian. PPN masukan dihitung per masa pengkreditannya (TAX-07, di bawah). Restitusi belum dibangun.
 - Nomor faktur yang terbit dicatat kembali dengan mengimpor file unduhan Coretax, dicocokkan lewat nomor referensi faktur Lajur (TAX-03).
 - Rekap PPN digunggung untuk retail (TAX-12) dihasilkan per masa dari rekap penjualan harian, dengan ekspor XLSX/CSV (format v1; cocokkan dengan converter Coretax yang berlaku sebelum dipakai pelanggan).
+
+**Faktur pajak masukan (TAX-07)**
+
+- Status pajak masukan disimpan per tagihan di `tax.input_invoices` (migrasi 00022): nomor faktur pajak pemasok (13–20 digit, unik per PT), tanggalnya, dikreditkan atau tidak, masa pengkreditan, jurnal reklasifikasi, dan PPN menurut Coretax. Tagihan tanpa baris status dianggap dikreditkan pada masa tagihannya, sehingga rekap PPN lama tidak berubah.
+- Masa pengkreditan boleh digeser dari masa tagihan (atau masa faktur bila lebih akhir) sampai tiga masa sesudah masa faktur (UU PPN Pasal 9 ayat 9). Rekap PPN memakai masa pengkreditan; nota debit mengurangi PPN masukan pada masa notanya atau masa pengkreditan tagihannya bila lebih akhir.
+- Tidak dikreditkan (PT PKP saja, wajib alasan): jurnal umum sumber `tax.input_vat` (id sumber = tagihan) mendebit akun biaya tiap baris tagihan sebesar PPN bersihnya (baris akun persediaan ke peran `NonCreditableVAT`, 6-4003) dan mengkredit PPN masukan; proyek, cabang, dan departemen ikut. Dikreditkan lagi mem-void jurnal itu. Tagihan dengan jurnal reklasifikasi tidak bisa di-void dan tidak bisa diberi atau dicabut nota debitnya (hook `VoidGuard` dan `NoteGuard` di service pembelian) sampai dikreditkan lagi, karena jurnalnya memakai PPN bersih saat dibuat.
+- Pencocokan Coretax: berkas daftar pajak masukan (Excel/CSV) dibaca dari judul kolomnya (NPWP penjual, nama, nomor faktur, tanggal, PPN). Baris dicocokkan lewat nomor yang sudah dicatat, lalu NPWP pemasok + PPN bersih (selisih ≤ Rp1, tanggal terdekat). Nomor dan tanggal faktur yang cocok dicatat otomatis; PPN Coretax disimpan untuk penanda selisih. Hasilnya: cocok, selisih, ada di Coretax tanpa tagihan, dan tagihan tanpa faktur di Coretax.
+
+**Bukti potong PPh 23, 4(2), dan 26 (TAX-08)**
+
+- Satu tagihan diposting yang memotong PPh = satu bukti potong (`tax.withholding_slips`), nilainya bersih sesudah nota debit. Pemasok dalam negeri → BPPU (`coretax-bppu/v1`), pemasok luar negeri (PPh 26) → BPNR (`coretax-bpnr/v1`). Struktur dan urutan elemen mengikuti template XML resmi DJP (bppu.xml dan bpnr.xml, 7 November 2024); salinannya ada di `testdata` dan tes membandingkan elemen per elemen.
+- Referensi kode objek pajak (KOP) beserta tarifnya, fasilitas, jenis dokumen, dan kode negara diambil dari sheet REF converter Excel resmi DJP dan ditanam di `coretax/refdata/bupot.json` (GET `/api/v1/tax/bupot-ref`, izin lihat PT). Perbarui berkas itu bila DJP merilis converter baru.
+- KOP bawaan per kode PPh disimpan di `tax.settings.withholding_objects`; kode PPh 4(2) bawaan Lajur sudah punya pasangan pasti, PPh 23 dan 26 dipilih per jenis jasa. Masalah yang menahan ekspor: KOP kosong atau tidak ada di referensi, tarif KOP ≠ tarif PPh tagihan (tanpa fasilitas), NPWP/NIK pemasok tidak 16 digit, TIN atau alamat pemasok luar negeri kosong, nomor SKD kosong untuk fasilitas SKD, dan PPh yang sudah habis dibatalkan nota debit.
+- Status: siap → diekspor (nilai yang diekspor disimpan) → terbit (nomor bukti potong unik per PT) → dibatalkan. Bukti potong yang diekspor bisa dikembalikan ke siap; nilai yang berubah sesudah diekspor (nota debit) ditandai. Satu ekspor bisa menghasilkan dua berkas (BPPU dan BPNR) yang disimpan di `tax.export_batches` dengan `kind`. Nomor yang terbit dicatat manual atau dari berkas daftar bukti potong Coretax, dicocokkan lewat nomor dokumen referensi.
+- Tagihan yang bukti potongnya terbit tidak bisa di-void sampai bukti potongnya ditandai dibatalkan.
+- Kontak menyimpan `country_code` (ISO alfa-3, bawaan IDN) dan `foreign_tin`; kontak luar negeri tidak boleh PKP dan tidak memakai NPWP/NIK/NITKU. PT lama perlu membuat akun 2-1206 Utang PPh 26 sebelum memakai PPh 26.
 
 ## Multi-entitas, transaksi antar-perusahaan, dan konsolidasi
 
@@ -611,7 +629,7 @@ services:
 
 - `user_company_roles.branch_ids` membatasi pengguna ke cabang tertentu di satu PT; kosong berarti semua cabang. Diatur di halaman Pengguna (chip cabang per PT) dan dikirim di `/me` sebagai `branchIds`.
 - `rbac.BranchesFor` menyaring daftar dokumen, umur piutang/utang, pelunasan, nota, kas, dan rekap harian ke cabang pengguna. `rbac.CheckBranch` menolak (403 `branch.restricted`) dokumen tanpa cabang atau dengan cabang lain, sehingga pengguna terbatas wajib memilih cabangnya.
-- Route yang mencakup seluruh PT ditandai `Route.WholeCompany` (jurnal, buku besar, neraca lajur, periode, pengaturan buku, penomoran, jurnal berulang, pajak, konsolidasi, impor, rekonsiliasi bank, stok dan kartu persediaan, dan laporan) dan menolak pengguna terbatas. Pengecualian: laba rugi dan ekspornya (tersaring ke cabang pengguna), kode pajak (dibutuhkan formulir), dan GET pengaturan buku (awal tahun buku untuk pilihan periode).
+- Route yang mencakup seluruh PT ditandai `Route.WholeCompany` (jurnal, buku besar, neraca lajur, periode, pengaturan buku, penomoran, jurnal berulang, pajak, konsolidasi, impor, rekonsiliasi bank, stok dan kartu persediaan, dan laporan) dan menolak pengguna terbatas. Pengecualian: laba rugi dan ekspornya (tersaring ke cabang pengguna), kode pajak (dibutuhkan formulir), referensi bukti potong (daftar negara di formulir kontak), dan GET pengaturan buku (awal tahun buku untuk pilihan periode).
 - Di antarmuka, pengguna terbatas tidak melihat menu Akuntansi, Pajak, Persediaan, Konsolidasi, dashboard beranda, rekonsiliasi bank, dan proyeksi kas. Laporan hanya menampilkan laba rugi cabangnya.
 
 ## Aset tetap (FA-01–03, dibangun lebih awal atas permintaan klien)

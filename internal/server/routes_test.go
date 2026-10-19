@@ -99,6 +99,9 @@ func TestWholeCompanyRoutes(t *testing.T) {
 		"/api/v1/reports/profit-loss":         false,
 		"/api/v1/reports/{name}/export":       false,
 		"/api/v1/tax/codes":                   false,
+		"/api/v1/tax/bupot-ref":               false,
+		"/api/v1/tax/slips":                   true,
+		"/api/v1/tax/input-invoices":          true,
 		"/api/v1/sales/invoices":              false,
 		"/api/v1/cash/transactions":           false,
 	}

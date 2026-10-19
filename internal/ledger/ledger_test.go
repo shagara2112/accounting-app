@@ -268,7 +268,7 @@ func TestDatabaseGuardsLedgerInvariants(t *testing.T) {
 		"DELETE FROM ledger.journal_lines",
 		"UPDATE ledger.journal_entries SET memo = 'diubah'",
 		"DELETE FROM ledger.journal_entries",
-		"UPDATE ledger.accounts SET code = '1-1199' WHERE code = '1-1101'",
+		"UPDATE ledger.accounts SET code = '2-1199' WHERE code = '1-1101'",
 		"DELETE FROM ledger.accounts WHERE code = '1-1101'",
 	} {
 		if _, err := f.pool.Exec(f.ctx, sql); err == nil {
@@ -554,6 +554,61 @@ func TestAccountRules(t *testing.T) {
 
 	_, err = f.svc.ApplyTemplate(f.ctx, f.company, "retail", f.actor)
 	expectCode(t, err, "coa.not_empty")
+}
+
+// Kode akun yang salah ketik bisa dikoreksi selama angka kepalanya sama; riwayat jurnal ikut
+// memakai kode baru karena baris jurnal menunjuk akun lewat id. Akun sistem dan kelompok terkunci.
+func TestAccountCodeCorrection(t *testing.T) {
+	f := setup(t)
+	parent := f.acc["1-1100"]
+	bri, err := f.svc.CreateAccount(f.ctx, f.company, ledger.NewAccount{Code: "1-1131", Name: "Bank BRI", ParentID: &parent, Postable: true}, f.actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.acc["1-1131"] = bri.ID
+	f.mustPost(ledger.General, "2026-10-05", f.line("1-1131", "1000", "0"), f.line("3-1001", "0", "1000"))
+
+	change := func(id uuid.UUID, code string, version int) (ledger.Account, error) {
+		return f.svc.UpdateAccount(f.ctx, f.company, id, ledger.AccountChange{Code: code, Name: "Bank BRI", Active: true, Version: version}, f.actor)
+	}
+	_, err = change(bri.ID, "2-1131", bri.Version)
+	expectCode(t, err, "account.invalid")
+	_, err = change(bri.ID, "1-1101", bri.Version)
+	expectCode(t, err, "account.code_taken")
+	_, err = change(bri.ID, "1131", bri.Version)
+	expectCode(t, err, "account.invalid")
+
+	fixed, err := change(bri.ID, "1-1113", bri.Version)
+	if err != nil || fixed.Code != "1-1113" || fixed.ID != bri.ID {
+		t.Fatalf("koreksi kode = %+v, %v", fixed, err)
+	}
+	l, err := f.svc.AccountLedger(f.ctx, f.company, bri.ID, civil.New(2026, 10, 1), civil.New(2026, 10, 31))
+	if err != nil || !l.Closing.Equal(money.MustParse("1000")) || l.Account.Code != "1-1113" {
+		t.Fatalf("buku besar sesudah koreksi kode = %+v, %v", l, err)
+	}
+
+	receivable := f.acc["1-1201"]
+	accounts, err := f.svc.Accounts(f.ctx, f.company)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range accounts {
+		if a.ID == receivable && !a.System {
+			t.Fatal("1-1201 piutang usaha seharusnya ditandai akun sistem")
+		}
+		if a.ID == bri.ID && a.System {
+			t.Fatal("akun biasa tidak boleh ditandai akun sistem")
+		}
+	}
+	_, err = f.svc.UpdateAccount(f.ctx, f.company, receivable, ledger.AccountChange{Code: "1-1209", Name: "Piutang usaha", Active: true, Version: 1}, f.actor)
+	expectCode(t, err, "account.invalid")
+	_, err = f.svc.UpdateAccount(f.ctx, f.company, f.acc["1"], ledger.AccountChange{Code: "1-9", Name: "Aset", Active: true, Version: 1}, f.actor)
+	expectCode(t, err, "account.invalid")
+
+	// Penjaga di basis data tetap menolak pindah kelas walau lewat SQL langsung.
+	if _, err := f.pool.Exec(f.ctx, "UPDATE ledger.accounts SET code = '2-1113' WHERE id = $1", bri.ID); err == nil {
+		t.Fatal("trigger seharusnya menolak kode berkepala lain")
+	}
 }
 
 // Tes acak: serangkaian posting dan void sembarang tidak pernah membuat saldo agregat

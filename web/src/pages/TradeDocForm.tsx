@@ -114,6 +114,8 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
   const ppnCodes = codes.filter((c) => c.kind === 'ppn')
   const pphCodes = codes.filter((c) => c.kind === 'pph')
   const contact = contacts.data?.find((c) => c.id === contactId)
+  // PPh 26 hanya untuk pemasok luar negeri; pemasok luar negeri tidak dipotong PPh 23/4(2).
+  const foreign = !!contact?.countryCode && contact.countryCode !== 'IDN'
   const projectOptions = useProjectOptions(companyId, can(me, 'project.view'), [projectId, ...rows.map((r) => r.projectId)])
   const productOptions = useMemo(
     () =>
@@ -445,11 +447,13 @@ function DocForm({ me, kind, existing }: { me: Me; kind: TradeKind; existing?: D
                   </label>
                   <select id="pph" value={whCode} onChange={(e) => setWhCode(e.target.value)} className="min-h-9 max-w-[220px] cursor-pointer rounded-[8px] border border-line-2 bg-surface px-2 text-[13px]">
                     <option value="">Tidak ada</option>
-                    {pphCodes.map((c) => (
-                      <option key={c.code} value={c.code}>
-                        {c.name}
-                      </option>
-                    ))}
+                    {pphCodes
+                      .filter((c) => !contact || (c.article === '26') === foreign || c.code === whCode)
+                      .map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.name}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 {wh > 0n && <Total label="PPh (dari DPP)" value={-wh} muted />}

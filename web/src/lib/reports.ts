@@ -14,7 +14,8 @@ export type ReportLine = {
   values?: string[]
 }
 
-export type ReportColumn = { label: string; from: string; to: string }
+/** branch/department: saringan kolom (id, atau 'none' untuk tanpa dimensi) untuk tautan buku besar. */
+export type ReportColumn = { label: string; from: string; to: string; branch?: string; department?: string }
 
 export type Statement = {
   title: string

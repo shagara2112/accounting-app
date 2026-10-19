@@ -151,10 +151,11 @@ func (l *ledger) CreateAccount(ctx context.Context, companyID uuid.UUID, a NewAc
 	return out, err
 }
 
-// UpdateAccount mengganti nama atau status aktif. Akun yang masih bersaldo, atau akun header
-// yang masih punya anak aktif, tidak bisa dinonaktifkan.
+// UpdateAccount mengganti nama, status aktif, atau mengoreksi kode. Akun yang masih bersaldo,
+// atau akun header yang masih punya anak aktif, tidak bisa dinonaktifkan. Kode baru harus
+// berangka kepala sama dan belum dipakai; akun kelompok dan akun sistem tidak bisa diganti kodenya.
 func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UUID, c AccountChange, actor Actor) (Account, error) {
-	c.Name = strings.TrimSpace(c.Name)
+	c.Name, c.Code = strings.TrimSpace(c.Name), strings.TrimSpace(c.Code)
 	if n := utf8.RuneCountInString(c.Name); n < 1 || n > 120 {
 		msg := "Nama akun wajib diisi (maksimal 120 karakter)."
 		return Account{}, httpx.Unprocessable("account.invalid", msg).WithFields(map[string]string{"name": msg})
@@ -191,6 +192,13 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 				}
 			}
 		}
+		code := cur.Code
+		if c.Code != "" && c.Code != cur.Code {
+			if err := checkCodeChange(ctx, q, companyID, cur, c.Code); err != nil {
+				return err
+			}
+			code = c.Code
+		}
 		if !cur.Active && c.Active && cur.ParentID != nil {
 			parent, err := q.GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: *cur.ParentID})
 			if err != nil {
@@ -203,7 +211,7 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 		}
 
 		row, err := q.UpdateAccount(ctx, store.UpdateAccountParams{
-			CompanyID: companyID, ID: accountID, Name: c.Name, Active: c.Active, Version: int32(c.Version),
+			CompanyID: companyID, ID: accountID, Code: code, Name: c.Name, Active: c.Active, Version: int32(c.Version),
 		})
 		if isNoRows(err) {
 			return httpx.Conflict("conflict.version", "Akun ini baru saja diubah orang lain. Muat ulang lalu coba lagi.")
@@ -221,6 +229,30 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 		return err
 	})
 	return out, err
+}
+
+// checkCodeChange memeriksa koreksi kode akun cur menjadi code.
+func checkCodeChange(ctx context.Context, q *store.Queries, companyID uuid.UUID, cur store.LedgerAccount, code string) error {
+	fail := func(msg string) error {
+		return httpx.Unprocessable("account.invalid", msg).WithFields(map[string]string{"code": msg})
+	}
+	switch class := classOfCode(code); {
+	case len(cur.Code) == 1:
+		return fail("Kode akun kelompok tidak bisa diubah.")
+	case roleCodes[cur.Code]:
+		return fail(fmt.Sprintf("%s %s adalah akun sistem untuk posting otomatis; kodenya tidak bisa diubah.", cur.Code, cur.Name))
+	case class == 0 || len(code) == 1:
+		return fail("Format kode: angka kepala 1–9, lalu tanda hubung dan angka, mis. 1-1101.")
+	case class != int(cur.Class):
+		return fail(fmt.Sprintf("Kode baru harus tetap berkepala %d (%s) supaya letaknya di laporan tidak berubah.", cur.Class, ClassOf(int(cur.Class)).Name))
+	}
+	if _, err := q.GetAccountByCode(ctx, store.GetAccountByCodeParams{CompanyID: companyID, Code: code}); err == nil {
+		msg := fmt.Sprintf("Kode %s sudah dipakai.", code)
+		return httpx.Conflict("account.code_taken", msg).WithFields(map[string]string{"code": msg})
+	} else if !isNoRows(err) {
+		return err
+	}
+	return nil
 }
 
 // ApplyTemplate mengisi bagan akun PT yang masih kosong dari template industri.
@@ -271,6 +303,7 @@ func toAccount(r store.LedgerAccount) Account {
 	return Account{
 		ID: r.ID, Code: r.Code, Name: r.Name, Class: int(r.Class), ParentID: r.ParentID,
 		Level: int(r.Level), Postable: r.Postable, Active: r.Active, Version: int(r.Version),
+		System: roleCodes[r.Code],
 	}
 }
 

@@ -47,7 +47,13 @@ type Contact struct {
 	// AR-01: limit kredit pelanggan (kosong = tanpa limit) dan nama kontak penagihan.
 	CreditLimit    *money.Amount `json:"creditLimit"`
 	BillingContact string        `json:"billingContact"`
+	// Lawan transaksi luar negeri (PPh 26, TAX-08): kode negara ISO alfa-3 dan TIN di negaranya.
+	CountryCode string `json:"countryCode"`
+	ForeignTIN  string `json:"foreignTin"`
 }
+
+// Foreign menandai kontak luar negeri (bukan Indonesia).
+func (c Contact) Foreign() bool { return c.CountryCode != "" && c.CountryCode != "IDN" }
 
 type ContactInput struct {
 	Name             string `json:"name"`
@@ -73,6 +79,8 @@ type ContactInput struct {
 
 	CreditLimit    *money.Amount `json:"creditLimit"`
 	BillingContact string        `json:"billingContact"`
+	CountryCode    string        `json:"countryCode"` // kosong = IDN
+	ForeignTIN     string        `json:"foreignTin"`
 }
 
 type ContactFilter struct {
@@ -87,6 +95,8 @@ var nonDigit = regexp.MustCompile(`[\s.\-]`)
 func digits(s string) string { return nonDigit.ReplaceAllString(strings.TrimSpace(s), "") }
 
 var allDigits = regexp.MustCompile(`^[0-9]*$`)
+
+var countryCode = regexp.MustCompile(`^[A-Z]{3}$`)
 
 // validate merapikan dan memeriksa isian kontak (TAX-05: NPWP 16 digit atau NIK, NITKU).
 func (in *ContactInput) validate() error {
@@ -134,6 +144,20 @@ func (in *ContactInput) validate() error {
 	if in.CreditLimit != nil && in.CreditLimit.Sign() < 0 {
 		f["creditLimit"] = "Limit kredit tidak boleh negatif."
 	}
+	in.CountryCode, in.ForeignTIN = strings.ToUpper(strings.TrimSpace(in.CountryCode)), strings.TrimSpace(in.ForeignTIN)
+	if in.CountryCode == "" {
+		in.CountryCode = "IDN"
+	}
+	switch {
+	case !countryCode.MatchString(in.CountryCode):
+		f["countryCode"] = "Kode negara 3 huruf (ISO), mis. SGP."
+	case in.CountryCode == "IDN":
+		in.ForeignTIN = ""
+	case utf8.RuneCountInString(in.ForeignTIN) > 50:
+		f["foreignTin"] = "TIN luar negeri maksimal 50 karakter."
+	case in.PKP:
+		f["pkp"] = "Kontak luar negeri tidak bisa berstatus PKP."
+	}
 	if len(f) > 0 {
 		return httpx.Unprocessable("contact.invalid", firstOf(f)).WithFields(f)
 	}
@@ -141,7 +165,7 @@ func (in *ContactInput) validate() error {
 }
 
 func firstOf(f map[string]string) string {
-	for _, k := range []string{"name", "role", "npwp", "nik", "nitku", "email", "paymentTermsDays"} {
+	for _, k := range []string{"name", "role", "npwp", "nik", "nitku", "email", "paymentTermsDays", "countryCode", "foreignTin", "pkp", "creditLimit"} {
 		if m, ok := f[k]; ok {
 			return m
 		}
@@ -171,6 +195,7 @@ func toContact(r store.CoreContact) Contact {
 		BankName: r.BankName, BankAccount: r.BankAccount, Active: r.Active, Version: int(r.Version),
 		LinkedCompanyID: r.LinkedCompanyID, ICExpenseAccountID: r.IcExpenseAccountID, ICRevenueAccountID: r.IcRevenueAccountID,
 		ICCashAccountID: r.IcCashAccountID, CreditLimit: r.CreditLimit, BillingContact: r.BillingContact,
+		CountryCode: r.CountryCode, ForeignTIN: r.ForeignTin,
 	}
 }
 
@@ -324,7 +349,7 @@ func (s *service) CreateContact(ctx context.Context, companyID uuid.UUID, in Con
 			PaymentTermsDays: int32(in.PaymentTermsDays), BankName: in.BankName, BankAccount: in.BankAccount,
 			CreatedBy: actor.UserRef(), LinkedCompanyID: in.LinkedCompanyID, IcExpenseAccountID: in.ICExpenseAccountID,
 			IcRevenueAccountID: in.ICRevenueAccountID, CreditLimit: in.CreditLimit, BillingContact: in.BillingContact,
-			IcCashAccountID: in.ICCashAccountID,
+			IcCashAccountID: in.ICCashAccountID, CountryCode: in.CountryCode, ForeignTin: in.ForeignTIN,
 		})
 		if err != nil {
 			return cashAccountErr(err)
@@ -362,7 +387,7 @@ func (s *service) UpdateContact(ctx context.Context, companyID, id uuid.UUID, in
 			PaymentTermsDays: int32(in.PaymentTermsDays), BankName: in.BankName, BankAccount: in.BankAccount,
 			Active: in.Active, LinkedCompanyID: in.LinkedCompanyID, IcExpenseAccountID: in.ICExpenseAccountID,
 			IcRevenueAccountID: in.ICRevenueAccountID, CreditLimit: in.CreditLimit, BillingContact: in.BillingContact,
-			IcCashAccountID: in.ICCashAccountID,
+			IcCashAccountID: in.ICCashAccountID, CountryCode: in.CountryCode, ForeignTin: in.ForeignTIN,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.Conflict("conflict.version", "Kontak ini baru saja diubah orang lain. Muat ulang lalu coba lagi.")

@@ -257,6 +257,8 @@ type CoreContact struct {
 	CreditLimit        *money.Amount
 	BillingContact     string
 	IcCashAccountID    *uuid.UUID
+	CountryCode        string
+	ForeignTin         string
 }
 
 type CoreDepartment struct {
@@ -1039,6 +1041,22 @@ type TaxExportBatch struct {
 	Content      []byte
 	CreatedAt    time.Time
 	CreatedBy    *uuid.UUID
+	Kind         string
+}
+
+type TaxInputInvoice struct {
+	BillID           uuid.UUID
+	CompanyID        uuid.UUID
+	TaxInvoiceNumber *string
+	TaxInvoiceDate   *civil.Date
+	Creditable       bool
+	CreditPeriod     *civil.Date
+	ReclassEntryID   *uuid.UUID
+	CoretaxVat       *money.Amount
+	CoretaxCheckedAt *time.Time
+	Note             string
+	UpdatedAt        time.Time
+	UpdatedBy        *uuid.UUID
 }
 
 type TaxOutputInvoice struct {
@@ -1056,12 +1074,13 @@ type TaxOutputInvoice struct {
 }
 
 type TaxSetting struct {
-	CompanyID uuid.UUID
-	GoodsOpt  string
-	GoodsCode string
-	UnitCode  string
-	UpdatedAt time.Time
-	UpdatedBy *uuid.UUID
+	CompanyID          uuid.UUID
+	GoodsOpt           string
+	GoodsCode          string
+	UnitCode           string
+	UpdatedAt          time.Time
+	UpdatedBy          *uuid.UUID
+	WithholdingObjects []byte
 }
 
 type TaxTaxCode struct {
@@ -1074,4 +1093,26 @@ type TaxTaxCode struct {
 	Article   *string
 	ValidFrom civil.Date
 	ValidTo   *civil.Date
+}
+
+type TaxWithholdingSlip struct {
+	BillID          uuid.UUID
+	CompanyID       uuid.UUID
+	TaxObjectCode   *string
+	Facility        string
+	FacilityNumber  string
+	Deemed          *money.Amount
+	Document        string
+	DocumentNumber  string
+	DocumentDate    *civil.Date
+	WithholdingDate *civil.Date
+	Status          string
+	SlipNumber      *string
+	ApprovedDate    *civil.Date
+	ExportedBase    *money.Amount
+	ExportedAmount  *money.Amount
+	LastBatchID     *uuid.UUID
+	Note            string
+	UpdatedAt       time.Time
+	UpdatedBy       *uuid.UUID
 }

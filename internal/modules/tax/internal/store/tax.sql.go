@@ -11,10 +11,41 @@ import (
 
 	"github.com/google/uuid"
 	"lajur/internal/platform/civil"
+	"lajur/internal/platform/money"
 )
 
+const allInputInvoiceStates = `-- name: AllInputInvoiceStates :many
+SELECT bill_id, creditable, credit_period FROM tax.input_invoices WHERE company_id = $1
+`
+
+type AllInputInvoiceStatesRow struct {
+	BillID       uuid.UUID
+	Creditable   bool
+	CreditPeriod *civil.Date
+}
+
+func (q *Queries) AllInputInvoiceStates(ctx context.Context, companyID uuid.UUID) ([]AllInputInvoiceStatesRow, error) {
+	rows, err := q.db.Query(ctx, allInputInvoiceStates, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AllInputInvoiceStatesRow
+	for rows.Next() {
+		var i AllInputInvoiceStatesRow
+		if err := rows.Scan(&i.BillID, &i.Creditable, &i.CreditPeriod); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getExportBatch = `-- name: GetExportBatch :one
-SELECT id, company_id, period, format, invoice_count, file_name, content, created_at, created_by FROM tax.export_batches WHERE company_id = $1 AND id = $2
+SELECT id, company_id, period, format, invoice_count, file_name, content, created_at, created_by, kind FROM tax.export_batches WHERE company_id = $1 AND id = $2
 `
 
 type GetExportBatchParams struct {
@@ -35,6 +66,36 @@ func (q *Queries) GetExportBatch(ctx context.Context, arg GetExportBatchParams) 
 		&i.Content,
 		&i.CreatedAt,
 		&i.CreatedBy,
+		&i.Kind,
+	)
+	return i, err
+}
+
+const getInputInvoiceForUpdate = `-- name: GetInputInvoiceForUpdate :one
+SELECT bill_id, company_id, tax_invoice_number, tax_invoice_date, creditable, credit_period, reclass_entry_id, coretax_vat, coretax_checked_at, note, updated_at, updated_by FROM tax.input_invoices WHERE company_id = $1 AND bill_id = $2 FOR UPDATE
+`
+
+type GetInputInvoiceForUpdateParams struct {
+	CompanyID uuid.UUID
+	BillID    uuid.UUID
+}
+
+func (q *Queries) GetInputInvoiceForUpdate(ctx context.Context, arg GetInputInvoiceForUpdateParams) (TaxInputInvoice, error) {
+	row := q.db.QueryRow(ctx, getInputInvoiceForUpdate, arg.CompanyID, arg.BillID)
+	var i TaxInputInvoice
+	err := row.Scan(
+		&i.BillID,
+		&i.CompanyID,
+		&i.TaxInvoiceNumber,
+		&i.TaxInvoiceDate,
+		&i.Creditable,
+		&i.CreditPeriod,
+		&i.ReclassEntryID,
+		&i.CoretaxVat,
+		&i.CoretaxCheckedAt,
+		&i.Note,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
 	)
 	return i, err
 }
@@ -68,7 +129,7 @@ func (q *Queries) GetOutputInvoiceForUpdate(ctx context.Context, arg GetOutputIn
 }
 
 const getTaxSettings = `-- name: GetTaxSettings :one
-SELECT company_id, goods_opt, goods_code, unit_code, updated_at, updated_by FROM tax.settings WHERE company_id = $1
+SELECT company_id, goods_opt, goods_code, unit_code, updated_at, updated_by, withholding_objects FROM tax.settings WHERE company_id = $1
 `
 
 func (q *Queries) GetTaxSettings(ctx context.Context, companyID uuid.UUID) (TaxSetting, error) {
@@ -81,13 +142,110 @@ func (q *Queries) GetTaxSettings(ctx context.Context, companyID uuid.UUID) (TaxS
 		&i.UnitCode,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.WithholdingObjects,
 	)
 	return i, err
 }
 
+const getWithholdingSlipForUpdate = `-- name: GetWithholdingSlipForUpdate :one
+SELECT bill_id, company_id, tax_object_code, facility, facility_number, deemed, document, document_number, document_date, withholding_date, status, slip_number, approved_date, exported_base, exported_amount, last_batch_id, note, updated_at, updated_by FROM tax.withholding_slips WHERE company_id = $1 AND bill_id = $2 FOR UPDATE
+`
+
+type GetWithholdingSlipForUpdateParams struct {
+	CompanyID uuid.UUID
+	BillID    uuid.UUID
+}
+
+func (q *Queries) GetWithholdingSlipForUpdate(ctx context.Context, arg GetWithholdingSlipForUpdateParams) (TaxWithholdingSlip, error) {
+	row := q.db.QueryRow(ctx, getWithholdingSlipForUpdate, arg.CompanyID, arg.BillID)
+	var i TaxWithholdingSlip
+	err := row.Scan(
+		&i.BillID,
+		&i.CompanyID,
+		&i.TaxObjectCode,
+		&i.Facility,
+		&i.FacilityNumber,
+		&i.Deemed,
+		&i.Document,
+		&i.DocumentNumber,
+		&i.DocumentDate,
+		&i.WithholdingDate,
+		&i.Status,
+		&i.SlipNumber,
+		&i.ApprovedDate,
+		&i.ExportedBase,
+		&i.ExportedAmount,
+		&i.LastBatchID,
+		&i.Note,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
+const inputInvoiceByNumber = `-- name: InputInvoiceByNumber :one
+SELECT bill_id FROM tax.input_invoices WHERE company_id = $1 AND tax_invoice_number = $2
+`
+
+type InputInvoiceByNumberParams struct {
+	CompanyID        uuid.UUID
+	TaxInvoiceNumber *string
+}
+
+func (q *Queries) InputInvoiceByNumber(ctx context.Context, arg InputInvoiceByNumberParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, inputInvoiceByNumber, arg.CompanyID, arg.TaxInvoiceNumber)
+	var bill_id uuid.UUID
+	err := row.Scan(&bill_id)
+	return bill_id, err
+}
+
+const inputInvoiceStates = `-- name: InputInvoiceStates :many
+
+SELECT bill_id, company_id, tax_invoice_number, tax_invoice_date, creditable, credit_period, reclass_entry_id, coretax_vat, coretax_checked_at, note, updated_at, updated_by FROM tax.input_invoices WHERE company_id = $1 AND bill_id = ANY($2::uuid[])
+`
+
+type InputInvoiceStatesParams struct {
+	CompanyID uuid.UUID
+	Ids       []uuid.UUID
+}
+
+// Faktur pajak masukan (TAX-07) ---------------------------------------------------------
+func (q *Queries) InputInvoiceStates(ctx context.Context, arg InputInvoiceStatesParams) ([]TaxInputInvoice, error) {
+	rows, err := q.db.Query(ctx, inputInvoiceStates, arg.CompanyID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaxInputInvoice
+	for rows.Next() {
+		var i TaxInputInvoice
+		if err := rows.Scan(
+			&i.BillID,
+			&i.CompanyID,
+			&i.TaxInvoiceNumber,
+			&i.TaxInvoiceDate,
+			&i.Creditable,
+			&i.CreditPeriod,
+			&i.ReclassEntryID,
+			&i.CoretaxVat,
+			&i.CoretaxCheckedAt,
+			&i.Note,
+			&i.UpdatedAt,
+			&i.UpdatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertExportBatch = `-- name: InsertExportBatch :exec
-INSERT INTO tax.export_batches (id, company_id, period, format, invoice_count, file_name, content, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO tax.export_batches (id, company_id, period, format, invoice_count, file_name, content, created_by, kind)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertExportBatchParams struct {
@@ -99,6 +257,7 @@ type InsertExportBatchParams struct {
 	FileName     string
 	Content      []byte
 	CreatedBy    *uuid.UUID
+	Kind         string
 }
 
 func (q *Queries) InsertExportBatch(ctx context.Context, arg InsertExportBatchParams) error {
@@ -111,25 +270,28 @@ func (q *Queries) InsertExportBatch(ctx context.Context, arg InsertExportBatchPa
 		arg.FileName,
 		arg.Content,
 		arg.CreatedBy,
+		arg.Kind,
 	)
 	return err
 }
 
 const listExportBatches = `-- name: ListExportBatches :many
-SELECT b.id, b.period, b.format, b.invoice_count, b.file_name, b.created_at, u.name AS created_by_name
+SELECT b.id, b.kind, b.period, b.format, b.invoice_count, b.file_name, b.created_at, u.name AS created_by_name
 FROM tax.export_batches b
 LEFT JOIN platform.users u ON u.id = b.created_by
-WHERE b.company_id = $1 AND b.period = $2
+WHERE b.company_id = $1 AND b.period = $2 AND b.kind = ANY($3::text[])
 ORDER BY b.created_at DESC
 `
 
 type ListExportBatchesParams struct {
 	CompanyID uuid.UUID
 	Period    civil.Date
+	Kinds     []string
 }
 
 type ListExportBatchesRow struct {
 	ID            uuid.UUID
+	Kind          string
 	Period        civil.Date
 	Format        string
 	InvoiceCount  int32
@@ -139,7 +301,7 @@ type ListExportBatchesRow struct {
 }
 
 func (q *Queries) ListExportBatches(ctx context.Context, arg ListExportBatchesParams) ([]ListExportBatchesRow, error) {
-	rows, err := q.db.Query(ctx, listExportBatches, arg.CompanyID, arg.Period)
+	rows, err := q.db.Query(ctx, listExportBatches, arg.CompanyID, arg.Period, arg.Kinds)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +311,7 @@ func (q *Queries) ListExportBatches(ctx context.Context, arg ListExportBatchesPa
 		var i ListExportBatchesRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Kind,
 			&i.Period,
 			&i.Format,
 			&i.InvoiceCount,
@@ -241,6 +404,83 @@ func (q *Queries) OutputInvoiceStates(ctx context.Context, arg OutputInvoiceStat
 	return items, nil
 }
 
+const setWithholdingObjects = `-- name: SetWithholdingObjects :exec
+INSERT INTO tax.settings (company_id, withholding_objects, updated_at, updated_by)
+VALUES ($1, $2, now(), $3)
+ON CONFLICT (company_id) DO UPDATE
+SET withholding_objects = EXCLUDED.withholding_objects, updated_at = now(), updated_by = EXCLUDED.updated_by
+`
+
+type SetWithholdingObjectsParams struct {
+	CompanyID          uuid.UUID
+	WithholdingObjects []byte
+	UpdatedBy          *uuid.UUID
+}
+
+func (q *Queries) SetWithholdingObjects(ctx context.Context, arg SetWithholdingObjectsParams) error {
+	_, err := q.db.Exec(ctx, setWithholdingObjects, arg.CompanyID, arg.WithholdingObjects, arg.UpdatedBy)
+	return err
+}
+
+const upsertInputInvoice = `-- name: UpsertInputInvoice :one
+INSERT INTO tax.input_invoices
+  (bill_id, company_id, tax_invoice_number, tax_invoice_date, creditable, credit_period, reclass_entry_id,
+   coretax_vat, coretax_checked_at, note, updated_at, updated_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), $11)
+ON CONFLICT (bill_id) DO UPDATE
+SET tax_invoice_number = EXCLUDED.tax_invoice_number, tax_invoice_date = EXCLUDED.tax_invoice_date,
+    creditable = EXCLUDED.creditable, credit_period = EXCLUDED.credit_period, reclass_entry_id = EXCLUDED.reclass_entry_id,
+    coretax_vat = EXCLUDED.coretax_vat, coretax_checked_at = EXCLUDED.coretax_checked_at, note = EXCLUDED.note,
+    updated_at = now(), updated_by = EXCLUDED.updated_by
+RETURNING bill_id, company_id, tax_invoice_number, tax_invoice_date, creditable, credit_period, reclass_entry_id, coretax_vat, coretax_checked_at, note, updated_at, updated_by
+`
+
+type UpsertInputInvoiceParams struct {
+	BillID           uuid.UUID
+	CompanyID        uuid.UUID
+	TaxInvoiceNumber *string
+	TaxInvoiceDate   *civil.Date
+	Creditable       bool
+	CreditPeriod     *civil.Date
+	ReclassEntryID   *uuid.UUID
+	CoretaxVat       *money.Amount
+	CoretaxCheckedAt *time.Time
+	Note             string
+	UpdatedBy        *uuid.UUID
+}
+
+func (q *Queries) UpsertInputInvoice(ctx context.Context, arg UpsertInputInvoiceParams) (TaxInputInvoice, error) {
+	row := q.db.QueryRow(ctx, upsertInputInvoice,
+		arg.BillID,
+		arg.CompanyID,
+		arg.TaxInvoiceNumber,
+		arg.TaxInvoiceDate,
+		arg.Creditable,
+		arg.CreditPeriod,
+		arg.ReclassEntryID,
+		arg.CoretaxVat,
+		arg.CoretaxCheckedAt,
+		arg.Note,
+		arg.UpdatedBy,
+	)
+	var i TaxInputInvoice
+	err := row.Scan(
+		&i.BillID,
+		&i.CompanyID,
+		&i.TaxInvoiceNumber,
+		&i.TaxInvoiceDate,
+		&i.Creditable,
+		&i.CreditPeriod,
+		&i.ReclassEntryID,
+		&i.CoretaxVat,
+		&i.CoretaxCheckedAt,
+		&i.Note,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
 const upsertOutputInvoice = `-- name: UpsertOutputInvoice :one
 INSERT INTO tax.output_invoices
   (invoice_id, company_id, trx_code, status, tax_invoice_number, approved_date, last_batch_id, replaced_by, note, updated_at, updated_by)
@@ -301,7 +541,7 @@ VALUES ($1, $2, $3, $4, now(), $5)
 ON CONFLICT (company_id) DO UPDATE
 SET goods_opt = EXCLUDED.goods_opt, goods_code = EXCLUDED.goods_code, unit_code = EXCLUDED.unit_code,
     updated_at = now(), updated_by = EXCLUDED.updated_by
-RETURNING company_id, goods_opt, goods_code, unit_code, updated_at, updated_by
+RETURNING company_id, goods_opt, goods_code, unit_code, updated_at, updated_by, withholding_objects
 `
 
 type UpsertTaxSettingsParams struct {
@@ -328,6 +568,156 @@ func (q *Queries) UpsertTaxSettings(ctx context.Context, arg UpsertTaxSettingsPa
 		&i.UnitCode,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.WithholdingObjects,
 	)
 	return i, err
+}
+
+const upsertWithholdingSlip = `-- name: UpsertWithholdingSlip :one
+INSERT INTO tax.withholding_slips
+  (bill_id, company_id, tax_object_code, facility, facility_number, deemed, document, document_number, document_date,
+   withholding_date, status, slip_number, approved_date, exported_base, exported_amount, last_batch_id, note, updated_at, updated_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, now(), $18)
+ON CONFLICT (bill_id) DO UPDATE
+SET tax_object_code = EXCLUDED.tax_object_code, facility = EXCLUDED.facility, facility_number = EXCLUDED.facility_number,
+    deemed = EXCLUDED.deemed, document = EXCLUDED.document, document_number = EXCLUDED.document_number,
+    document_date = EXCLUDED.document_date, withholding_date = EXCLUDED.withholding_date, status = EXCLUDED.status,
+    slip_number = EXCLUDED.slip_number, approved_date = EXCLUDED.approved_date, exported_base = EXCLUDED.exported_base,
+    exported_amount = EXCLUDED.exported_amount, last_batch_id = EXCLUDED.last_batch_id, note = EXCLUDED.note,
+    updated_at = now(), updated_by = EXCLUDED.updated_by
+RETURNING bill_id, company_id, tax_object_code, facility, facility_number, deemed, document, document_number, document_date, withholding_date, status, slip_number, approved_date, exported_base, exported_amount, last_batch_id, note, updated_at, updated_by
+`
+
+type UpsertWithholdingSlipParams struct {
+	BillID          uuid.UUID
+	CompanyID       uuid.UUID
+	TaxObjectCode   *string
+	Facility        string
+	FacilityNumber  string
+	Deemed          *money.Amount
+	Document        string
+	DocumentNumber  string
+	DocumentDate    *civil.Date
+	WithholdingDate *civil.Date
+	Status          string
+	SlipNumber      *string
+	ApprovedDate    *civil.Date
+	ExportedBase    *money.Amount
+	ExportedAmount  *money.Amount
+	LastBatchID     *uuid.UUID
+	Note            string
+	UpdatedBy       *uuid.UUID
+}
+
+func (q *Queries) UpsertWithholdingSlip(ctx context.Context, arg UpsertWithholdingSlipParams) (TaxWithholdingSlip, error) {
+	row := q.db.QueryRow(ctx, upsertWithholdingSlip,
+		arg.BillID,
+		arg.CompanyID,
+		arg.TaxObjectCode,
+		arg.Facility,
+		arg.FacilityNumber,
+		arg.Deemed,
+		arg.Document,
+		arg.DocumentNumber,
+		arg.DocumentDate,
+		arg.WithholdingDate,
+		arg.Status,
+		arg.SlipNumber,
+		arg.ApprovedDate,
+		arg.ExportedBase,
+		arg.ExportedAmount,
+		arg.LastBatchID,
+		arg.Note,
+		arg.UpdatedBy,
+	)
+	var i TaxWithholdingSlip
+	err := row.Scan(
+		&i.BillID,
+		&i.CompanyID,
+		&i.TaxObjectCode,
+		&i.Facility,
+		&i.FacilityNumber,
+		&i.Deemed,
+		&i.Document,
+		&i.DocumentNumber,
+		&i.DocumentDate,
+		&i.WithholdingDate,
+		&i.Status,
+		&i.SlipNumber,
+		&i.ApprovedDate,
+		&i.ExportedBase,
+		&i.ExportedAmount,
+		&i.LastBatchID,
+		&i.Note,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
+const withholdingSlipByNumber = `-- name: WithholdingSlipByNumber :one
+SELECT bill_id FROM tax.withholding_slips WHERE company_id = $1 AND slip_number = $2
+`
+
+type WithholdingSlipByNumberParams struct {
+	CompanyID  uuid.UUID
+	SlipNumber *string
+}
+
+func (q *Queries) WithholdingSlipByNumber(ctx context.Context, arg WithholdingSlipByNumberParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, withholdingSlipByNumber, arg.CompanyID, arg.SlipNumber)
+	var bill_id uuid.UUID
+	err := row.Scan(&bill_id)
+	return bill_id, err
+}
+
+const withholdingSlipStates = `-- name: WithholdingSlipStates :many
+
+SELECT bill_id, company_id, tax_object_code, facility, facility_number, deemed, document, document_number, document_date, withholding_date, status, slip_number, approved_date, exported_base, exported_amount, last_batch_id, note, updated_at, updated_by FROM tax.withholding_slips WHERE company_id = $1 AND bill_id = ANY($2::uuid[])
+`
+
+type WithholdingSlipStatesParams struct {
+	CompanyID uuid.UUID
+	Ids       []uuid.UUID
+}
+
+// Bukti potong (TAX-08) -----------------------------------------------------------------
+func (q *Queries) WithholdingSlipStates(ctx context.Context, arg WithholdingSlipStatesParams) ([]TaxWithholdingSlip, error) {
+	rows, err := q.db.Query(ctx, withholdingSlipStates, arg.CompanyID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaxWithholdingSlip
+	for rows.Next() {
+		var i TaxWithholdingSlip
+		if err := rows.Scan(
+			&i.BillID,
+			&i.CompanyID,
+			&i.TaxObjectCode,
+			&i.Facility,
+			&i.FacilityNumber,
+			&i.Deemed,
+			&i.Document,
+			&i.DocumentNumber,
+			&i.DocumentDate,
+			&i.WithholdingDate,
+			&i.Status,
+			&i.SlipNumber,
+			&i.ApprovedDate,
+			&i.ExportedBase,
+			&i.ExportedAmount,
+			&i.LastBatchID,
+			&i.Note,
+			&i.UpdatedAt,
+			&i.UpdatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

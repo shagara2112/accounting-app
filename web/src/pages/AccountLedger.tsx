@@ -1,12 +1,13 @@
 import { useSearchParams } from 'react-router'
 import type { Me } from '../lib/api'
 import { formatDate, monthEnd, monthOf, monthStart, todayISO } from '../lib/dates'
+import { useDimensions, type Dimension } from '../lib/dimensions'
 import { useAccountLedger, useAccounts } from '../lib/ledger'
 import { kindLabel, kindTone } from '../lib/labels'
 import { formatAmount } from '../lib/money'
 import { AccountPicker } from '../components/AccountPicker'
 import { JournalDrawer } from '../components/JournalDrawer'
-import { Alert, Badge, EmptyState, Field, PageHeader, Skeleton, TableShell, td, th } from '../components/ui'
+import { Alert, Badge, EmptyState, Field, PageHeader, SelectField, Skeleton, TableShell, td, th } from '../components/ui'
 
 export function AccountLedgerPage({ me }: { me: Me }) {
   const companyId = me.activeCompanyId
@@ -16,9 +17,14 @@ export function AccountLedgerPage({ me }: { me: Me }) {
   const from = params.get('dari') ?? monthStart(thisMonth)
   const to = params.get('sampai') ?? monthEnd(thisMonth)
   const openId = params.get('id')
+  // Saringan cabang/departemen (GL-09): id, 'none' = baris tanpa dimensi, kosong = semua.
+  const branch = params.get('cabang') ?? ''
+  const department = params.get('departemen') ?? ''
 
   const accounts = useAccounts(companyId)
-  const ledger = useAccountLedger(companyId, accountId, from, to)
+  const branches = useDimensions(companyId, 'cabang').data ?? []
+  const departments = useDimensions(companyId, 'departemen').data ?? []
+  const ledger = useAccountLedger(companyId, accountId, from, to, branch, department)
   const data = ledger.data && ledger.data.account.id === accountId ? ledger.data : undefined
 
   function update(next: Record<string, string | null>) {
@@ -31,6 +37,12 @@ export function AccountLedgerPage({ me }: { me: Me }) {
   }
 
   const normal = data?.normal === 'kredit' ? 'kredit' : 'debit'
+  const dimName = (list: Dimension[], id: string, none: string) => (id === 'none' ? none : list.find((d) => d.id === id)?.name ?? '')
+  const filterText = [
+    branch && `cabang ${dimName(branches, branch, 'tanpa cabang')}`,
+    department && `departemen ${dimName(departments, department, 'tanpa departemen')}`,
+  ].filter(Boolean)
+  const codeOf = (list: Dimension[], id?: string) => (id ? list.find((d) => d.id === id)?.code : undefined)
 
   return (
     <div className="flex flex-col gap-5">
@@ -50,6 +62,14 @@ export function AccountLedgerPage({ me }: { me: Me }) {
         <Field id="bb-dari" label="Dari" type="date" value={from} max={to} onChange={(e) => e.target.value && update({ dari: e.target.value })} />
         <Field id="bb-sampai" label="Sampai" type="date" value={to} min={from} onChange={(e) => e.target.value && update({ sampai: e.target.value })} />
       </div>
+      {(branches.length > 0 || departments.length > 0 || branch || department) && (
+        <div className="flex flex-wrap gap-3">
+          {(branches.length > 0 || branch) && <DimSelect id="bb-cabang" label="Cabang" all="Semua cabang" none="Tanpa cabang" list={branches} value={branch} onChange={(v) => update({ cabang: v, id: null })} />}
+          {(departments.length > 0 || department) && (
+            <DimSelect id="bb-departemen" label="Departemen" all="Semua departemen" none="Tanpa departemen" list={departments} value={department} onChange={(v) => update({ departemen: v, id: null })} />
+          )}
+        </div>
+      )}
 
       {!accountId && <EmptyState title="Pilih akun" body="Ketik kode atau nama akun untuk melihat mutasi dan saldonya." />}
       {accountId && !data && ledger.isFetching && <Skeleton className="h-64" />}
@@ -63,6 +83,11 @@ export function AccountLedgerPage({ me }: { me: Me }) {
             <Stat label="Mutasi kredit" value={data.totalCredit} />
             <Stat label="Saldo akhir" value={data.closing} note={`${formatDate(data.to)} · saldo normal ${normal}`} strong />
           </div>
+          {filterText.length > 0 && (
+            <p className="text-sm text-muted">
+              Hanya baris jurnal {filterText.join(' dan ')}. Saldo awal dan akhir juga dihitung dari baris itu saja.
+            </p>
+          )}
           {data.truncated && <Alert tone="warn">Hanya 5.000 baris pertama yang ditampilkan; persempit rentang tanggal. Saldo akhir tetap dihitung dari semua baris.</Alert>}
 
           <div className={`transition-opacity duration-150 ${ledger.isPlaceholderData ? 'opacity-60' : ''}`}>
@@ -97,7 +122,12 @@ export function AccountLedgerPage({ me }: { me: Me }) {
                         {l.status === 'void' && <Badge tone="bad">Void</Badge>}
                       </span>
                     </td>
-                    <td className={`${td} max-w-[280px] truncate`}>{l.memo || '—'}</td>
+                    <td className={`${td} max-w-[280px]`}>
+                      <span className="block truncate">{l.memo || '—'}</span>
+                      {(codeOf(branches, l.branchId) || codeOf(departments, l.departmentId)) && (
+                        <span className="num block text-xs text-muted">{[codeOf(branches, l.branchId), codeOf(departments, l.departmentId)].filter(Boolean).join(' · ')}</span>
+                      )}
+                    </td>
                     <td className={`${td} num text-right`}>{formatAmount(l.debit, { blankZero: true })}</td>
                     <td className={`${td} num text-right`}>{formatAmount(l.credit, { blankZero: true })}</td>
                     <td className={`${td} num text-right`}>{formatAmount(l.balance, { parens: true })}</td>
@@ -120,6 +150,23 @@ export function AccountLedgerPage({ me }: { me: Me }) {
       )}
 
       <JournalDrawer me={me} id={openId} onClose={() => update({ id: null })} onOpen={(id) => update({ id })} />
+    </div>
+  )
+}
+
+function DimSelect({ id, label, all, none, list, value, onChange }: { id: string; label: string; all: string; none: string; list: Dimension[]; value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="w-[240px] max-sm:w-full">
+      <SelectField id={id} label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{all}</option>
+        <option value="none">{none}</option>
+        {list.map((d) => (
+          <option key={d.id} value={d.id}>
+            {d.code} · {d.name}
+            {d.active ? '' : ' (nonaktif)'}
+          </option>
+        ))}
+      </SelectField>
     </div>
   )
 }

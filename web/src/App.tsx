@@ -4,6 +4,7 @@ import { useMe } from './lib/queries'
 import { Shell } from './components/Shell'
 import { Skeleton } from './components/ui'
 import { Login } from './pages/Login'
+import { GuidePage } from './pages/Guide'
 import { Home } from './pages/Home'
 import { Audit } from './pages/Audit'
 import { Journals } from './pages/Journals'
@@ -70,6 +71,7 @@ export function App() {
       <Route element={<Shell me={me.data} />}>
         <Route index element={<Home me={me.data} />} />
         <Route path="audit" element={<Audit me={me.data} />} />
+        <Route path="panduan" element={<GuidePage me={me.data} />} />
         <Route path="jurnal" element={<Journals me={me.data} />} />
         <Route path="jurnal/baru" element={<JournalForm me={me.data} />} />
         <Route path="jurnal/:id/ubah" element={<JournalEdit me={me.data} />} />

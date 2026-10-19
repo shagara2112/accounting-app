@@ -16,36 +16,46 @@ import (
 
 const accountLines = `-- name: AccountLines :many
 SELECT l.entry_id, e.number, e.kind, e.status, e.source_type, l.entry_date, l.line_no,
-       e.memo AS entry_memo, l.memo, l.debit, l.credit, l.project_id
+       e.memo AS entry_memo, l.memo, l.debit, l.credit, l.project_id, l.branch_id, l.department_id
 FROM ledger.journal_lines l
 JOIN ledger.journal_entries e ON e.id = l.entry_id
 WHERE l.company_id = $1 AND l.account_id = $2
   AND l.entry_date >= $3 AND l.entry_date <= $4
+  AND ($5::uuid IS NULL OR l.branch_id = $5::uuid)
+  AND (NOT $6::boolean OR l.branch_id IS NULL)
+  AND ($7::uuid IS NULL OR l.department_id = $7::uuid)
+  AND (NOT $8::boolean OR l.department_id IS NULL)
 ORDER BY l.entry_date, e.posted_at, e.number, l.line_no
-LIMIT $5
+LIMIT $9
 `
 
 type AccountLinesParams struct {
-	CompanyID uuid.UUID
-	AccountID uuid.UUID
-	FromDate  civil.Date
-	ToDate    civil.Date
-	RowLimit  int32
+	CompanyID      uuid.UUID
+	AccountID      uuid.UUID
+	FromDate       civil.Date
+	ToDate         civil.Date
+	BranchID       *uuid.UUID
+	BranchNull     bool
+	DepartmentID   *uuid.UUID
+	DepartmentNull bool
+	RowLimit       int32
 }
 
 type AccountLinesRow struct {
-	EntryID    uuid.UUID
-	Number     string
-	Kind       string
-	Status     string
-	SourceType string
-	EntryDate  civil.Date
-	LineNo     int16
-	EntryMemo  string
-	Memo       string
-	Debit      money.Amount
-	Credit     money.Amount
-	ProjectID  *uuid.UUID
+	EntryID      uuid.UUID
+	Number       string
+	Kind         string
+	Status       string
+	SourceType   string
+	EntryDate    civil.Date
+	LineNo       int16
+	EntryMemo    string
+	Memo         string
+	Debit        money.Amount
+	Credit       money.Amount
+	ProjectID    *uuid.UUID
+	BranchID     *uuid.UUID
+	DepartmentID *uuid.UUID
 }
 
 func (q *Queries) AccountLines(ctx context.Context, arg AccountLinesParams) ([]AccountLinesRow, error) {
@@ -54,6 +64,10 @@ func (q *Queries) AccountLines(ctx context.Context, arg AccountLinesParams) ([]A
 		arg.AccountID,
 		arg.FromDate,
 		arg.ToDate,
+		arg.BranchID,
+		arg.BranchNull,
+		arg.DepartmentID,
+		arg.DepartmentNull,
 		arg.RowLimit,
 	)
 	if err != nil {
@@ -76,6 +90,8 @@ func (q *Queries) AccountLines(ctx context.Context, arg AccountLinesParams) ([]A
 			&i.Debit,
 			&i.Credit,
 			&i.ProjectID,
+			&i.BranchID,
+			&i.DepartmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -151,21 +167,35 @@ SELECT coalesce(sum(debit - credit), 0)::numeric AS net
 FROM ledger.journal_lines
 WHERE company_id = $1 AND account_id = $2
   AND entry_date < $3 AND entry_date >= $4
+  AND ($5::uuid IS NULL OR branch_id = $5::uuid)
+  AND (NOT $6::boolean OR branch_id IS NULL)
+  AND ($7::uuid IS NULL OR department_id = $7::uuid)
+  AND (NOT $8::boolean OR department_id IS NULL)
 `
 
 type AccountOpeningParams struct {
-	CompanyID  uuid.UUID
-	AccountID  uuid.UUID
-	BeforeDate civil.Date
-	SinceDate  civil.Date
+	CompanyID      uuid.UUID
+	AccountID      uuid.UUID
+	BeforeDate     civil.Date
+	SinceDate      civil.Date
+	BranchID       *uuid.UUID
+	BranchNull     bool
+	DepartmentID   *uuid.UUID
+	DepartmentNull bool
 }
 
+// Saldo satu akun sebelum before_date, bisa disaring cabang/departemen (GL-09); *_null memilih
+// baris tanpa dimensi itu.
 func (q *Queries) AccountOpening(ctx context.Context, arg AccountOpeningParams) (money.Amount, error) {
 	row := q.db.QueryRow(ctx, accountOpening,
 		arg.CompanyID,
 		arg.AccountID,
 		arg.BeforeDate,
 		arg.SinceDate,
+		arg.BranchID,
+		arg.BranchNull,
+		arg.DepartmentID,
+		arg.DepartmentNull,
 	)
 	var net money.Amount
 	err := row.Scan(&net)
@@ -1896,12 +1926,13 @@ func (q *Queries) SetRevising(ctx context.Context, entryID string) error {
 
 const updateAccount = `-- name: UpdateAccount :one
 UPDATE ledger.accounts
-SET name = $1, active = $2, version = version + 1
-WHERE company_id = $3 AND id = $4 AND version = $5
+SET code = $1, name = $2, active = $3, version = version + 1
+WHERE company_id = $4 AND id = $5 AND version = $6
 RETURNING id, company_id, code, name, class, parent_id, level, postable, active, created_at, created_by, version
 `
 
 type UpdateAccountParams struct {
+	Code      string
 	Name      string
 	Active    bool
 	CompanyID uuid.UUID
@@ -1911,6 +1942,7 @@ type UpdateAccountParams struct {
 
 func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (LedgerAccount, error) {
 	row := q.db.QueryRow(ctx, updateAccount,
+		arg.Code,
 		arg.Name,
 		arg.Active,
 		arg.CompanyID,

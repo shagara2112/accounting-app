@@ -121,6 +121,12 @@ func Modules(pool *pgxpool.Pool) Services {
 	})
 	m.Purchase = purchase.New(purchase.Deps{
 		Pool: pool, Ledger: m.Ledger, Core: m.Core, Tax: m.Tax, Cash: m.Cash, Inventory: m.Inventory, ProjectCheck: check,
+		VoidGuard: func(ctx context.Context, companyID, billID uuid.UUID) error {
+			return m.Coretax.CanVoidBill(ctx, companyID, billID)
+		},
+		NoteGuard: func(ctx context.Context, companyID, billID uuid.UUID) error {
+			return m.Coretax.CanChangeBillVAT(ctx, companyID, billID)
+		},
 		AfterPost: func(ctx context.Context, companyID, id uuid.UUID, actor audit.Actor) error {
 			return m.Consol.BillPosted(ctx, companyID, id, actor)
 		},
@@ -140,7 +146,7 @@ func Modules(pool *pgxpool.Pool) Services {
 			return m.Consol.SettlementVoided(ctx, companyID, purchase.SourcePayment, id, date, reason, actor)
 		},
 	})
-	m.Coretax = coretax.New(coretax.Deps{Pool: pool, Core: m.Core, Tax: m.Tax, Sales: m.Sales, Purchase: m.Purchase})
+	m.Coretax = coretax.New(coretax.Deps{Pool: pool, Core: m.Core, Tax: m.Tax, Sales: m.Sales, Purchase: m.Purchase, Ledger: m.Ledger})
 	m.Project = project.New(project.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Tax: m.Tax, Sales: m.Sales})
 	m.Asset = asset.New(asset.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core})
 	m.Report = report.New(report.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Cash: m.Cash, Sales: m.Sales, Purchase: m.Purchase})
@@ -324,9 +330,11 @@ func markWholeCompany(rt api.Route) api.Route {
 		}
 	}
 	// Laba rugi tersaring per cabang; ekspornya diperiksa di handler laporan. Kode pajak dibutuhkan
-	// formulir faktur dan tagihan cabang, dan awal tahun buku dibutuhkan pilihan periode laporan.
+	// formulir faktur dan tagihan cabang, referensi bukti potong (daftar negara) dibutuhkan formulir
+	// kontak, dan awal tahun buku dibutuhkan pilihan periode laporan.
 	switch {
-	case rt.Path == "/api/v1/reports/profit-loss", rt.Path == "/api/v1/reports/{name}/export", rt.Path == "/api/v1/tax/codes":
+	case rt.Path == "/api/v1/reports/profit-loss", rt.Path == "/api/v1/reports/{name}/export", rt.Path == "/api/v1/tax/codes",
+		rt.Path == "/api/v1/tax/bupot-ref":
 		rt.WholeCompany = false
 	case rt.Path == "/api/v1/ledger/settings" && rt.Method == http.MethodGet:
 		rt.WholeCompany = false

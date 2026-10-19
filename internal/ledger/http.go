@@ -91,6 +91,22 @@ func dateParam(r *http.Request, name string, def civil.Date) (civil.Date, error)
 	return d, nil
 }
 
+// dimParam membaca saringan cabang/departemen: id, "none" untuk baris tanpa dimensi, atau kosong.
+func dimParam(r *http.Request, name string) (*uuid.UUID, bool, error) {
+	switch v := r.URL.Query().Get(name); v {
+	case "":
+		return nil, false, nil
+	case "none":
+		return nil, true, nil
+	default:
+		id, err := uuid.Parse(v)
+		if err != nil {
+			return nil, false, httpx.BadRequest("request.query", "Parameter "+name+" tidak valid.")
+		}
+		return &id, false, nil
+	}
+}
+
 func monthParam(r *http.Request, v string, def civil.Date) (civil.Date, error) {
 	if v == "" {
 		return def, nil
@@ -170,7 +186,14 @@ func (h handlers) accountLedger(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	out, err := h.svc.AccountLedger(r.Context(), company(r), id, from, to)
+	var dim LedgerDim
+	if dim.BranchID, dim.NoBranch, err = dimParam(r, "branch"); err != nil {
+		return err
+	}
+	if dim.DepartmentID, dim.NoDepartment, err = dimParam(r, "department"); err != nil {
+		return err
+	}
+	out, err := h.svc.AccountLedgerBy(r.Context(), company(r), id, from, to, dim)
 	if err != nil {
 		return err
 	}

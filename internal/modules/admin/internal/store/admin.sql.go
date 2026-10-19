@@ -40,6 +40,24 @@ func (q *Queries) CompanyNameTaken(ctx context.Context, name string) (bool, erro
 	return column_1, err
 }
 
+const companyNameTakenByOther = `-- name: CompanyNameTakenByOther :one
+SELECT EXISTS (
+  SELECT 1 FROM core.companies WHERE lower(name) = lower($1::text) AND id <> $2::uuid
+)::boolean
+`
+
+type CompanyNameTakenByOtherParams struct {
+	Name string
+	ID   uuid.UUID
+}
+
+func (q *Queries) CompanyNameTakenByOther(ctx context.Context, arg CompanyNameTakenByOtherParams) (bool, error) {
+	row := q.db.QueryRow(ctx, companyNameTakenByOther, arg.Name, arg.ID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countActiveHolders = `-- name: CountActiveHolders :one
 SELECT count(DISTINCT u.id) FROM platform.users u
 JOIN core.user_company_roles ucr ON ucr.user_id = u.id
@@ -440,6 +458,22 @@ func (q *Queries) LockAdmins(ctx context.Context) error {
 	return err
 }
 
+const lockCompanyNames = `-- name: LockCompanyNames :one
+SELECT name, short_name FROM core.companies WHERE id = $1 AND kind = 'pt' FOR UPDATE
+`
+
+type LockCompanyNamesRow struct {
+	Name      string
+	ShortName string
+}
+
+func (q *Queries) LockCompanyNames(ctx context.Context, id uuid.UUID) (LockCompanyNamesRow, error) {
+	row := q.db.QueryRow(ctx, lockCompanyNames, id)
+	var i LockCompanyNamesRow
+	err := row.Scan(&i.Name, &i.ShortName)
+	return i, err
+}
+
 const lockSetup = `-- name: LockSetup :exec
 SELECT pg_advisory_xact_lock(7240002)
 `
@@ -474,6 +508,21 @@ func (q *Queries) RemoveAccess(ctx context.Context, arg RemoveAccessParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const renameCompany = `-- name: RenameCompany :exec
+UPDATE core.companies SET name = $1, short_name = $2, version = version + 1 WHERE id = $3
+`
+
+type RenameCompanyParams struct {
+	Name      string
+	ShortName string
+	ID        uuid.UUID
+}
+
+func (q *Queries) RenameCompany(ctx context.Context, arg RenameCompanyParams) error {
+	_, err := q.db.Exec(ctx, renameCompany, arg.Name, arg.ShortName, arg.ID)
+	return err
 }
 
 const resetTOTP = `-- name: ResetTOTP :exec

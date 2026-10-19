@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { ApiError, newIdempotencyKey, type EntryDetail, type Me } from '../lib/api'
 import { addMonths, formatDate, monthEnd, monthLabel, monthOf, monthStart, todayISO } from '../lib/dates'
+import { useDimensions } from '../lib/dimensions'
 import { useAccounts, useEntry, usePeriods, usePostJournal, useReviseJournal } from '../lib/ledger'
 import { periodStatus } from '../lib/labels'
 import { formatAmount, formatRp, fromUnits, parseInput } from '../lib/money'
@@ -13,11 +14,12 @@ import { SearchSelect } from '../components/SearchSelect'
 import { useToast } from '../components/Toast'
 import { Alert, Badge, Button, Card, Checkbox, EmptyState, Field, Skeleton, ease, inputClass } from '../components/ui'
 
-// branchId dan departmentId hanya dibawa dari jurnal yang sedang diubah, supaya dimensinya tidak hilang.
-type Row = { key: string; accountId: string; memo: string; debit: string; credit: string; projectId: string; branchId?: string; departmentId?: string }
-type RowErrors = Record<string, { account?: string; amount?: string; memo?: string }>
+// Cabang dan departemen per baris (GL-09) masuk ke laba rugi per cabang/departemen; jurnal
+// pembalik otomatis menyalinnya.
+type Row = { key: string; accountId: string; memo: string; debit: string; credit: string; projectId: string; branchId: string; departmentId: string }
+type RowErrors = Record<string, { account?: string; amount?: string; memo?: string; branch?: string; department?: string }>
 
-const blankRow = (): Row => ({ key: newIdempotencyKey(), accountId: '', memo: '', debit: '', credit: '', projectId: '' })
+const blankRow = (): Row => ({ key: newIdempotencyKey(), accountId: '', memo: '', debit: '', credit: '', projectId: '', branchId: '', departmentId: '' })
 const isEmpty = (r: Row) => !r.accountId && !r.memo.trim() && !r.debit.trim() && !r.credit.trim()
 
 export function JournalForm({ me }: { me: Me }) {
@@ -75,8 +77,8 @@ function JournalFormFor({ me, kind, existing }: { me: Me; kind: 'umum' | 'penyes
           debit: formatAmount(l.debit, { blankZero: true }),
           credit: formatAmount(l.credit, { blankZero: true }),
           projectId: l.projectId ?? '',
-          branchId: l.branchId,
-          departmentId: l.departmentId,
+          branchId: l.branchId ?? '',
+          departmentId: l.departmentId ?? '',
         }))
       : [blankRow(), blankRow()],
   )
@@ -84,6 +86,9 @@ function JournalFormFor({ me, kind, existing }: { me: Me; kind: 'umum' | 'penyes
   const [attempt, setAttempt] = useState(0)
   const [rowErrors, setRowErrors] = useState<RowErrors>({})
   const projectOptions = useProjectOptions(companyId, can(me, 'project.view'), rows.map((r) => r.projectId))
+  // Dimensi nonaktif tetap tampil bila sudah dipakai baris jurnal yang sedang diubah.
+  const branches = (useDimensions(companyId, 'cabang').data ?? []).filter((d) => d.active || rows.some((r) => r.branchId === d.id))
+  const departments = (useDimensions(companyId, 'departemen').data ?? []).filter((d) => d.active || rows.some((r) => r.departmentId === d.id))
 
   const year = Number(date.slice(0, 4)) || new Date().getFullYear()
   const periods = usePeriods(companyId, year)
@@ -156,17 +161,17 @@ function JournalFormFor({ me, kind, existing }: { me: Me; kind: 'umum' | 'penyes
       credit: fromUnits(parseInput(r.credit) ?? 0n),
       memo: r.memo.trim(),
       projectId: r.projectId || undefined,
-      branchId: r.branchId,
-      departmentId: r.departmentId,
+      branchId: r.branchId || undefined,
+      departmentId: r.departmentId || undefined,
     }))
     const onError = (err: Error) => {
       if (!(err instanceof ApiError)) return
       const errs: RowErrors = {}
       for (const [field, msg] of Object.entries(err.fields)) {
-        const m = /^lines\.(\d+)\.(accountId|amount|memo)$/.exec(field)
+        const m = /^lines\.(\d+)\.(accountId|amount|memo|branchId|departmentId)$/.exec(field)
         const row = m && submitted[Number(m[1])]
         if (!row) continue
-        const slot = m[2] === 'accountId' ? 'account' : m[2]
+        const slot = { accountId: 'account', branchId: 'branch', departmentId: 'department' }[m[2]] ?? m[2]
         errs[row.key] = { ...errs[row.key], [slot]: msg }
       }
       setRowErrors(errs)
@@ -350,7 +355,7 @@ function JournalFormFor({ me, kind, existing }: { me: Me; kind: 'umum' | 'penyes
                           </div>
                         )}
                       </td>
-                      <td className="min-w-[180px] px-2 py-2">
+                      <td className="min-w-[240px] px-2 py-2">
                         <input
                           aria-label={`Keterangan baris ${i + 1}`}
                           value={r.memo}
@@ -358,6 +363,41 @@ function JournalFormFor({ me, kind, existing }: { me: Me; kind: 'umum' | 'penyes
                           onChange={(e) => setRow(r.key, { memo: e.target.value })}
                           className={`${inputClass} ${err?.memo ? 'border-bad' : 'border-line-2'}`}
                         />
+                        {(branches.length > 0 || departments.length > 0) && (
+                          <div className="mt-1.5 flex gap-1.5">
+                            {branches.length > 0 && (
+                              <select
+                                aria-label={`Cabang baris ${i + 1}`}
+                                value={r.branchId}
+                                onChange={(e) => setRow(r.key, { branchId: e.target.value })}
+                                className={`${inputClass} min-w-0 flex-1 ${err?.branch ? 'border-bad' : 'border-line-2'} ${r.branchId ? '' : 'text-muted'}`}
+                              >
+                                <option value="">Cabang (opsional)</option>
+                                {branches.map((d) => (
+                                  <option key={d.id} value={d.id}>
+                                    {d.code} · {d.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {departments.length > 0 && (
+                              <select
+                                aria-label={`Departemen baris ${i + 1}`}
+                                value={r.departmentId}
+                                onChange={(e) => setRow(r.key, { departmentId: e.target.value })}
+                                className={`${inputClass} min-w-0 flex-1 ${err?.department ? 'border-bad' : 'border-line-2'} ${r.departmentId ? '' : 'text-muted'}`}
+                              >
+                                <option value="">Departemen (opsional)</option>
+                                {departments.map((d) => (
+                                  <option key={d.id} value={d.id}>
+                                    {d.code} · {d.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        )}
+                        {(err?.branch || err?.department) && <p className="mt-1 text-[13px] text-bad">{err.branch ?? err.department}</p>}
                       </td>
                       {(['debit', 'credit'] as const).map((side) => {
                         const bad = side === 'debit' ? debitBad : creditBad

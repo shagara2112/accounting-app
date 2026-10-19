@@ -7,3 +7,5 @@ web/dist
 deploy/dev
 **/*.test
 .claude
+deploy/prod-keys
+dist

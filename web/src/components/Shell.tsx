@@ -1,8 +1,9 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
-import { NavLink, useLocation, useNavigationType, useOutlet } from 'react-router'
+import { Link, NavLink, useLocation, useNavigationType, useOutlet } from 'react-router'
 import type { LicenseStatus, Me } from '../lib/api'
 import { formatDate } from '../lib/dates'
+import { topicForPath, visibleTopics } from '../lib/guide'
 import { useLicense, useLogout, useSwitchCompany } from '../lib/queries'
 import { useBackupStatus } from '../lib/system'
 import { activeCompany, can } from '../lib/session'
@@ -12,6 +13,7 @@ import { Logo } from './Logo'
 
 const icons = {
   home: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z',
+  guide: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01',
   journal: 'M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z',
   ledger: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5M8 7h8M8 11h6',
   worksheet: 'M3 3h18v18H3zM3 9h18M9 3v18M15 3v18',
@@ -92,6 +94,7 @@ export function Shell({ me }: { me: Me }) {
         </div>
         <div id="menu-utama" className={`${menuOpen ? 'flex' : 'hidden'} flex-1 flex-col gap-1 pt-2 lg:flex lg:pt-0`}>
           <NavItem to="/" label="Beranda" icon={icons.home} end />
+          <NavItem to="/panduan" label="Panduan" icon={icons.guide} />
           {trade.length > 0 && (
             <>
               <NavHeading>Transaksi</NavHeading>
@@ -173,6 +176,7 @@ export function Shell({ me }: { me: Me }) {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <HelpLink me={me} />
             <LicenseChip />
             <CompanySwitcher me={me} />
           </div>
@@ -188,6 +192,25 @@ export function Shell({ me }: { me: Me }) {
         </main>
       </div>
     </div>
+  )
+}
+
+/** Tombol Panduan di bar atas: membuka panduan untuk halaman yang sedang dibuka. */
+function HelpLink({ me }: { me: Me }) {
+  const location = useLocation()
+  if (location.pathname === '/panduan') return null
+  const topic = topicForPath(visibleTopics(me), location.pathname, location.search)
+  return (
+    <Link
+      to={topic ? `/panduan?topik=${topic.id}` : '/panduan'}
+      title={topic ? `Panduan: ${topic.title}` : 'Panduan'}
+      className="flex min-h-11 items-center gap-2 rounded-[10px] border border-line-2 px-3 text-sm font-medium text-ink-2 transition-colors duration-150 hover:bg-hover"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d={icons.guide} />
+      </svg>
+      Panduan
+    </Link>
   )
 }
 

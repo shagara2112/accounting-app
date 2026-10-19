@@ -1,0 +1,2443 @@
+{
+ "source": "pajak.go.id/reformdjp/coretax: BPPU Excel to XML v.3 (4 Sep 2025), BPNR Excel to XML v.2 (16 Jan 2025), sheet REF",
+ "bppuObjects": [
+  {
+   "code": "24-101-01",
+   "name": "Dividen",
+   "rate": 15
+  },
+  {
+   "code": "24-104-05",
+   "name": "Jasa Aktuaris",
+   "rate": 2
+  },
+  {
+   "code": "28-409-25",
+   "name": "Pekerjaan Konstruksi Terintegrasi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Badan Usaha",
+   "rate": 2.65
+  },
+  {
+   "code": "28-409-26",
+   "name": "Pekerjaan Konstruksi Terintegrasi yang Dilakukan oleh Penyedia Jasa yang Tidak Memiliki Sertifikat Badan Usaha",
+   "rate": 4
+  },
+  {
+   "code": "28-409-27",
+   "name": "Jasa Konsultansi Konstruksi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Badan Usaha atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 3.5
+  },
+  {
+   "code": "28-409-28",
+   "name": "Jasa Konsultansi Konstruksi yang Dilakukan oleh Penyedia Jasa yang Tidak Memiliki Sertifikat Badan Usaha atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 6
+  },
+  {
+   "code": "24-104-06",
+   "name": "Jasa Akuntansi, Pembukuan, dan Atestasi Laporan Keuangan",
+   "rate": 2
+  },
+  {
+   "code": "28-417-01",
+   "name": "Bunga Simpanan yang Dibayarkan oleh Koperasi kepada Anggota Wajib Pajak Orang Pribadi (bunga sampai dengan Rp240.000,00)",
+   "rate": 0
+  },
+  {
+   "code": "28-417-02",
+   "name": "Bunga Simpanan yang Dibayarkan oleh Koperasi kepada Anggota Wajib Pajak Orang Pribadi (bunga di atas Rp240.000,00)",
+   "rate": 10
+  },
+  {
+   "code": "28-419-01",
+   "name": "Dividen yang Diterima/Diperoleh Wajib Pajak Orang Pribadi Dalam Negeri",
+   "rate": 10
+  },
+  {
+   "code": "28-423-01",
+   "name": "Pemotongan atau pemungutan PPh atas penjualan barang atau penyerahan jasa yang dilakukan oleh Wajib Pajak dengan peredaran bruto tertentu sesuai dengan Peraturan Pemerintah Nomor 23 Tahun 2018 atau Peraturan Pemerintah Nomor 55 Tahun 2022.",
+   "rate": 0.5
+  },
+  {
+   "code": "28-423-02",
+   "name": "Pemotongan atau pemungutan PPh atas transaksi pembelian yang dilakukan oleh Wajib Pajak dengan peredaran bruto tertentu sesuai dengan Peraturan Pemerintah Nomor 55 Tahun 2022.",
+   "rate": 0.5
+  },
+  {
+   "code": "28-410-02",
+   "name": "Imbalan yang Dibayarkan/Terutang kepada Perusahaan Pelayaran Dalam Negeri",
+   "rate": 1.2
+  },
+  {
+   "code": "28-411-02",
+   "name": "Imbalan Charter Kapal Laut dan/atau Pesawat Udara yang Dibayarkan/ Terutang kepada Perusahaan Pelayaran dan/atau Penerbangan Luar Negeri melalui BUT di Indonesia",
+   "rate": 2.64
+  },
+  {
+   "code": "29-101-01",
+   "name": "Imbalan Charter Pesawat Udara yang Dibayarkan/Terutang kepada Perusahaan Penerbangan Dalam Negeri oleh Pemotong Pajak",
+   "rate": 1.8
+  },
+  {
+   "code": "28-421-01",
+   "name": "Uplift Hulu Migas",
+   "rate": 20
+  },
+  {
+   "code": "24-104-07",
+   "name": "Jasa Hukum",
+   "rate": 2
+  },
+  {
+   "code": "28-421-02",
+   "name": "Participating Interest Eksplorasi Hulu Migas",
+   "rate": 5
+  },
+  {
+   "code": "28-421-03",
+   "name": "Participating Interest Eksploitasi Hulu Migas",
+   "rate": 7
+  },
+  {
+   "code": "22-900-01",
+   "name": "Pembayaran atas Pembelian Barang dan/atau Bahan untuk Kegiatan Usahanya oleh BUMN/Badan Usaha Tertentu",
+   "rate": 1.5
+  },
+  {
+   "code": "22-100-07",
+   "name": "Penjualan Hasil Produksi Kepada Distributor di Dalam Negeri oleh Badan Usaha/Industri Tertentu (Industri Semen)",
+   "rate": 0.25
+  },
+  {
+   "code": "22-100-08",
+   "name": "Penjualan Hasil Produksi Kepada Distributor di Dalam Negeri oleh Badan Usaha/Industri Tertentu (Industri Baja)",
+   "rate": 0.3
+  },
+  {
+   "code": "24-104-08",
+   "name": "Jasa Arsitektur",
+   "rate": 2
+  },
+  {
+   "code": "22-100-09",
+   "name": "Penjualan Hasil Produksi Kepada Distributor di Dalam Negeri oleh Badan Usaha/Industri Tertentu (Industri Otomotif)",
+   "rate": 0.45
+  },
+  {
+   "code": "22-100-10",
+   "name": "Penjualan Hasil Produksi Kepada Distributor di Dalam Negeri oleh Badan Usaha/Industri Tertentu (Industri Farmasi)",
+   "rate": 0.3
+  },
+  {
+   "code": "22-100-11",
+   "name": "Penjualan Hasil Produksi Kepada Distributor di Dalam Negeri oleh Badan Usaha/Industri Tertentu (industri Kertas)",
+   "rate": 0.1
+  },
+  {
+   "code": "22-100-12",
+   "name": "Penjualan Kendaraan Bermotor di Dalam Negeri oleh ATPM, APM dan Importir Umum Kendaraan Bermotor",
+   "rate": 0.45
+  },
+  {
+   "code": "22-100-13",
+   "name": "Pembelian oleh Badan Usaha Berupa Komoditas Tambang Batubara, Mineral Logam dan Mineral Bukan Logam dari Badan atau Orang Pribadi Pemegang IUP",
+   "rate": 1.5
+  },
+  {
+   "code": "22-100-14",
+   "name": "Penjualan Emas Batangan di Dalam Negeri oleh Badan Usaha",
+   "rate": 0.45
+  },
+  {
+   "code": "22-100-15",
+   "name": "Pembelian Bahan Hasil Kehutanan yang Belum Melalui Proses Industri Manufaktur, untuk Keperluan Industrinya/Ekspornya oleh Badan Usaha Industri/Eksportir",
+   "rate": 0.25
+  },
+  {
+   "code": "22-100-16",
+   "name": "Pembelian Bahan Hasil Perkebunan yang Belum Melalui Proses Industri Manufaktur, untuk Keperluan Industrinya/Ekspornya Oleh Badan Usaha Industri/Eksportir",
+   "rate": 0.25
+  },
+  {
+   "code": "22-100-17",
+   "name": "Pembelian Bahan Hasil Pertanian yang Belum Melalui Proses Industri Manufaktur, untuk Keperluan Industrinya/Ekspornya Oleh Badan Usaha Industri/Eksportir",
+   "rate": 0.25
+  },
+  {
+   "code": "22-100-18",
+   "name": "Pembelian Bahan Hasil Peternakan yang Belum Melalui Proses Industri Manufaktur, untuk Keperluan Industrinya/Ekspornya Oleh Badan Usaha Industri/Eksportir",
+   "rate": 0.25
+  },
+  {
+   "code": "24-104-09",
+   "name": "Jasa Perencanaan Kota dan Arsitektur Landscape;",
+   "rate": 2
+  },
+  {
+   "code": "22-100-19",
+   "name": "Pembelian Bahan Hasil Perikanan yang Belum Melalui Proses Industri Manufaktur, untuk Keperluan Industrinya/Ekspornya Oleh Badan Usaha Industri/Eksportir",
+   "rate": 0.25
+  },
+  {
+   "code": "22-401-01",
+   "name": "Penjualan BBM oleh Pertamina atau Anak Perusahaan Pertamina Kepada SPBU (Final)",
+   "rate": 0.25
+  },
+  {
+   "code": "22-100-20",
+   "name": "Penjualan BBM oleh Pertamina atau Anak Perusahaan Pertamina Kepada Selain SPBU/Agen/Penyalur (Tidak Final)",
+   "rate": 0.3
+  },
+  {
+   "code": "22-401-02",
+   "name": "Penjualan BBM oleh Badan Usaha Selain Pertamina atau Anak Perusahaan Pertamina Kepada SPBU/Agen/Penyalur (Final)",
+   "rate": 0.3
+  },
+  {
+   "code": "22-100-21",
+   "name": "Penjualan BBM oleh Badan Usaha Selain Pertamina atau Anak Perusahaan Pertamina Kepada Selain SPBU/Agen/Penyalur (Tidak Final)",
+   "rate": 0.3
+  },
+  {
+   "code": "22-100-22",
+   "name": "Penjualan Pelumas oleh Importir/Produsen",
+   "rate": 0.3
+  },
+  {
+   "code": "22-100-23",
+   "name": "Penjualan Pulsa dan Kartu Perdana oleh Penyelenggara Distribusi Tingkat Kedua yang Merupakan Pemungut PPh Pasal 22",
+   "rate": 0.5
+  },
+  {
+   "code": "22-100-24",
+   "name": "Penjualan BBG oleh Produsen/Importir Kepada Selain SPBU/Agen/Penyalur (Tidak Final)",
+   "rate": 0.3
+  },
+  {
+   "code": "22-401-03",
+   "name": "Penjualan BBG oleh produsen/importir Kepada SPBU/Agen/Penyalur (Final)",
+   "rate": 0.3
+  },
+  {
+   "code": "22-401-04",
+   "name": "Penjualan BBM oleh Pertamina atau Anak Perusahaan Pertamina kepada Agen/Penyalur selain SPBU (Final)",
+   "rate": 0.3
+  },
+  {
+   "code": "24-104-10",
+   "name": "Jasa Perancang (Design)",
+   "rate": 2
+  },
+  {
+   "code": "22-403-01",
+   "name": "Penjualan Barang yang Tergolong Sangat Mewah Selain Rumah Beserta Tanahnya, Apartemen, Kondominium dan Sejenisnya",
+   "rate": 5
+  },
+  {
+   "code": "22-403-02",
+   "name": "Penjualan Barang yang Tergolong Sangat Mewah Untuk Rumah Beserta Tanahnya, Apartemen, Kondominium dan Sejenisnya",
+   "rate": 1
+  },
+  {
+   "code": "22-404-01",
+   "name": "Ekspor Komoditas Tambang Batubara, Mineral Logam, dan Mineral Bukan Logam yang Dilakukan Oleh Eksportir, Kecuali WP yang Terikat dalam PKP2B dan KK",
+   "rate": 1.5
+  },
+  {
+   "code": "22-405-01",
+   "name": "Penghasilan Sehubungan dengan Aset Kripto yang dipungut oleh Penyelenggara Perdagangan Melalui Sistem Elektronik yang Merupakan Pedagang Fisik Aset Kripto",
+   "rate": 0.1
+  },
+  {
+   "code": "22-405-02",
+   "name": "Penghasilan Sehubungan dengan Aset Kripto yang dipungut oleh Penyelenggara Perdagangan Melalui Sistem Elektronik yang Bukan Merupakan Pedagang Fisik Aset Kripto",
+   "rate": 0.2
+  },
+  {
+   "code": "22-101-01",
+   "name": "Penghasilan Sehubungan dengan Transaksi Penjualan Barang, Penyerahan Jasa, dan/atau Persewaan serta Penghasilan Lain Sehubungan dengan Penggunaan Harta yang Dilakukan Melalui Pihak Lain dalam Sistem Informasi Pengadaan Pemerintah (Tidak Final)",
+   "rate": 0.5
+  },
+  {
+   "code": "22-101-02",
+   "name": "Penghasilan Sehubungan dengan Transaksi Penjualan Barang, Penyerahan Jasa, dan/atau Persewaan serta Penghasilan Lain Sehubungan dengan Penggunaan Harta yang Dilakukan Melalui Pihak Lain dalam Sistem Informasi Pengadaan Pemerintah (Final)",
+   "rate": 0.5
+  },
+  {
+   "code": "22-102-01",
+   "name": "Penghasilan yang Diterima atau Diperoleh Pedagang Dalam Negeri Penjualan Barang, Penyerahan Jasa, dan/atau Persewaan serta Penghasilan Lain Sehubungan dengan Penggunaan Harta yang Dilakukan Melalui Perdagangan Melalui Sistem Elektronik (Tidak Final)",
+   "rate": 0.5
+  },
+  {
+   "code": "22-102-02",
+   "name": "Penghasilan yang Diterima atau Diperoleh Pedagang Dalam Negeri Atas Penjualan Barang, Penyerahan Jasa, dan/atau Persewaan serta Penghasilan Lain Sehubungan dengan Penggunaan Harta yang Dilakukan Melalui Perdagangan Melalui Sistem Elektronik (Final)",
+   "rate": 0.5
+  },
+  {
+   "code": "22-100-25",
+   "name": "Penjualan Emas Batangan di Dalam Negeri oleh Pengusaha Emas Perhiasan dan/atau Emas Batangan",
+   "rate": 0.25
+  },
+  {
+   "code": "24-104-11",
+   "name": "Jasa Pengeboran (Drilling) di Bidang Penambangan Minyak dan Gas Bumi (Migas) Kecuali yang Dilakukan oleh Badan Usaha Tetap (BUT)",
+   "rate": 2
+  },
+  {
+   "code": "22-100-26",
+   "name": "Penjualan Emas Perhiasan di Dalam Negeri oleh Pengusaha Emas Perhiasan dan/atau Emas Batangan",
+   "rate": 0.25
+  },
+  {
+   "code": "22-100-27",
+   "name": "Penjualan Perhiasan Selain dari Emas dan/atau Batu Permata dan/atau Batu Lainnya yang Sejenis oleh Pengusaha Emas Perhiasan dan/atau Emas Batangan",
+   "rate": 0.25
+  },
+  {
+   "code": "28-499-02",
+   "name": "Penghasilan yang Diterima atau Diperoleh Sehubungan dengan Kerja Sama dengan Lembaga Pengelola Investasi (LPI)",
+   "rate": 7.5
+  },
+  {
+   "code": "28-402-01",
+   "name": "Pengalihan Hak atas Tanah dan/atau Bangunan",
+   "rate": 2.5
+  },
+  {
+   "code": "28-402-02",
+   "name": "Pengalihan Rumah Sederhana dan Rumah Susun Sederhana yang Dilakukan oleh WP yang Usaha Pokoknya Mengalihkan Hak atas Tanah dan/atau Bangunan",
+   "rate": 1
+  },
+  {
+   "code": "28-402-03",
+   "name": "Pengalihan Hak atas Tanah dan/atau Bangunan kepada Pemerintah, BUMN yang Mendapat Penugasan Khusus dari Pemerintah, atau BUMD yang Mendapat Penugasan Khusus dari Kepala Daerah, sesuai UU mengenai Pengadaan Tanah bagi Pembangunan untuk Kepentingan Umum",
+   "rate": 0
+  },
+  {
+   "code": "28-410-01",
+   "name": "Imbalan yang Diterima/Diperoleh Sehubungan dengan Pengangkutan Orang dan/atau Barang Termasuk Penyewaan Kapal Laut Oleh Perusahaan Pelayaran Dalam Negeri",
+   "rate": 1.2
+  },
+  {
+   "code": "28-411-01",
+   "name": "Imbalan yang Dibayarkan/Terutang kepada Perusahaan Pelayaran dan/atau Penerbangan Luar Negeri Sehubungan dengan Pengangkutan Orang dan/atau Barang (Selain Berdasarkan Perjanjian Charter)",
+   "rate": 2.64
+  },
+  {
+   "code": "28-413-01",
+   "name": "Penghasilan Wajib Pajak Luar Negeri yang Mempunyai Kantor Perwakilan Dagang di Indonesia",
+   "rate": 0.44
+  },
+  {
+   "code": "28-499-01",
+   "name": "Penghasilan Wajib Pajak yang Melakukan Kegiatan Usaha Jasa Maklon (Contract Manufacturing) Internasional di Bidang Produksi Mainan Anak-Anak",
+   "rate": 2.1
+  },
+  {
+   "code": "24-104-12",
+   "name": "Jasa Penunjang di Bidang Usaha Panas Bumi dan Penambangan Minyak dan Gas Bumi (Migas)",
+   "rate": 2
+  },
+  {
+   "code": "22-910-01",
+   "name": "Pemungutan oleh Bendaharawan",
+   "rate": 1.5
+  },
+  {
+   "code": "28-423-03",
+   "name": "Pemotongan atau Pemungutan PPh atas transaksi penjualan barang atau penyerahan jasa yang dilakukan oleh Wajib Pajak orang pribadi yang memiliki peredaran bruto tertentu sesuai dengan PP 55 Tahun 2022 dengan peredaran usaha s.d Rp500.000.000,00.",
+   "rate": 0.5
+  },
+  {
+   "code": "28-423-12",
+   "name": "Pemotongan atau Pemungutan PPh atas transaksi penjualan barang atau penyerahan jasa yang dilakukan oleh Wajib Pajak yang memenuhi persyaratan tertentu untuk dikenai PPh yang bersifat final dengan tarif 0% di IKN (PPh UMKM di IKN).",
+   "rate": 0
+  },
+  {
+   "code": "28-423-13",
+   "name": "Pemotongan atau pemungutan PPh atas transaksi pembelian yang dilakukan oleh Wajib Pajak yang memanfaatkan fasilitas PPh final dengan tarif 0% di IKN (PPh UMKM di IKN).",
+   "rate": 0
+  },
+  {
+   "code": "28-404-12",
+   "name": "Penghasilan dari Instrumen Moneter dan/atau Instrumen Keuangan Tertentu di Indonesia (Mata Uang VALAS Bersumber dari DHE SDA Tenor Lebih Dari 6 Bulan)",
+   "rate": 0
+  },
+  {
+   "code": "28-404-13",
+   "name": "Penghasilan dari Instrumen Moneter dan/atau Instrumen Keuangan Tertentu di Indonesia (Mata Uang VALAS Bersumber dari DHE SDA Tenor 6 Bulan)",
+   "rate": 2.5
+  },
+  {
+   "code": "28-404-14",
+   "name": "Penghasilan dari Instrumen Moneter dan/atau Instrumen Keuangan Tertentu di Indonesia (Mata Uang VALAS Bersumber dari DHE SDA Tenor Lebih Dari 3 Bulan sampai dengan Kurang Dari 6 Bulan)",
+   "rate": 7.5
+  },
+  {
+   "code": "28-404-15",
+   "name": "Penghasilan dari Instrumen Moneter dan/atau Instrumen Keuangan Tertentu di Indonesia (Mata Uang VALAS Bersumber dari DHE SDA Tenor 1 Bulan sampai dengan Kurang Dari 3 Bulan)",
+   "rate": 10
+  },
+  {
+   "code": "28-404-16",
+   "name": "Penghasilan dari Instrumen Moneter dan/atau Instrumen Keuangan Tertentu di Indonesia (Mata Uang IDR Bersumber dari DHE SDA Tenor 6 Bulan atau Lebih Dari 6 Bulan)",
+   "rate": 0
+  },
+  {
+   "code": "28-404-17",
+   "name": "Penghasilan dari Instrumen Moneter dan/atau Instrumen Keuangan Tertentu di Indonesia (Mata Uang VALAS Bersumber dari DHE SDA Tenor 3 Bulan sampai dengan Kurang Dari 6 Bulan)",
+   "rate": 2.5
+  },
+  {
+   "code": "24-104-13",
+   "name": "Jasa Penambangan dan Jasa Penunjang Selain di Bidang Usaha Panas Bumi dan Penambangan Minyak dan Gas Bumi (Migas)",
+   "rate": 2
+  },
+  {
+   "code": "22-406-01",
+   "name": "PPh pasal 22 yang terutang atas penghasilan Kontraktor Utama sehubungan pelaksanaan proyek pemerintah yang dibiayai Hibah atau Pinjaman Luar Negeri",
+   "rate": 0
+  },
+  {
+   "code": "24-106-01",
+   "name": "PPh pasal 23 yang terutang atas penghasilan Kontraktor Utama sehubungan pelaksanaan proyek pemerintah yang dibiayai Hibah atau Pinjaman Luar Negeri",
+   "rate": 0
+  },
+  {
+   "code": "28-403-04",
+   "name": "Persewaan Tanah dan/atau Bangunan sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 10
+  },
+  {
+   "code": "28-409-43",
+   "name": "Pekerjaan Konstruksi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Badan Usaha Kualifikasi Kecil atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 1.75
+  },
+  {
+   "code": "28-409-44",
+   "name": "Pekerjaan Konstruksi yang Dilakukan oleh Penyedia Jasa yang Tidak Memiliki Sertifikat Badan Usaha Atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 4
+  },
+  {
+   "code": "28-409-45",
+   "name": "Pekerjaan Konstruksi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Selain Sertifikat Badan Usaha Kualifikasi Kecil atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 2.65
+  },
+  {
+   "code": "28-409-46",
+   "name": "Pekerjaan Konstruksi Terintegrasi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Badan Usaha sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 2.65
+  },
+  {
+   "code": "28-409-47",
+   "name": "Pekerjaan Konstruksi Terintegrasi yang Dilakukan oleh Penyedia Jasa yang Tidak Memiliki Sertifikat Badan Usaha sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 4
+  },
+  {
+   "code": "28-409-48",
+   "name": "Jasa Konsultansi Konstruksi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Badan Usaha atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 3.5
+  },
+  {
+   "code": "28-409-49",
+   "name": "Jasa Konsultansi Konstruksi yang Dilakukan oleh Penyedia Jasa yang Tidak Memiliki Sertifikat Badan Usaha atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 6
+  },
+  {
+   "code": "24-104-14",
+   "name": "Jasa Penunjang di Bidang Penerbangan dan Bandar Udara",
+   "rate": 2
+  },
+  {
+   "code": "28-409-50",
+   "name": "Jasa Konstruksi Berupa Jasa Perencanaan Konstruksi (Dengan Kualifikasi Usaha) sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 4
+  },
+  {
+   "code": "28-409-51",
+   "name": "Jasa Konstruksi Berupa Jasa Perencanaan Konstruksi (Tanpa Kualifikasi Usaha) sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 6
+  },
+  {
+   "code": "28-409-52",
+   "name": "Jasa Konstruksi Berupa Jasa Pelaksanaan Konstruksi (Kualifikasi Usaha Kecil) sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 2
+  },
+  {
+   "code": "28-409-53",
+   "name": "Jasa Konstruksi Berupa Jasa Pelaksanaan Konstruksi (Kualifikasi Usaha Menengah dan Besar) sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 3
+  },
+  {
+   "code": "28-409-54",
+   "name": "Jasa Konstruksi Berupa Jasa Pelaksanaan Konstruksi (Tanpa Kualifikasi Usaha) sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 4
+  },
+  {
+   "code": "28-409-55",
+   "name": "Jasa Konstruksi Berupa Jasa Pengawasan Konstruksi (Dengan Kualifikasi Usaha) sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 4
+  },
+  {
+   "code": "28-409-56",
+   "name": "Jasa Konstruksi Berupa Jasa Pengawasan Konstruksi (Tanpa Kualifikasi Usaha) sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 6
+  },
+  {
+   "code": "28-402-04",
+   "name": "Pengalihan Hak atas Tanah dan/atau Bangunan sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 2.5
+  },
+  {
+   "code": "28-410-06",
+   "name": "Imbalan yang Dibayarkan/Terutang kepada Perusahaan Pelayaran Dalam Negeri sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 1.2
+  },
+  {
+   "code": "28-411-05",
+   "name": "Imbalan Charter Kapal Laut dan/atau Pesawat Udara yang Dibayarkan/ Terutang kepada Perusahaan Pelayaran dan/atau Penerbangan Luar Negeri melalui BUT di Indonesia sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 2.64
+  },
+  {
+   "code": "24-102-01",
+   "name": "Bunga Selain yang Dikenakan PPh Pasal 4 ayat (2)",
+   "rate": 15
+  },
+  {
+   "code": "24-104-15",
+   "name": "Jasa Penebangan Hutan",
+   "rate": 2
+  },
+  {
+   "code": "29-101-02",
+   "name": "Imbalan Charter Pesawat Udara yang Dibayarkan/Terutang kepada Perusahaan Penerbangan Dalam Negeri oleh Pemotong Pajak sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 1.8
+  },
+  {
+   "code": "28-410-05",
+   "name": "Imbalan yang Diterima/Diperoleh Sehubungan dengan Pengangkutan Orang dan/atau Barang Termasuk Penyewaan Kapal Laut Oleh Perusahaan Pelayaran Dalam Negeri sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 1.2
+  },
+  {
+   "code": "28-411-04",
+   "name": "Imbalan yang Dibayarkan/Terutang kepada Perusahaan Pelayaran dan/atau Penerbangan Luar Negeri Sehubungan dengan Pengangkutan Orang dan/atau Barang (Selain Berdasarkan Perjanjian Charter) sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 2.64
+  },
+  {
+   "code": "22-401-05",
+   "name": "Penjualan BBM oleh Badan Usaha Selain Pertamina atau Anak Perusahaan Pertamina Kepada SPBU/Agen/Penyalur (Final) sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai dengan Hibah atau Dana Pinjaman Luar Negeri",
+   "rate": 0.3
+  },
+  {
+   "code": "28-423-14",
+   "name": "Pemotongan atau pemungutan PPh atas penjualan barang atau penyerahan jasa yang dilakukan oleh Wajib Pajak dengan peredaran bruto tertentu yang memperoleh penghasilan sehubungan pelaksanaan proyek pemerintah yang dibiayai Hibah atau Pinjaman Luar Negeri",
+   "rate": 0.5
+  },
+  {
+   "code": "28-423-15",
+   "name": "Pemotongan atau Pemungutan PPh atas transaksi penjualan barang atau penyerahan jasa yang dilakukan oleh Wajib Pajak yang memenuhi persyaratan tertentu untuk dikenai PPh yang bersifat final dengan tarif 0% di IKN yang memperoleh penghasilan sehubungan pelaksanaan proyek pemerintah yang dibiayai Hibah atau Pinjaman Luar Negeri",
+   "rate": 0
+  },
+  {
+   "code": "24-103-02",
+   "name": "Royalti yang diterima atau diperoleh Wajib Pajak orang pribadi dalam negeri yang menerapkan penghitungan Pajak Penghasilan menggunakan Norma Penghitungan Penghasilan Neto",
+   "rate": 6
+  },
+  {
+   "code": "28-404-18",
+   "name": "Penghasilan dari instrumen moneter dan/atau instrumen keuangan tertentu di Indonesia (mata uang IDR bersumber dari DHE SDA tenor 1 bulan sampai dengan kurang dari 3 bulan)",
+   "rate": 5
+  },
+  {
+   "code": "22-405-04",
+   "name": "Penghasilan Sehubungan dengan Aset Kripto yang dipungut oleh Penyelenggara Perdagangan Melalui Sistem Elektronik Dalam Negeri yang Merupakan Pedagang Aset Keuangan Digital",
+   "rate": 0.21
+  },
+  {
+   "code": "22-405-05",
+   "name": "Penghasilan Sehubungan dengan Aset Kripto yang dipungut oleh Penyelenggara Perdagangan Melalui Sistem Elektronik Luar Negeri yang Merupakan Pemungut Pajak Penghasilan",
+   "rate": 1
+  },
+  {
+   "code": "24-104-16",
+   "name": "Jasa Pengolahan Limbah",
+   "rate": 2
+  },
+  {
+   "code": "22-100-28",
+   "name": "Pembelian emas batangan oleh Lembaga Jasa Keuangan penyelenggara Kegiatan Usaha Bulion",
+   "rate": 0.25
+  },
+  {
+   "code": "24-104-17",
+   "name": "Jasa Penyedia Tenaga Kerja dan/atau Tenaga Ahli (Outsourcing Services)",
+   "rate": 2
+  },
+  {
+   "code": "24-104-18",
+   "name": "Jasa Perantara dan/atau Keagenan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-19",
+   "name": "Jasa Bidang Perdagangan Surat-Surat Berharga, Kecuali yang Dilakukan Bursa Efek, Kustodian Sentral Efek Indonesia (KSEI) dan Kliring Penjaminan Efek Indonesia (KPEI)",
+   "rate": 2
+  },
+  {
+   "code": "24-104-20",
+   "name": "Jasa Kustodian/Penyimpanan/Penitipan, Kecuali yang Dilakukan Oleh KSEI",
+   "rate": 2
+  },
+  {
+   "code": "24-104-21",
+   "name": "Jasa Pengisian Suara (Dubbing) dan/atau Sulih Suara",
+   "rate": 2
+  },
+  {
+   "code": "24-104-22",
+   "name": "Jasa Mixing Film",
+   "rate": 2
+  },
+  {
+   "code": "24-104-23",
+   "name": "Jasa Pembuatan Sarana Promosi Film, Iklan, Poster, Foto, Slide, Klise, Banner, Pamphlet, Baliho dan Folder",
+   "rate": 2
+  },
+  {
+   "code": "24-104-24",
+   "name": "Jasa Sehubungan Dengan Software Atau Hardware Atau Sistem Komputer, Termasuk Perawatan, Pemeliharaan dan Perbaikan.",
+   "rate": 2
+  },
+  {
+   "code": "24-103-01",
+   "name": "Royalti",
+   "rate": 15
+  },
+  {
+   "code": "24-104-25",
+   "name": "Jasa Pembuatan dan/atau Pengelolaan Website",
+   "rate": 2
+  },
+  {
+   "code": "24-104-26",
+   "name": "Jasa Internet Termasuk Sambungannya",
+   "rate": 2
+  },
+  {
+   "code": "24-104-27",
+   "name": "Jasa Penyimpanan, Pengolahan dan/atau Penyaluran Data, Informasi, dan/atau Program",
+   "rate": 2
+  },
+  {
+   "code": "24-104-28",
+   "name": "Jasa Instalasi/Pemasangan Mesin, Peralatan, Listrik, Telepon, Air, Gas, Ac dan/atau Tv Kabel, Selain Yang Dilakukan Oleh Wajib Pajak Yang Ruang Lingkupnya Di Bidang Konstruksi dan Mempunyai Izin dan/atau Sertifikasi Sebagai Pengusaha Konstruksi;",
+   "rate": 2
+  },
+  {
+   "code": "24-104-29",
+   "name": "Jasa Perawatan/Perbaikan/Pemeliharaan Mesin, Peralatan, Listrik, Telepon, Air, Gas, Ac dan/atau Tv Kabel, Selain Yang Dilakukan Oleh Wajib Pajak Yang Ruang Lingkupnya di Bidang Konstruksi dan Mempunyai Izin dan/atau Sertifikasi Sebagai Pengusaha Konstruksi",
+   "rate": 2
+  },
+  {
+   "code": "24-104-30",
+   "name": "Jasa Perawatan Kendaraan dan/atau Alat Transportasi Darat, Laut dan Udara",
+   "rate": 2
+  },
+  {
+   "code": "24-104-31",
+   "name": "Jasa Maklon",
+   "rate": 2
+  },
+  {
+   "code": "24-104-32",
+   "name": "Jasa Penyelidikan dan Keamanan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-33",
+   "name": "Jasa Penyelenggara Kegiatan Atau Event Organizer",
+   "rate": 2
+  },
+  {
+   "code": "24-104-34",
+   "name": "Jasa Penyediaan Tempat dan/atau Waktu Dalam Media Massa, Media Luar Ruang Atau Media Lain Untuk Penyampaian Informasi, dan/atau Jasa Periklanan",
+   "rate": 2
+  },
+  {
+   "code": "24-100-01",
+   "name": "Hadiah, Penghargaan, Bonus dan Lainnya Selain yang Telah Dipotong PPh Pasal 21 Ayat (1) Huruf E UU PPh",
+   "rate": 15
+  },
+  {
+   "code": "24-104-35",
+   "name": "Jasa Pembasmian Hama",
+   "rate": 2
+  },
+  {
+   "code": "24-104-36",
+   "name": "Jasa Kebersihan Atau Cleaning Service",
+   "rate": 2
+  },
+  {
+   "code": "24-104-37",
+   "name": "Jasa Sedot Septic Tank",
+   "rate": 2
+  },
+  {
+   "code": "24-104-38",
+   "name": "Jasa Pemeliharaan Kolam",
+   "rate": 2
+  },
+  {
+   "code": "24-104-39",
+   "name": "Jasa Katering Atau Tata Boga",
+   "rate": 2
+  },
+  {
+   "code": "24-104-40",
+   "name": "Jasa Freight Forwarding",
+   "rate": 2
+  },
+  {
+   "code": "24-104-41",
+   "name": "Jasa Logistik",
+   "rate": 2
+  },
+  {
+   "code": "24-104-42",
+   "name": "Jasa Pengurusan Dokumen",
+   "rate": 2
+  },
+  {
+   "code": "24-104-43",
+   "name": "Jasa Pengepakan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-44",
+   "name": "Jasa Loading dan Unloading",
+   "rate": 2
+  },
+  {
+   "code": "24-100-02",
+   "name": "Sewa dan Penghasilan Lain Sehubungan Dengan Penggunaan Harta Kecuali Sewa Tanah dan/atau Bangunan yang Telah Dikenai PPh Pasal 4 Ayat (2) UU PPh.",
+   "rate": 2
+  },
+  {
+   "code": "24-104-45",
+   "name": "Jasa Laboratorium dan/atau Pengujian Kecuali yang Dilakukan oleh Lembaga atau Institusi Pendidikan Dalam Rangka Penelitian Akademis",
+   "rate": 2
+  },
+  {
+   "code": "24-104-46",
+   "name": "Jasa Pengelolaan Parkir",
+   "rate": 2
+  },
+  {
+   "code": "24-104-47",
+   "name": "Jasa Penyondiran Tanah",
+   "rate": 2
+  },
+  {
+   "code": "24-104-48",
+   "name": "Jasa Penyiapan dan/atau Pengolahan Lahan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-49",
+   "name": "Jasa Pembibitan dan/atau Penanaman Bibit",
+   "rate": 2
+  },
+  {
+   "code": "24-104-50",
+   "name": "Jasa Pemeliharaan Tanaman",
+   "rate": 2
+  },
+  {
+   "code": "24-104-51",
+   "name": "Jasa Pemanenan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-52",
+   "name": "Jasa Pengolahan Hasil Pertanian, Perkebunan, Perikanan, Peternakan dan/atau Perhutanan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-53",
+   "name": "Jasa Dekorasi",
+   "rate": 2
+  },
+  {
+   "code": "24-104-54",
+   "name": "Jasa Pencetakan/Penerbitan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-01",
+   "name": "Jasa Teknik",
+   "rate": 2
+  },
+  {
+   "code": "24-104-55",
+   "name": "Jasa Penerjemahan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-56",
+   "name": "Jasa Pengangkutan/Ekspedisi Kecuali Yang Telah Diatur Dalam Pasal 15 Undang-Undang Pajak Penghasilan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-57",
+   "name": "Jasa Pelayanan Pelabuhan",
+   "rate": 2
+  },
+  {
+   "code": "24-104-58",
+   "name": "Jasa Pengangkutan Melalui Jalur Pipa",
+   "rate": 2
+  },
+  {
+   "code": "24-104-59",
+   "name": "Jasa Pengelolaan Penitipan Anak",
+   "rate": 2
+  },
+  {
+   "code": "24-104-60",
+   "name": "Jasa Pelatihan dan/atau Kursus",
+   "rate": 2
+  },
+  {
+   "code": "24-104-61",
+   "name": "Jasa Pengiriman dan Pengisian Uang Ke Atm",
+   "rate": 2
+  },
+  {
+   "code": "24-104-62",
+   "name": "Jasa Sertifikasi",
+   "rate": 2
+  },
+  {
+   "code": "24-104-63",
+   "name": "Jasa Survey",
+   "rate": 2
+  },
+  {
+   "code": "24-104-64",
+   "name": "Jasa Tester",
+   "rate": 2
+  },
+  {
+   "code": "24-104-02",
+   "name": "Jasa Manajemen",
+   "rate": 2
+  },
+  {
+   "code": "24-104-65",
+   "name": "Jasa Selain Jasa-Jasa Tersebut di Atas yang Pembayarannya Dibebankan pada APBN (Anggaran Pendapatan dan Belanja Negara) Atau APBD (Anggaran Pendapatan dan Belanja Daerah).",
+   "rate": 2
+  },
+  {
+   "code": "24-104-66",
+   "name": "Jasa Penyelenggaraan Layanan Transaksi Pembayaran Terkait dengan Distribusi Token Oleh Penyelenggara Distribusi",
+   "rate": 2
+  },
+  {
+   "code": "24-104-67",
+   "name": "Jasa Pemasaran dengan Media Voucer Oleh Penyelenggara Voucer",
+   "rate": 2
+  },
+  {
+   "code": "24-104-68",
+   "name": "Jasa Penyelenggaraan Layanan Transaksi Pembayaran Terkait dengan Distribusi Voucer Oleh Penyelenggara Voucer dan Penyelenggara Distribusi",
+   "rate": 2
+  },
+  {
+   "code": "24-104-69",
+   "name": "Jasa Penyelenggaraan Program Loyalitas dan Penghargaan Pelanggan (Consumer Loyalty/Reward Program) Oleh Penyelenggara Voucer",
+   "rate": 2
+  },
+  {
+   "code": "24-105-01",
+   "name": "Bunga Pinjaman yang Diterima Wajib Pajak Dalam Negeri dan Bentuk Usaha Tetap Melalui Layanan Pinjam Meminjam Uang Berbasis Teknologi Informasi",
+   "rate": 15
+  },
+  {
+   "code": "28-404-01",
+   "name": "Bunga Tabungan dan Bunga Deposito yang Ditempatkan di Dalam Negeri yang Dananya Bersumber Selain dari Devisa Hasil Ekspor (DHE)",
+   "rate": 20
+  },
+  {
+   "code": "28-404-02",
+   "name": "Bunga Deposito yang Ditempatkan di Dalam Negeri (mata uang IDR bersumber dari DHE tenor 1 bulan)",
+   "rate": 7.5
+  },
+  {
+   "code": "28-404-03",
+   "name": "Bunga Deposito yang Ditempatkan di Dalam Negeri (mata uang IDR bersumber dari DHE tenor 3 bulan)",
+   "rate": 5
+  },
+  {
+   "code": "28-404-04",
+   "name": "Bunga Deposito yang Ditempatkan di Dalam Negeri (mata uang IDR bersumber dari DHE tenor 6 bulan atau lebih)",
+   "rate": 0
+  },
+  {
+   "code": "24-104-03",
+   "name": "Jasa Konsultan",
+   "rate": 2
+  },
+  {
+   "code": "28-404-05",
+   "name": "Bunga Deposito yang Ditempatkan di Dalam Negeri (mata uang USD bersumber dari DHE tenor 1 bulan)",
+   "rate": 10
+  },
+  {
+   "code": "28-404-06",
+   "name": "Bunga Deposito yang Ditempatkan di Dalam Negeri (mata uang USD bersumber dari DHE tenor 3 bulan)",
+   "rate": 7.5
+  },
+  {
+   "code": "28-404-07",
+   "name": "Bunga Deposito yang Ditempatkan di Dalam Negeri (mata uang USD bersumber dari DHE tenor 6 bulan)",
+   "rate": 2.5
+  },
+  {
+   "code": "28-404-08",
+   "name": "Bunga Deposito yang Ditempatkan di Dalam Negeri (mata uang USD bersumber dari DHE tenor lebih 6 bulan)",
+   "rate": 0
+  },
+  {
+   "code": "28-404-09",
+   "name": "Bunga Deposito/Tabungan yang Ditempatkan di Luar Negeri Melalui Bank yang Didirikan atau Bertempat Kedudukan di Indonesia atau Cabang Bank Luar Negeri di Indonesia",
+   "rate": 20
+  },
+  {
+   "code": "28-404-10",
+   "name": "Diskonto Sertifikat Bank Indonesia",
+   "rate": 20
+  },
+  {
+   "code": "28-404-11",
+   "name": "Jasa Giro",
+   "rate": 20
+  },
+  {
+   "code": "28-401-01",
+   "name": "Bunga Obligasi, Surat Utang Negara, atau Obligasi Daerah yang Diterima Wajib Pajak Dalam Negeri dan Bentuk Usaha Tetap.",
+   "rate": 15
+  },
+  {
+   "code": "28-401-06",
+   "name": "Bunga Obligasi yang Diterima Wajib Pajak Dalam Negeri dan Bentuk Usaha Tetap",
+   "rate": 10
+  },
+  {
+   "code": "28-401-03",
+   "name": "Bunga Obligasi yang Diterima Wajib Pajak Dalam Negeri dan Bentuk Usaha Tetap yang diadministrasikan oleh BI",
+   "rate": 10
+  },
+  {
+   "code": "24-104-04",
+   "name": "Jasa Penilai (Appraisal)",
+   "rate": 2
+  },
+  {
+   "code": "28-401-04",
+   "name": "Diskonto Surat Perbendaharaan Negara yang Diterima Wajib Pajak Dalam Negeri dan Bentuk Usaha Tetap",
+   "rate": 20
+  },
+  {
+   "code": "28-401-05",
+   "name": "Diskonto Surat Perbendaharaan Negara yang Diterima Wajib Pajak Penduduk/Berkedudukan di Luar Negeri",
+   "rate": 20
+  },
+  {
+   "code": "28-407-01",
+   "name": "Transaksi Penjualan Saham di Bursa Efek (Saham Pendiri)",
+   "rate": 0.5
+  },
+  {
+   "code": "28-406-01",
+   "name": "Transaksi Penjualan Saham di Bursa Efek (Bukan Saham Pendiri)",
+   "rate": 0.1
+  },
+  {
+   "code": "28-408-01",
+   "name": "Transaksi Penjualan Saham Milik Perusahaan Modal Ventura Tidak di Bursa Efek",
+   "rate": 0.1
+  },
+  {
+   "code": "28-403-02",
+   "name": "Persewaan Tanah dan/atau Bangunan",
+   "rate": 10
+  },
+  {
+   "code": "28-405-01",
+   "name": "Hadiah Undian",
+   "rate": 25
+  },
+  {
+   "code": "28-409-22",
+   "name": "Pekerjaan Konstruksi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Badan Usaha Kualifikasi Kecil atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 1.75
+  },
+  {
+   "code": "28-409-23",
+   "name": "Pekerjaan Konstruksi yang Dilakukan oleh Penyedia Jasa yang Tidak Memiliki Sertifikat Badan Usaha Atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 4
+  },
+  {
+   "code": "28-409-24",
+   "name": "Pekerjaan Konstruksi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Selain Sertifikat Badan Usaha Kualifikasi Kecil atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 2.65
+  }
+ ],
+ "bpnrObjects": [
+  {
+   "code": "27-101-01",
+   "name": "Dividen (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-100-04",
+   "name": "Keuntungan Karena Pembebasan Utang (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-100-05",
+   "name": "Penghasilan dari Penjualan atau Pengalihan Harta di Indonesia (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    25
+   ]
+  },
+  {
+   "code": "27-100-06",
+   "name": "Premi Asuransi/Reasuransi (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    5,
+    10,
+    25
+   ]
+  },
+  {
+   "code": "27-100-08",
+   "name": "Penghasilan dari Penjualan/Pengalihan Saham tidak di Bursa Efek (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    25
+   ]
+  },
+  {
+   "code": "27-100-09",
+   "name": "Penjualan atau Pengalihan Saham Perusahaan Antara (Conduit Company atau Special Purpose Company)(PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    25
+   ]
+  },
+  {
+   "code": "27-105-01",
+   "name": "Penghasilan Kena Pajak BUT Setelah Pajak (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-107-01",
+   "name": "Bunga Pinjaman yang Diterima Wajib Pajak Dalam Negeri dan Bentuk Usaha Tetap Melalui Layanan Pinjam Meminjam Uang Berbasis Teknologi Informasi (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-499-02",
+   "name": "Penghasilan yang Diterima atau Diperoleh Sehubungan dengan Kerja Sama dengan Lembaga Pengelola Investasi (LPI)",
+   "rate": 7.5,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-102-01",
+   "name": "Bunga Selain Bunga Obligasi (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-100-07",
+   "name": "Penghasilan dari Penjualan/Pengalihan Saham (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-100-03",
+   "name": "Pensiun dan pembayaran berkala lainnya (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-407-01",
+   "name": "Transaksi Penjualan Saham di Bursa Efek (Saham Pendiri)",
+   "rate": 0.5,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-406-01",
+   "name": "Transaksi Penjualan Saham di Bursa Efek (Bukan Saham Pendiri)",
+   "rate": 0.1,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-408-01",
+   "name": "Transaksi Penjualan Saham Milik Perusahaan Modal Ventura Tidak di Bursa Efek",
+   "rate": 0.1,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-403-02",
+   "name": "Persewaan Tanah dan/atau Bangunan",
+   "rate": 10,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-22",
+   "name": "Pekerjaan Konstruksi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Badan Usaha Kualifikasi Kecil atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 1.75,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-23",
+   "name": "Pekerjaan Konstruksi yang Dilakukan oleh Penyedia Jasa yang Tidak Memiliki Sertifikat Badan Usaha Atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 4,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-24",
+   "name": "Pekerjaan Konstruksi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Selain Sertifikat Badan Usaha Kualifikasi Kecil atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 2.65,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-25",
+   "name": "Pekerjaan Konstruksi Terintegrasi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Badan Usaha",
+   "rate": 2.65,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-102-03",
+   "name": "Bunga Obligasi (PPh Pasal 26)",
+   "rate": 10,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-26",
+   "name": "Pekerjaan Konstruksi Terintegrasi yang Dilakukan oleh Penyedia Jasa yang Tidak Memiliki Sertifikat Badan Usaha",
+   "rate": 4,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-27",
+   "name": "Jasa Konsultansi Konstruksi yang Dilakukan oleh Penyedia Jasa yang Memiliki Sertifikat Badan Usaha atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 3.5,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-28",
+   "name": "Jasa Konsultansi Konstruksi yang Dilakukan oleh Penyedia Jasa yang Tidak Memiliki Sertifikat Badan Usaha atau Sertifikat Kompetensi Kerja untuk Usaha Orang Perseorangan",
+   "rate": 6,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-08",
+   "name": "Jasa Konstruksi Berupa Jasa Perencanaan Konstruksi (Dengan Kualifikasi Usaha)",
+   "rate": 4,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-09",
+   "name": "Jasa Konstruksi Berupa Jasa Perencanaan Konstruksi (Tanpa Kualifikasi Usaha)",
+   "rate": 6,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-10",
+   "name": "Jasa Konstruksi Berupa Jasa Pelaksanaan Konstruksi (Kualifikasi Usaha Kecil)",
+   "rate": 2,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-11",
+   "name": "Jasa Konstruksi Berupa Jasa Pelaksanaan Konstruksi (Kualifikasi Usaha Menengah dan Besar)",
+   "rate": 3,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-12",
+   "name": "Jasa Konstruksi Berupa Jasa Pelaksanaan Konstruksi (Tanpa Kualifikasi Usaha)",
+   "rate": 4,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-13",
+   "name": "Jasa Konstruksi Berupa Jasa Pengawasan Konstruksi (Dengan Kualifikasi Usaha)",
+   "rate": 4,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-409-14",
+   "name": "Jasa Konstruksi Berupa Jasa Pengawasan Konstruksi (Tanpa Kualifikasi Usaha)",
+   "rate": 6,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-103-01",
+   "name": "Royalti (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-411-01",
+   "name": "Imbalan yang Dibayarkan/Terutang kepada Perusahaan Pelayaran dan/atau Penerbangan Luar Negeri Sehubungan dengan Pengangkutan Orang dan/atau Barang (Selain Berdasarkan Perjanjian Charter)",
+   "rate": 2.64,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-100-10",
+   "name": "Sewa dan Penghasilan Lain Sehubungan dengan Penggunaan Harta Sehubungan Pelaksanaan Proyek Pemerintah yang Dibiayai Hibah atau Pinjaman Luar Negeri (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-100-11",
+   "name": "Penghasilan dari Penjualan atau Pengalihan Harta di Indonesia sehubungan pelaksanaan proyek pemerintah yang dibiayai Hibah atau Pinjaman Luar Negeri (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-103-02",
+   "name": "Royalti dalam rangka pelaksanaan proyek pemerintah yang dibiayai Hibah atau Pinjaman Luar Negeri (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-104-02",
+   "name": "Imbalan Sehubungan dengan Jasa, Pekerjaan dan Kegiatan dalam rangka pelaksanaan proyek pemerintah yang dibiayai Hibah atau Pinjaman Luar Negeri (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-100-01",
+   "name": "Sewa dan Penghasilan Lain Sehubungan dengan Penggunaan Harta (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-104-01",
+   "name": "Imbalan Sehubungan dengan Jasa, Pekerjaan dan Kegiatan",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-100-02",
+   "name": "Hadiah dan Penghargaan (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "28-405-02",
+   "name": "Hadiah Undian",
+   "rate": 25,
+   "deemed": [
+    100
+   ]
+  },
+  {
+   "code": "27-102-02",
+   "name": "Premi Swap dan Transaksi Lindung Nilai Lainnya (PPh Pasal 26)",
+   "rate": 20,
+   "deemed": [
+    100
+   ]
+  }
+ ],
+ "bppuFacilities": [
+  {
+   "code": "N/A",
+   "name": "Tanpa Fasilitas"
+  },
+  {
+   "code": "TaxExAr22",
+   "name": "Surat Keterangan Bebas (SKB) Pemotongan PPh Pasal 22"
+  },
+  {
+   "code": "TaxExAr23",
+   "name": "Surat Keterangan Bebas (SKB) Pemotongan PPh Pasal 23"
+  },
+  {
+   "code": "TaxExIntDep",
+   "name": "Surat Keterangan Bebas (SKB) Pemotongan PPh atas Bunga atas Deposito Berjangka dan tabungan"
+  },
+  {
+   "code": "TaxExIntPhtb",
+   "name": "Surat Keterangan Bebas (SKB) Pemotongan PPh atas Pengalihan Hak atas Tanah dan Bangunan"
+  },
+  {
+   "code": "DTP",
+   "name": "PPh Ditanggung Pemerintah (DTP)"
+  },
+  {
+   "code": "PP23",
+   "name": "Surat Keterangan PP 23/2018"
+  },
+  {
+   "code": "ETC",
+   "name": "Fasilitas Lainnya"
+  }
+ ],
+ "bpnrFacilities": [
+  {
+   "code": "N/A",
+   "name": "Tanpa fasilitas"
+  },
+  {
+   "code": "COD",
+   "name": "Surat Keterangan Domisili (SKD)"
+  },
+  {
+   "code": "ETC",
+   "name": "Fasilitas lainnya"
+  },
+  {
+   "code": "DTP",
+   "name": "Ditanggung Pemerintah"
+  }
+ ],
+ "documents": [
+  {
+   "code": "Announcement",
+   "name": "Pengumuman"
+  },
+  {
+   "code": "CommercialInvoice",
+   "name": "Surat Tagihan"
+  },
+  {
+   "code": "Contract",
+   "name": "Kontrak"
+  },
+  {
+   "code": "CurrentAccount",
+   "name": "Jasa Giro"
+  },
+  {
+   "code": "Decree",
+   "name": "Decree"
+  },
+  {
+   "code": "DeedOfEngagement",
+   "name": "Akta Perjanjian"
+  },
+  {
+   "code": "DeedOfGeneral",
+   "name": "Akta RUPS"
+  },
+  {
+   "code": "Other",
+   "name": "Lainnya"
+  },
+  {
+   "code": "OtherFacilityDoc",
+   "name": "Dokumen Fasilitas Lainnya"
+  },
+  {
+   "code": "PaymentProof",
+   "name": "Bukti Pembayaran"
+  },
+  {
+   "code": "StatementLetter",
+   "name": "Surat Pernyataan"
+  },
+  {
+   "code": "TaxInvoice",
+   "name": "Faktur Pajak"
+  },
+  {
+   "code": "TaxRegulationDoc",
+   "name": "Dokumen Perpajakan"
+  },
+  {
+   "code": "TradeConfirmation",
+   "name": "Trade Confirmation"
+  }
+ ],
+ "countries": [
+  {
+   "code": "ABW",
+   "name": "Aruba"
+  },
+  {
+   "code": "AFG",
+   "name": "Afghanistan"
+  },
+  {
+   "code": "AGO",
+   "name": "Angola"
+  },
+  {
+   "code": "AIA",
+   "name": "Anguilla"
+  },
+  {
+   "code": "ALA",
+   "name": "Åland Islands"
+  },
+  {
+   "code": "ALB",
+   "name": "Albania"
+  },
+  {
+   "code": "AND",
+   "name": "Andorra"
+  },
+  {
+   "code": "ARE",
+   "name": "United Arab Emirates (the)"
+  },
+  {
+   "code": "ARG",
+   "name": "Argentina"
+  },
+  {
+   "code": "ARM",
+   "name": "Armenia"
+  },
+  {
+   "code": "ASM",
+   "name": "American Samoa"
+  },
+  {
+   "code": "ATA",
+   "name": "Antarctica"
+  },
+  {
+   "code": "ATF",
+   "name": "French Southern Territories (the)"
+  },
+  {
+   "code": "ATG",
+   "name": "Antigua and Barbuda"
+  },
+  {
+   "code": "AUS",
+   "name": "Australia"
+  },
+  {
+   "code": "AUT",
+   "name": "Austria"
+  },
+  {
+   "code": "AZE",
+   "name": "Azerbaijan"
+  },
+  {
+   "code": "BDI",
+   "name": "Burundi"
+  },
+  {
+   "code": "BEL",
+   "name": "Belgium"
+  },
+  {
+   "code": "BEN",
+   "name": "Benin"
+  },
+  {
+   "code": "BES",
+   "name": "Bonaire, Sint Eustatius and Saba"
+  },
+  {
+   "code": "BFA",
+   "name": "Burkina Faso"
+  },
+  {
+   "code": "BGD",
+   "name": "Bangladesh"
+  },
+  {
+   "code": "BGR",
+   "name": "Bulgaria"
+  },
+  {
+   "code": "BHR",
+   "name": "Bahrain"
+  },
+  {
+   "code": "BHS",
+   "name": "Bahamas (the)"
+  },
+  {
+   "code": "BIH",
+   "name": "Bosnia and Herzegovina"
+  },
+  {
+   "code": "BLM",
+   "name": "Saint Barthélemy"
+  },
+  {
+   "code": "BLR",
+   "name": "Belarus"
+  },
+  {
+   "code": "BLZ",
+   "name": "Belize"
+  },
+  {
+   "code": "BMU",
+   "name": "Bermuda"
+  },
+  {
+   "code": "BOL",
+   "name": "Bolivia (Plurinational State of)"
+  },
+  {
+   "code": "BRA",
+   "name": "Brazil"
+  },
+  {
+   "code": "BRB",
+   "name": "Barbados"
+  },
+  {
+   "code": "BRN",
+   "name": "Brunei Darussalam"
+  },
+  {
+   "code": "BTN",
+   "name": "Bhutan"
+  },
+  {
+   "code": "BVT",
+   "name": "Bouvet Island"
+  },
+  {
+   "code": "BWA",
+   "name": "Botswana"
+  },
+  {
+   "code": "CAF",
+   "name": "Central African Republic (the)"
+  },
+  {
+   "code": "CAN",
+   "name": "Canada"
+  },
+  {
+   "code": "CCK",
+   "name": "Cocos (Keeling) Islands (the)"
+  },
+  {
+   "code": "CHE",
+   "name": "Switzerland"
+  },
+  {
+   "code": "CHL",
+   "name": "Chile"
+  },
+  {
+   "code": "CHN",
+   "name": "China"
+  },
+  {
+   "code": "CIV",
+   "name": "Côte d'Ivoire"
+  },
+  {
+   "code": "CMR",
+   "name": "Cameroon"
+  },
+  {
+   "code": "COD",
+   "name": "Congo (the Democratic Republic of the)"
+  },
+  {
+   "code": "COG",
+   "name": "Congo (the)"
+  },
+  {
+   "code": "COK",
+   "name": "Cook Islands (the)"
+  },
+  {
+   "code": "COL",
+   "name": "Colombia"
+  },
+  {
+   "code": "COM",
+   "name": "Comoros (the)"
+  },
+  {
+   "code": "CPV",
+   "name": "Cabo Verde"
+  },
+  {
+   "code": "CRI",
+   "name": "Costa Rica"
+  },
+  {
+   "code": "CUB",
+   "name": "Cuba"
+  },
+  {
+   "code": "CUW",
+   "name": "Curaçao"
+  },
+  {
+   "code": "CXR",
+   "name": "Christmas Island"
+  },
+  {
+   "code": "CYM",
+   "name": "Cayman Islands (the)"
+  },
+  {
+   "code": "CYP",
+   "name": "Cyprus"
+  },
+  {
+   "code": "CZE",
+   "name": "Czechia"
+  },
+  {
+   "code": "DEU",
+   "name": "Germany"
+  },
+  {
+   "code": "DJI",
+   "name": "Djibouti"
+  },
+  {
+   "code": "DMA",
+   "name": "Dominica"
+  },
+  {
+   "code": "DNK",
+   "name": "Denmark"
+  },
+  {
+   "code": "DOM",
+   "name": "Dominican Republic (the)"
+  },
+  {
+   "code": "DZA",
+   "name": "Algeria"
+  },
+  {
+   "code": "ECU",
+   "name": "Ecuador"
+  },
+  {
+   "code": "EGY",
+   "name": "Egypt"
+  },
+  {
+   "code": "ERI",
+   "name": "Eritrea"
+  },
+  {
+   "code": "ESH",
+   "name": "Western Sahara"
+  },
+  {
+   "code": "ESP",
+   "name": "Spain"
+  },
+  {
+   "code": "EST",
+   "name": "Estonia"
+  },
+  {
+   "code": "ETH",
+   "name": "Ethiopia"
+  },
+  {
+   "code": "FIN",
+   "name": "Finland"
+  },
+  {
+   "code": "FJI",
+   "name": "Fiji"
+  },
+  {
+   "code": "FLK",
+   "name": "Falkland Islands (the) [Malvinas]"
+  },
+  {
+   "code": "FRA",
+   "name": "France"
+  },
+  {
+   "code": "FRO",
+   "name": "Faroe Islands (the)"
+  },
+  {
+   "code": "FSM",
+   "name": "Micronesia (Federated States of)"
+  },
+  {
+   "code": "GAB",
+   "name": "Gabon"
+  },
+  {
+   "code": "GBR",
+   "name": "United Kingdom of Great Britain and Northern Ireland (the)"
+  },
+  {
+   "code": "GEO",
+   "name": "Georgia"
+  },
+  {
+   "code": "GGY",
+   "name": "Guernsey"
+  },
+  {
+   "code": "GHA",
+   "name": "Ghana"
+  },
+  {
+   "code": "GIB",
+   "name": "Gibraltar"
+  },
+  {
+   "code": "GIN",
+   "name": "Guinea"
+  },
+  {
+   "code": "GLP",
+   "name": "Guadeloupe"
+  },
+  {
+   "code": "GMB",
+   "name": "Gambia (the)"
+  },
+  {
+   "code": "GNB",
+   "name": "Guinea-Bissau"
+  },
+  {
+   "code": "GNQ",
+   "name": "Equatorial Guinea"
+  },
+  {
+   "code": "GRC",
+   "name": "Greece"
+  },
+  {
+   "code": "GRD",
+   "name": "Grenada"
+  },
+  {
+   "code": "GRL",
+   "name": "Greenland"
+  },
+  {
+   "code": "GTM",
+   "name": "Guatemala"
+  },
+  {
+   "code": "GUF",
+   "name": "French Guiana"
+  },
+  {
+   "code": "GUM",
+   "name": "Guam"
+  },
+  {
+   "code": "GUY",
+   "name": "Guyana"
+  },
+  {
+   "code": "HKG",
+   "name": "Hong Kong"
+  },
+  {
+   "code": "HMD",
+   "name": "Heard Island and McDonald Islands"
+  },
+  {
+   "code": "HND",
+   "name": "Honduras"
+  },
+  {
+   "code": "HRV",
+   "name": "Croatia"
+  },
+  {
+   "code": "HTI",
+   "name": "Haiti"
+  },
+  {
+   "code": "HUN",
+   "name": "Hungary"
+  },
+  {
+   "code": "IDN",
+   "name": "Indonesia"
+  },
+  {
+   "code": "IMN",
+   "name": "Isle of Man"
+  },
+  {
+   "code": "IND",
+   "name": "India"
+  },
+  {
+   "code": "IOT",
+   "name": "British Indian Ocean Territory (the)"
+  },
+  {
+   "code": "IRL",
+   "name": "Ireland"
+  },
+  {
+   "code": "IRN",
+   "name": "Iran (Islamic Republic of)"
+  },
+  {
+   "code": "IRQ",
+   "name": "Iraq"
+  },
+  {
+   "code": "ISL",
+   "name": "Iceland"
+  },
+  {
+   "code": "ISR",
+   "name": "Israel"
+  },
+  {
+   "code": "ITA",
+   "name": "Italy"
+  },
+  {
+   "code": "JAM",
+   "name": "Jamaica"
+  },
+  {
+   "code": "JEY",
+   "name": "Jersey"
+  },
+  {
+   "code": "JOR",
+   "name": "Jordan"
+  },
+  {
+   "code": "JPN",
+   "name": "Japan"
+  },
+  {
+   "code": "KAZ",
+   "name": "Kazakhstan"
+  },
+  {
+   "code": "KEN",
+   "name": "Kenya"
+  },
+  {
+   "code": "KGZ",
+   "name": "Kyrgyzstan"
+  },
+  {
+   "code": "KHM",
+   "name": "Cambodia"
+  },
+  {
+   "code": "KIR",
+   "name": "Kiribati"
+  },
+  {
+   "code": "KNA",
+   "name": "Saint Kitts and Nevis"
+  },
+  {
+   "code": "KOR",
+   "name": "Korea (the Republic of)"
+  },
+  {
+   "code": "KWT",
+   "name": "Kuwait"
+  },
+  {
+   "code": "LAO",
+   "name": "Lao People's Democratic Republic (the)"
+  },
+  {
+   "code": "LBN",
+   "name": "Lebanon"
+  },
+  {
+   "code": "LBR",
+   "name": "Liberia"
+  },
+  {
+   "code": "LBY",
+   "name": "Libya"
+  },
+  {
+   "code": "LCA",
+   "name": "Saint Lucia"
+  },
+  {
+   "code": "LIE",
+   "name": "Liechtenstein"
+  },
+  {
+   "code": "LKA",
+   "name": "Sri Lanka"
+  },
+  {
+   "code": "LSO",
+   "name": "Lesotho"
+  },
+  {
+   "code": "LTU",
+   "name": "Lithuania"
+  },
+  {
+   "code": "LUX",
+   "name": "Luxembourg"
+  },
+  {
+   "code": "LVA",
+   "name": "Latvia"
+  },
+  {
+   "code": "MAC",
+   "name": "Macao"
+  },
+  {
+   "code": "MAF",
+   "name": "Saint Martin (French part)"
+  },
+  {
+   "code": "MAR",
+   "name": "Morocco"
+  },
+  {
+   "code": "MCO",
+   "name": "Monaco"
+  },
+  {
+   "code": "MDA",
+   "name": "Moldova (the Republic of)"
+  },
+  {
+   "code": "MDG",
+   "name": "Madagascar"
+  },
+  {
+   "code": "MDV",
+   "name": "Maldives"
+  },
+  {
+   "code": "MEX",
+   "name": "Mexico"
+  },
+  {
+   "code": "MHL",
+   "name": "Marshall Islands (the)"
+  },
+  {
+   "code": "MKD",
+   "name": "Republic of North Macedonia"
+  },
+  {
+   "code": "MLI",
+   "name": "Mali"
+  },
+  {
+   "code": "MLT",
+   "name": "Malta"
+  },
+  {
+   "code": "MMR",
+   "name": "Myanmar"
+  },
+  {
+   "code": "MNE",
+   "name": "Montenegro"
+  },
+  {
+   "code": "MNG",
+   "name": "Mongolia"
+  },
+  {
+   "code": "MNP",
+   "name": "Northern Mariana Islands (the)"
+  },
+  {
+   "code": "MOZ",
+   "name": "Mozambique"
+  },
+  {
+   "code": "MRT",
+   "name": "Mauritania"
+  },
+  {
+   "code": "MSR",
+   "name": "Montserrat"
+  },
+  {
+   "code": "MTQ",
+   "name": "Martinique"
+  },
+  {
+   "code": "MUS",
+   "name": "Mauritius"
+  },
+  {
+   "code": "MWI",
+   "name": "Malawi"
+  },
+  {
+   "code": "MYS",
+   "name": "Malaysia"
+  },
+  {
+   "code": "MYT",
+   "name": "Mayotte"
+  },
+  {
+   "code": "NAM",
+   "name": "Namibia"
+  },
+  {
+   "code": "NCL",
+   "name": "New Caledonia"
+  },
+  {
+   "code": "NER",
+   "name": "Niger (the)"
+  },
+  {
+   "code": "NFK",
+   "name": "Norfolk Island"
+  },
+  {
+   "code": "NGA",
+   "name": "Nigeria"
+  },
+  {
+   "code": "NIC",
+   "name": "Nicaragua"
+  },
+  {
+   "code": "NIU",
+   "name": "Niue"
+  },
+  {
+   "code": "NLD",
+   "name": "Netherlands (the)"
+  },
+  {
+   "code": "NOR",
+   "name": "Norway"
+  },
+  {
+   "code": "NPL",
+   "name": "Nepal"
+  },
+  {
+   "code": "NRU",
+   "name": "Nauru"
+  },
+  {
+   "code": "NZL",
+   "name": "New Zealand"
+  },
+  {
+   "code": "OMN",
+   "name": "Oman"
+  },
+  {
+   "code": "PAK",
+   "name": "Pakistan"
+  },
+  {
+   "code": "PAN",
+   "name": "Panama"
+  },
+  {
+   "code": "PCN",
+   "name": "Pitcairn"
+  },
+  {
+   "code": "PER",
+   "name": "Peru"
+  },
+  {
+   "code": "PHL",
+   "name": "Philippines (the)"
+  },
+  {
+   "code": "PLW",
+   "name": "Palau"
+  },
+  {
+   "code": "PNG",
+   "name": "Papua New Guinea"
+  },
+  {
+   "code": "POL",
+   "name": "Poland"
+  },
+  {
+   "code": "PRI",
+   "name": "Puerto Rico"
+  },
+  {
+   "code": "PRK",
+   "name": "Korea (the Democratic People's Republic of)"
+  },
+  {
+   "code": "PRT",
+   "name": "Portugal"
+  },
+  {
+   "code": "PRY",
+   "name": "Paraguay"
+  },
+  {
+   "code": "PSE",
+   "name": "Palestine, State of"
+  },
+  {
+   "code": "PYF",
+   "name": "French Polynesia"
+  },
+  {
+   "code": "QAT",
+   "name": "Qatar"
+  },
+  {
+   "code": "REU",
+   "name": "Réunion"
+  },
+  {
+   "code": "ROU",
+   "name": "Romania"
+  },
+  {
+   "code": "RUS",
+   "name": "Russian Federation (the)"
+  },
+  {
+   "code": "RWA",
+   "name": "Rwanda"
+  },
+  {
+   "code": "SAU",
+   "name": "Saudi Arabia"
+  },
+  {
+   "code": "SDN",
+   "name": "Sudan (the)"
+  },
+  {
+   "code": "SEN",
+   "name": "Senegal"
+  },
+  {
+   "code": "SGP",
+   "name": "Singapore"
+  },
+  {
+   "code": "SGS",
+   "name": "South Georgia and the South Sandwich Islands"
+  },
+  {
+   "code": "SHN",
+   "name": "Saint Helena, Ascension and Tristan da Cunha"
+  },
+  {
+   "code": "SJM",
+   "name": "Svalbard and Jan Mayen"
+  },
+  {
+   "code": "SLB",
+   "name": "Solomon Islands"
+  },
+  {
+   "code": "SLE",
+   "name": "Sierra Leone"
+  },
+  {
+   "code": "SLV",
+   "name": "El Salvador"
+  },
+  {
+   "code": "SMR",
+   "name": "San Marino"
+  },
+  {
+   "code": "SOM",
+   "name": "Somalia"
+  },
+  {
+   "code": "SPM",
+   "name": "Saint Pierre and Miquelon"
+  },
+  {
+   "code": "SRB",
+   "name": "Serbia"
+  },
+  {
+   "code": "SSD",
+   "name": "South Sudan"
+  },
+  {
+   "code": "STP",
+   "name": "Sao Tome and Principe"
+  },
+  {
+   "code": "SUR",
+   "name": "Suriname"
+  },
+  {
+   "code": "SVK",
+   "name": "Slovakia"
+  },
+  {
+   "code": "SVN",
+   "name": "Slovenia"
+  },
+  {
+   "code": "SWE",
+   "name": "Sweden"
+  },
+  {
+   "code": "SWZ",
+   "name": "Eswatini"
+  },
+  {
+   "code": "SXM",
+   "name": "Sint Maarten (Dutch part)"
+  },
+  {
+   "code": "SYC",
+   "name": "Seychelles"
+  },
+  {
+   "code": "SYR",
+   "name": "Syrian Arab Republic"
+  },
+  {
+   "code": "TCA",
+   "name": "Turks and Caicos Islands (the)"
+  },
+  {
+   "code": "TCD",
+   "name": "Chad"
+  },
+  {
+   "code": "TGO",
+   "name": "Togo"
+  },
+  {
+   "code": "THA",
+   "name": "Thailand"
+  },
+  {
+   "code": "TJK",
+   "name": "Tajikistan"
+  },
+  {
+   "code": "TKL",
+   "name": "Tokelau"
+  },
+  {
+   "code": "TKM",
+   "name": "Turkmenistan"
+  },
+  {
+   "code": "TLS",
+   "name": "Timor-Leste"
+  },
+  {
+   "code": "TON",
+   "name": "Tonga"
+  },
+  {
+   "code": "TTO",
+   "name": "Trinidad and Tobago"
+  },
+  {
+   "code": "TUN",
+   "name": "Tunisia"
+  },
+  {
+   "code": "TUR",
+   "name": "Turkey"
+  },
+  {
+   "code": "TUV",
+   "name": "Tuvalu"
+  },
+  {
+   "code": "TWN",
+   "name": "Taiwan (Province of China)"
+  },
+  {
+   "code": "TZA",
+   "name": "Tanzania, United Republic of"
+  },
+  {
+   "code": "UGA",
+   "name": "Uganda"
+  },
+  {
+   "code": "UKR",
+   "name": "Ukraine"
+  },
+  {
+   "code": "UMI",
+   "name": "United States Minor Outlying Islands (the)"
+  },
+  {
+   "code": "URY",
+   "name": "Uruguay"
+  },
+  {
+   "code": "USA",
+   "name": "United States of America (the)"
+  },
+  {
+   "code": "UZB",
+   "name": "Uzbekistan"
+  },
+  {
+   "code": "VAT",
+   "name": "Holy See (the)"
+  },
+  {
+   "code": "VCT",
+   "name": "Saint Vincent and the Grenadines"
+  },
+  {
+   "code": "VEN",
+   "name": "Venezuela (Bolivarian Republic of)"
+  },
+  {
+   "code": "VGB",
+   "name": "Virgin Islands (British)"
+  },
+  {
+   "code": "VIR",
+   "name": "Virgin Islands (U.S.)"
+  },
+  {
+   "code": "VNM",
+   "name": "Viet Nam"
+  },
+  {
+   "code": "VUT",
+   "name": "Vanuatu"
+  },
+  {
+   "code": "WLF",
+   "name": "Wallis and Futuna"
+  },
+  {
+   "code": "WSM",
+   "name": "Samoa"
+  },
+  {
+   "code": "YEM",
+   "name": "Yemen"
+  },
+  {
+   "code": "ZAF",
+   "name": "South Africa"
+  },
+  {
+   "code": "ZMB",
+   "name": "Zambia"
+  },
+  {
+   "code": "ZWE",
+   "name": "Zimbabwe"
+  }
+ ]
+}

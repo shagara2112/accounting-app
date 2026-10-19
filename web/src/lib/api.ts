@@ -123,6 +123,8 @@ export type Account = {
   active: boolean
   version: number
   balance: string
+  /** Akun sistem untuk posting otomatis (mis. 1-1401 PPN masukan); kodenya terkunci. */
+  system?: boolean
 }
 
 export type AccountsResponse = { items: Account[]; classes: AccountClass[]; templates: string[] }
@@ -227,6 +229,8 @@ export type LedgerLine = {
   credit: string
   balance: string
   projectId?: string
+  branchId?: string
+  departmentId?: string
 }
 
 export type AccountLedger = {
@@ -269,6 +273,10 @@ export type Contact = {
   nik: string
   nitku: string
   pkp: boolean
+  /** ISO alfa-3; IDN = dalam negeri. Pemasok luar negeri dipotong PPh 26 (TAX-08). */
+  countryCode: string
+  /** TIN di negara asal pemasok luar negeri. */
+  foreignTin: string
   address: string
   email: string
   phone: string
@@ -300,7 +308,7 @@ export type TaxCode = {
   rateBp: number
   dppNum: number
   dppDen: number
-  article?: '23' | '4(2)'
+  article?: '23' | '4(2)' | '26'
   validFrom: string
   validTo?: string
 }
