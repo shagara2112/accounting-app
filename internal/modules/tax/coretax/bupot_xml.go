@@ -65,21 +65,21 @@ type bpuBulk struct {
 }
 
 type bpu struct {
-	TaxPeriodMonth   int      `xml:"TaxPeriodMonth"`
-	TaxPeriodYear    int      `xml:"TaxPeriodYear"`
-	CounterpartTin   string   `xml:"CounterpartTin"`
-	RecipientTKU     string   `xml:"IDPlaceOfBusinessActivityOfIncomeRecipient"`
-	TaxCertificate   string   `xml:"TaxCertificate"`
-	TaxObjectCode    string   `xml:"TaxObjectCode"`
-	TaxBase          string   `xml:"TaxBase"`
-	Rate             string   `xml:"Rate"`
-	Document         string   `xml:"Document"`
-	DocumentNumber   string   `xml:"DocumentNumber"`
-	DocumentDate     string   `xml:"DocumentDate"`
-	WithholderTKU    string   `xml:"IDPlaceOfBusinessActivity"`
-	GovTreasurerOpt  string   `xml:"GovTreasurerOpt"`
-	SP2DNumber       nillable `xml:"SP2DNumber"`
-	WithholdingDate  string   `xml:"WithholdingDate"`
+	TaxPeriodMonth  int      `xml:"TaxPeriodMonth"`
+	TaxPeriodYear   int      `xml:"TaxPeriodYear"`
+	CounterpartTin  string   `xml:"CounterpartTin"`
+	RecipientTKU    string   `xml:"IDPlaceOfBusinessActivityOfIncomeRecipient"`
+	TaxCertificate  string   `xml:"TaxCertificate"`
+	TaxObjectCode   string   `xml:"TaxObjectCode"`
+	TaxBase         string   `xml:"TaxBase"`
+	Rate            string   `xml:"Rate"`
+	Document        string   `xml:"Document"`
+	DocumentNumber  string   `xml:"DocumentNumber"`
+	DocumentDate    string   `xml:"DocumentDate"`
+	WithholderTKU   string   `xml:"IDPlaceOfBusinessActivity"`
+	GovTreasurerOpt string   `xml:"GovTreasurerOpt"`
+	SP2DNumber      nillable `xml:"SP2DNumber"`
+	WithholdingDate string   `xml:"WithholdingDate"`
 }
 
 type bpnrBulk struct {

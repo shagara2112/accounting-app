@@ -237,6 +237,21 @@ func TestAdminManagesUsersRolesAndCompanies(t *testing.T) {
 		t.Fatal("PT baru belum punya bagan akun dari template")
 	}
 
+	// Nama PT yang salah ketik bisa dikoreksi; nama tetap unik di grup.
+	expect(t, e.do(admin, http.MethodPut, "/api/v1/admin/companies/"+ptID, map[string]any{"name": "PT Uji A", "shortName": "Cabang"}), http.StatusUnprocessableEntity, "validation")
+	expect(t, e.do(admin, http.MethodPut, "/api/v1/admin/companies/"+ptID, map[string]any{"name": "PT Cabang", "shortName": ""}), http.StatusUnprocessableEntity, "validation")
+	renamed := e.do(admin, http.MethodPut, "/api/v1/admin/companies/"+ptID, map[string]any{"name": " PT Cabang Baru Nusantara ", "shortName": "Nusantara"})
+	expect(t, renamed, http.StatusOK, "")
+	if renamed.body["name"] != "PT Cabang Baru Nusantara" || renamed.body["shortName"] != "Nusantara" {
+		t.Fatalf("nama baru = %v", renamed.body)
+	}
+	me = e.do(admin, http.MethodGet, "/api/v1/me", nil)
+	for _, c := range me.body["companies"].([]any) {
+		if m := c.(map[string]any); m["id"] == ptID && m["name"] != "PT Cabang Baru Nusantara" {
+			t.Fatalf("/me masih memakai nama lama: %v", m)
+		}
+	}
+
 	// Staf akuntansi tidak bisa membuat PT.
 	expect(t, e.do(e.client(), http.MethodPost, "/api/v1/admin/companies", map[string]any{"name": "PT X", "shortName": "X"}), http.StatusUnauthorized, "auth.required")
 }

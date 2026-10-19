@@ -271,6 +271,7 @@ function NewAccountDialog({ me, open, onClose, accounts, classes }: { me: Me; op
 function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account | null; onClose: () => void }) {
   const update = useUpdateAccount(me.activeCompanyId)
   const toast = useToast()
+  const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [active, setActive] = useState(true)
   const [shownFor, setShownFor] = useState<string | null>(null)
@@ -278,6 +279,7 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
 
   if (account && shownFor !== account.id) {
     setShownFor(account.id)
+    setCode(account.code)
     setName(account.name)
     setActive(account.active)
     update.reset()
@@ -294,7 +296,7 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
       open={account !== null}
       onClose={close}
       title={account ? `Ubah ${account.code}` : 'Ubah akun'}
-      description="Kode, induk, dan jenis akun tidak bisa diubah supaya riwayat jurnal tetap utuh."
+      description="Induk dan jenis akun tidak bisa diubah. Kode bisa dikoreksi selama angka kepalanya sama, dan riwayat jurnal ikut memakai kode baru."
       footer={
         <>
           <Button variant="secondary" onClick={close}>
@@ -302,12 +304,12 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
           </Button>
           <Button
             busy={update.isPending}
-            disabled={!name.trim()}
+            disabled={!name.trim() || !code.trim()}
             onClick={() => {
               if (!account) return
               setAttempt((n) => n + 1)
               update.mutate(
-                { id: account.id, name: name.trim(), active, version: account.version },
+                { id: account.id, code: code.trim(), name: name.trim(), active, version: account.version },
                 {
                   onSuccess: (a) => {
                     toast(`Akun ${a.code} disimpan`)
@@ -322,6 +324,23 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
         </>
       }
     >
+      <Field
+        id="ubah-kode"
+        label="Kode akun"
+        className="num"
+        value={code}
+        maxLength={20}
+        disabled={!account || account.system || account.level === 1}
+        onChange={(e) => setCode(e.target.value)}
+        error={err?.fields.code}
+        hint={
+          account?.system
+            ? 'Akun sistem dipakai posting otomatis (faktur, tagihan, pajak); kodenya tidak bisa diubah.'
+            : account?.level === 1
+              ? 'Kode akun kelompok tidak bisa diubah.'
+              : `Untuk koreksi salah ketik. Angka kepala ${account?.class ?? ''} harus tetap supaya letaknya di laporan tidak berubah.`
+        }
+      />
       <Field id="ubah-nama" label="Nama akun" data-autofocus value={name} maxLength={120} onChange={(e) => setName(e.target.value)} error={err?.fields.name} />
       <Checkbox
         checked={active}
@@ -329,7 +348,7 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
         label="Akun aktif"
         hint="Akun nonaktif tidak bisa dipakai di jurnal baru. Akun yang masih bersaldo tidak bisa dinonaktifkan."
       />
-      {err && !err.fields.name && <Alert shakeKey={attempt}>{err.message}</Alert>}
+      {err && !err.fields.name && !err.fields.code && <Alert shakeKey={attempt}>{err.message}</Alert>}
     </Dialog>
   )
 }

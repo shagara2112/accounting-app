@@ -58,6 +58,8 @@ type Service interface {
 
 	Companies(ctx context.Context) ([]Company, error)
 	CreateCompany(ctx context.Context, in NewCompany, creatorRole string, actor audit.Actor) (Company, error)
+	// RenameCompany mengoreksi nama dan nama singkat PT, mis. karena salah ketik saat setup.
+	RenameCompany(ctx context.Context, id uuid.UUID, in CompanyNames, actor audit.Actor) (Company, error)
 
 	RemoteLicense() bool
 	SetupRequired(ctx context.Context) (bool, error)

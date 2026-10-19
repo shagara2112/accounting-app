@@ -114,6 +114,17 @@ WHERE r.id = $1 AND NOT r.builtin
 -- name: CompanyNameTaken :one
 SELECT EXISTS (SELECT 1 FROM core.companies WHERE lower(name) = lower(sqlc.arg(name)::text))::boolean;
 
+-- name: CompanyNameTakenByOther :one
+SELECT EXISTS (
+  SELECT 1 FROM core.companies WHERE lower(name) = lower(sqlc.arg(name)::text) AND id <> sqlc.arg(id)::uuid
+)::boolean;
+
+-- name: LockCompanyNames :one
+SELECT name, short_name FROM core.companies WHERE id = $1 AND kind = 'pt' FOR UPDATE;
+
+-- name: RenameCompany :exec
+UPDATE core.companies SET name = @name, short_name = @short_name, version = version + 1 WHERE id = @id;
+
 -- name: ListCompanies :many
 SELECT c.id, c.name, c.short_name, c.industry, c.npwp, c.active, c.created_at,
        (SELECT count(*) FROM core.user_company_roles ucr WHERE ucr.company_id = c.id)::int AS users

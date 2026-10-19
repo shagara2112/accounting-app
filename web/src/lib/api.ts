@@ -123,6 +123,8 @@ export type Account = {
   active: boolean
   version: number
   balance: string
+  /** Akun sistem untuk posting otomatis (mis. 1-1401 PPN masukan); kodenya terkunci. */
+  system?: boolean
 }
 
 export type AccountsResponse = { items: Account[]; classes: AccountClass[]; templates: string[] }

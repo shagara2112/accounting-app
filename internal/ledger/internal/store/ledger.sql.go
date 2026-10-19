@@ -1896,12 +1896,13 @@ func (q *Queries) SetRevising(ctx context.Context, entryID string) error {
 
 const updateAccount = `-- name: UpdateAccount :one
 UPDATE ledger.accounts
-SET name = $1, active = $2, version = version + 1
-WHERE company_id = $3 AND id = $4 AND version = $5
+SET code = $1, name = $2, active = $3, version = version + 1
+WHERE company_id = $4 AND id = $5 AND version = $6
 RETURNING id, company_id, code, name, class, parent_id, level, postable, active, created_at, created_by, version
 `
 
 type UpdateAccountParams struct {
+	Code      string
 	Name      string
 	Active    bool
 	CompanyID uuid.UUID
@@ -1911,6 +1912,7 @@ type UpdateAccountParams struct {
 
 func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (LedgerAccount, error) {
 	row := q.db.QueryRow(ctx, updateAccount,
+		arg.Code,
 		arg.Name,
 		arg.Active,
 		arg.CompanyID,

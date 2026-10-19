@@ -66,6 +66,18 @@ var roles = map[Role]roleInfo{
 	NonCreditableVAT: {[]string{"6-4003", "6-4002"}, "beban PPN masukan tidak dapat dikreditkan"},
 }
 
+// roleCodes adalah semua kode akun sistem; kodenya tidak boleh diganti karena posting otomatis
+// mencari akun lewat kode ini.
+var roleCodes = func() map[string]bool {
+	out := map[string]bool{}
+	for _, info := range roles {
+		for _, c := range info.codes {
+			out[c] = true
+		}
+	}
+	return out
+}()
+
 // RoleAccount mencari akun sistem dari kode defaultnya. Akun harus ada, aktif, dan akun detail;
 // bila tidak, pesan galat menyebut kode yang perlu dibuat di bagan akun.
 func (l *ledger) RoleAccount(ctx context.Context, companyID uuid.UUID, role Role) (Account, error) {

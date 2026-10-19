@@ -45,7 +45,7 @@ export function useCreateAccount(companyId: string | null) {
 export function useUpdateAccount(companyId: string | null) {
   const invalidate = useInvalidateLedger(companyId)
   return useMutation({
-    mutationFn: ({ id, ...v }: { id: string; name: string; active: boolean; version: number }) =>
+    mutationFn: ({ id, ...v }: { id: string; code: string; name: string; active: boolean; version: number }) =>
       api<Account>('PATCH', `/ledger/accounts/${id}`, v),
     onSuccess: invalidate,
   })

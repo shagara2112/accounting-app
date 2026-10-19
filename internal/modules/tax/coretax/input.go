@@ -41,25 +41,25 @@ const (
 )
 
 type InputInvoice struct {
-	BillID            uuid.UUID    `json:"billId"`
-	Number            string       `json:"number"`
-	Date              civil.Date   `json:"date"`
-	SupplierID        uuid.UUID    `json:"supplierId"`
-	SupplierName      string       `json:"supplierName"`
-	SupplierNPWP      string       `json:"supplierNpwp"`
-	SupplierInvoiceNo string       `json:"supplierInvoiceNo"`
-	DPP               money.Amount `json:"dpp"`
-	VAT               money.Amount `json:"vat"`    // PPN tagihan
-	NetVAT            money.Amount `json:"netVat"` // sesudah nota debit
-	TaxInvoiceNumber  *string      `json:"taxInvoiceNumber,omitempty"`
-	TaxInvoiceDate    *civil.Date  `json:"taxInvoiceDate,omitempty"`
-	Creditable        bool         `json:"creditable"`
-	CreditPeriod      string       `json:"creditPeriod,omitempty"` // YYYY-MM; kosong bila tidak dikreditkan
-	ReclassEntryID    *uuid.UUID   `json:"reclassEntryId,omitempty"`
-	Match             string       `json:"match"`
+	BillID            uuid.UUID     `json:"billId"`
+	Number            string        `json:"number"`
+	Date              civil.Date    `json:"date"`
+	SupplierID        uuid.UUID     `json:"supplierId"`
+	SupplierName      string        `json:"supplierName"`
+	SupplierNPWP      string        `json:"supplierNpwp"`
+	SupplierInvoiceNo string        `json:"supplierInvoiceNo"`
+	DPP               money.Amount  `json:"dpp"`
+	VAT               money.Amount  `json:"vat"`    // PPN tagihan
+	NetVAT            money.Amount  `json:"netVat"` // sesudah nota debit
+	TaxInvoiceNumber  *string       `json:"taxInvoiceNumber,omitempty"`
+	TaxInvoiceDate    *civil.Date   `json:"taxInvoiceDate,omitempty"`
+	Creditable        bool          `json:"creditable"`
+	CreditPeriod      string        `json:"creditPeriod,omitempty"` // YYYY-MM; kosong bila tidak dikreditkan
+	ReclassEntryID    *uuid.UUID    `json:"reclassEntryId,omitempty"`
+	Match             string        `json:"match"`
 	CoretaxVAT        *money.Amount `json:"coretaxVat,omitempty"`
-	Note              string       `json:"note"`
-	Problems          []string     `json:"problems"`
+	Note              string        `json:"note"`
+	Problems          []string      `json:"problems"`
 }
 
 type InputList struct {
@@ -439,11 +439,11 @@ func (s *service) postNonCreditable(ctx context.Context, companyID uuid.UUID, b 
 
 // InputMatch adalah hasil pencocokan daftar pajak masukan Coretax dengan tagihan.
 type InputMatch struct {
-	Rows        int              `json:"rows"`
-	Matched     []string         `json:"matched"`     // nomor tagihan yang cocok
+	Rows        int               `json:"rows"`
+	Matched     []string          `json:"matched"`     // nomor tagihan yang cocok
 	Differences []InputDifference `json:"differences"` // cocok nomornya, PPN-nya berbeda
-	CoretaxOnly []CoretaxInput   `json:"coretaxOnly"` // ada di Coretax, tidak ada tagihannya
-	LajurOnly   []string         `json:"lajurOnly"`   // tagihan di masa yang sama tanpa faktur di Coretax
+	CoretaxOnly []CoretaxInput    `json:"coretaxOnly"` // ada di Coretax, tidak ada tagihannya
+	LajurOnly   []string          `json:"lajurOnly"`   // tagihan di masa yang sama tanpa faktur di Coretax
 }
 
 type InputDifference struct {

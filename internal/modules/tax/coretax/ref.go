@@ -26,13 +26,13 @@ type RefItem struct {
 }
 
 type BupotRef struct {
-	Source          string      `json:"source"`
-	BPPUObjects     []TaxObject `json:"bppuObjects"`
-	BPNRObjects     []TaxObject `json:"bpnrObjects"`
-	BPPUFacilities  []RefItem   `json:"bppuFacilities"`
-	BPNRFacilities  []RefItem   `json:"bpnrFacilities"`
-	Documents       []RefItem   `json:"documents"`
-	Countries       []RefItem   `json:"countries"`
+	Source         string      `json:"source"`
+	BPPUObjects    []TaxObject `json:"bppuObjects"`
+	BPNRObjects    []TaxObject `json:"bpnrObjects"`
+	BPPUFacilities []RefItem   `json:"bppuFacilities"`
+	BPNRFacilities []RefItem   `json:"bpnrFacilities"`
+	Documents      []RefItem   `json:"documents"`
+	Countries      []RefItem   `json:"countries"`
 }
 
 var (

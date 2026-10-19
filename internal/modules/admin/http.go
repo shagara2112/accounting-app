@@ -36,6 +36,7 @@ func Routes(svc Service, authH *auth.Handlers) []api.Route {
 
 		route(http.MethodGet, "/api/v1/admin/companies", rbac.SystemManage, license.ModeRead, h.companies),
 		route(http.MethodPost, "/api/v1/admin/companies", rbac.SystemManage, license.ModeWrite, h.createCompany),
+		route(http.MethodPut, "/api/v1/admin/companies/{id}", rbac.SystemManage, license.ModeWrite, h.renameCompany),
 	}
 }
 
@@ -215,6 +216,22 @@ func (h handlers) companies(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list, "industries": Industries})
+}
+
+func (h handlers) renameCompany(w http.ResponseWriter, r *http.Request) error {
+	id, err := api.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	var in CompanyNames
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	c, err := h.svc.RenameCompany(r.Context(), id, in, auth.ActorFrom(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, c)
 }
 
 func (h handlers) createCompany(w http.ResponseWriter, r *http.Request) error {

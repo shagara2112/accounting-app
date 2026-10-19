@@ -74,7 +74,7 @@ RETURNING *;
 
 -- name: UpdateAccount :one
 UPDATE ledger.accounts
-SET name = @name, active = @active, version = version + 1
+SET code = @code, name = @name, active = @active, version = version + 1
 WHERE company_id = @company_id AND id = @id AND version = @version
 RETURNING *;
 

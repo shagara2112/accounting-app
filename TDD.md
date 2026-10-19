@@ -200,6 +200,8 @@ Semua angka di Lajur lewat satu fungsi, `ledger.Post`. Fungsi ini memvalidasi, m
 **Kode akun dan jurnal penyesuaian (GL-01, GL-08, GL-11, GL-12)**
 
 - Kode akun divalidasi saat dibuat: angka kepala 1–9 menentukan `class`, dan dari kelas itu diturunkan saldo normal, letak di laporan, serta apakah akun ditutup ke laba ditahan di akhir tahun.
+- Kode akun bisa dikoreksi (salah ketik) selama angka kepalanya sama, sehingga kelas dan letaknya di laporan tetap; baris jurnal menunjuk akun lewat id, jadi riwayatnya ikut memakai kode baru. Akun kelompok dan akun sistem (kode di `roles.go`, dicari posting otomatis lewat kodenya) tidak bisa diganti kodenya. Trigger `ledger.guard_account` (migrasi 00023) tetap mengunci kelas, induk, level, dan jenis akun, serta melarang hapus.
+- Nama dan nama singkat PT bisa dikoreksi admin (`PUT /api/v1/admin/companies/{id}`, izin kelola sistem), unik di grup dan tercatat di audit trail.
 - Kolom `journal_entries.kind` membedakan jurnal `umum`, `penyesuaian`, `pembalik`, dan `penutup`. Jurnal penyesuaian punya seri nomor sendiri, `JP/{tahun}/{bulan}/{nomor}`.
 - Jurnal penyesuaian bertanda `auto_reverse` langsung membuat jurnal pembalik (seri JB) bertanggal hari pertama bulan berikutnya, di transaksi yang sama dan tertaut lewat `reversal_of`. Void jurnal penyesuaian ikut membatalkan pembaliknya, pada tanggal yang tidak lebih awal dari tanggal pembalik itu.
 - Template penyesuaian berulang (mis. penyusutan, amortisasi sewa dibayar di muka) disimpan di `ledger.adjustment_templates`.

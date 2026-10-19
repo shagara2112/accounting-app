@@ -852,6 +852,7 @@ export const topics: GuideTopic[] = [
         points: [
           'Angka kepala kode menentukan kelompok: 1 aset, 2 liabilitas, 3 ekuitas, 4 pendapatan usaha, 5 beban pokok, 6 beban usaha, 7 pendapatan lain-lain, 8 beban lain-lain, 9 pajak penghasilan.',
           'Tekan Akun baru untuk menambah akun di bawah akun induknya. Akun header hanya mengelompokkan; jurnal memakai akun detail.',
+          'Kode akun yang salah ketik bisa dikoreksi lewat tombol ubah di baris akun, selama angka kepalanya sama (mis. 6-1105 menjadi 6-1150). Kode akun sistem (mis. 1-1401 PPN masukan) dan akun kelompok terkunci karena dipakai posting otomatis.',
           'Akun tidak dihapus. Bila tidak dipakai lagi, klik akunnya dan matikan Akun aktif (akun yang masih bersaldo tidak bisa dinonaktifkan).',
         ],
       },
@@ -1025,7 +1026,7 @@ export const topics: GuideTopic[] = [
         points: [
           'Tab Email: isi server SMTP kantor untuk mengirim faktur dan notifikasi, lalu kirim email uji.',
           'Tab Pembaruan: memasang versi baru. Backup dibuat otomatis sebelum pembaruan.',
-          'PT dalam grup: tekan PT baru untuk menambah PT dengan bagan akunnya sendiri.',
+          'PT dalam grup: tekan PT baru untuk menambah PT dengan bagan akunnya sendiri, atau Ubah untuk mengoreksi nama PT dan nama singkatnya.',
         ],
       },
     ],
@@ -1097,6 +1098,11 @@ export const faqs: Faq[] = [
     q: 'Lisensi berakhir, apakah data hilang?',
     a: 'Tidak. Aplikasi masuk mode baca saja: data tetap bisa dilihat dan laporan tetap bisa diekspor. Setelah admin memperpanjang lisensi, semua fitur aktif kembali.',
     topic: 'sistem',
+  },
+  {
+    q: 'Salah ketik nama PT atau kode akun, bisa diperbaiki?',
+    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Kode akun diubah di Bagan akun lewat tombol ubah di baris akunnya, selama angka kepalanya tetap sama; jurnal lama ikut memakai kode baru. Kode akun sistem untuk posting otomatis tidak bisa diubah.',
+    topic: 'buku-besar',
   },
   {
     q: 'Format nomor faktur ingin diganti, bisa?',
