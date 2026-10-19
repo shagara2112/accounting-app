@@ -1,23 +1,27 @@
 # syntax=docker/dockerfile:1
 # Image aplikasi Lajur: API, frontend (go:embed), worker backup, dan lisensi dalam satu binary.
-# Dibangun di CI dari tag rilis:  docker build --build-arg VERSION=1.2.3 -t <registry>/lajur:1.2.3 .
+# Dibangun dari tag rilis:  make image VERSION=1.2.3  atau  make bundle VERSION=1.2.3 (paket offline).
 # Build rilis hanya mempercayai kunci lisensi di internal/platform/license/keys/release/.
+# Tahap web dan Go berjalan di arsitektur mesin build lalu di-cross-compile ke arsitektur target
+# (mis. build di Mac arm64 untuk server linux/amd64), sehingga tidak perlu emulasi CPU.
 
-FROM node:24-alpine AS web
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.27-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
 ARG VERSION=0.0.0-dev
-RUN CGO_ENABLED=0 go build -tags release -trimpath \
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags release -trimpath \
       -ldflags "-s -w -X lajur/internal/platform/buildinfo.Version=${VERSION}" \
       -o /out/lajur ./cmd/lajur
 

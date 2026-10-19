@@ -120,6 +120,16 @@ Status:
 
 ### Rilis
 
+Paket offline untuk server klien (image linux/amd64 dibangun di Mac lewat cross-compile):
+
+```bash
+make bundle VERSION=1.0.0      # → dist/lajur-1.0.0-linux-amd64.tar.gz (±50 MB)
+```
+
+Isinya `install.sh`, `docker-compose.yml`, panduan pemasang, `images.tar.gz`, dan `SHA256SUMS`.
+Salin ke server, ekstrak, lalu `sudo bash install.sh` (lihat [`deploy/README.md`](deploy/README.md)).
+Pembaruan satu klik dari registry tetap tersedia lewat alur di bawah:
+
 ```bash
 make image VERSION=1.2.3 REGISTRY=ghcr.io/lajur          # image app dan updater
 docker push ghcr.io/lajur/lajur:1.2.3 && docker push ghcr.io/lajur/lajur-updater:1.2.3
@@ -127,8 +137,11 @@ lajur sign-manifest --key rilis.private.pem --kid lajur-rilis-2027 --version 1.2
   --image ghcr.io/lajur/lajur@sha256:<digest> --notes-file catatan.md > stable.jws
 ```
 
-Build rilis membutuhkan kunci publik produksi di `internal/platform/license/keys/release/` dan
-`internal/platform/update/keys/release/`.
+Build rilis membutuhkan kunci publik produksi di `internal/platform/license/keys/release/`
+(kid `lajur-20261019`) dan `internal/platform/update/keys/release/` (kid `lajur-rilis-20261019`).
+Kunci privat pasangannya tidak pernah masuk repo: kunci lisensi disimpan di Script Properties
+License Console produksi (`LAJUR_SIGNING_KEY`, `LAJUR_SIGNING_KID`), kunci rilis hanya dipakai
+untuk `lajur sign-manifest`.
 
 ### Mencoba lisensi remote di laptop
 

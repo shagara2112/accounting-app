@@ -5,10 +5,23 @@
 #   sudo bash install.sh renew-cert   buat ulang sertifikat HTTPS (mis. IP server berubah)
 #   sudo bash install.sh status       tampilkan status container dan health
 #
+# Paket offline (make bundle) membawa images.tar.gz dan bundle.env di samping skrip ini: image Lajur
+# dimuat dari paket, bukan diunduh. Menjalankan skrip dari paket versi baru memperbarui instalasi
+# yang ada (backup dulu, lalu ganti image).
+#
 # Variabel opsional: LAJUR_IMAGE (default di bawah), LAJUR_DIR (default /opt/lajur),
-# LAJUR_HOSTNAME (default hostname server), LAJUR_UPDATE_URL (manifest rilis di update server).
+# LAJUR_HOSTNAME (default hostname server), LAJUR_UPDATE_URL (manifest rilis di update server),
+# LAJUR_HTTP_PORT (port HTTP untuk ca.crt dan pengalihan; default 80, atau 8080 bila 80 dipakai),
+# LAJUR_TIMEZONE (default zona waktu server; Asia/Jakarta bila server masih UTC).
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUNDLE=0
+if [ -f "$SCRIPT_DIR/bundle.env" ] && [ -f "$SCRIPT_DIR/images.tar.gz" ]; then
+	BUNDLE=1
+	# shellcheck disable=SC1091
+	. "$SCRIPT_DIR/bundle.env"
+fi
 LAJUR_DIR="${LAJUR_DIR:-/opt/lajur}"
 LAJUR_IMAGE="${LAJUR_IMAGE:-ghcr.io/lajur/lajur:1.0.0}"
 UPDATER_IMAGE="${UPDATER_IMAGE:-${LAJUR_IMAGE%:*}-updater:${LAJUR_IMAGE##*:}}"
@@ -43,20 +56,38 @@ check_os() {
 	OS_CODENAME="${VERSION_CODENAME:-}"
 }
 
+port_busy() { ss -ltnH "sport = :$1" 2>/dev/null | grep -q .; }
+
 check_resources() {
-	local mem_mb disk_gb
-	mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+	local disk_gb
+	MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 	disk_gb=$(df -Pk "$(dirname "$LAJUR_DIR")" | awk 'NR==2 {print int($4/1048576)}')
-	info "RAM ${mem_mb} MB, ruang disk kosong ${disk_gb} GB"
-	[ "$mem_mb" -ge 3500 ] || warn "RAM di bawah 4 GB; Lajur tetap jalan, tetapi laporan besar akan lambat."
+	info "RAM ${MEM_MB} MB, ruang disk kosong ${disk_gb} GB"
+	[ "$MEM_MB" -ge 3500 ] || warn "RAM di bawah 4 GB; Lajur tetap jalan, tetapi laporan besar akan lambat."
 	[ "$disk_gb" -ge 20 ] || die "butuh minimal 20 GB ruang disk kosong untuk data dan backup."
-	for port in 80 443; do
-		if ss -ltnH "sport = :$port" 2>/dev/null | grep -q .; then
-			if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^lajur-app'; then
-				die "port $port sudah dipakai program lain; hentikan dulu program itu."
-			fi
+
+	# Port HTTP: dari variabel, dari .env instalasi lama, atau 80 (8080 bila 80 dipakai program
+	# lain, mis. dasbor CasaOS). HTTPS selalu 443 karena pengalihan HTTP menuju port 443.
+	HTTP_PORT="${LAJUR_HTTP_PORT:-}"
+	if [ -z "$HTTP_PORT" ] && [ -f "$LAJUR_DIR/.env" ]; then
+		HTTP_PORT=$(sed -n 's/^LAJUR_HTTP_PORT=//p' "$LAJUR_DIR/.env")
+	fi
+	if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^lajur-app$'; then
+		HTTP_PORT="${HTTP_PORT:-80}"
+		return
+	fi
+	port_busy 443 && die "port 443 sudah dipakai program lain; hentikan dulu program itu."
+	if [ -z "$HTTP_PORT" ]; then
+		HTTP_PORT=80
+		if port_busy 80; then
+			port_busy 8080 && die "port 80 dan 8080 sudah dipakai; jalankan ulang dengan LAJUR_HTTP_PORT=<port bebas>."
+			HTTP_PORT=8080
+			warn "port 80 dipakai program lain; unduhan ca.crt dan pengalihan HTTP memakai port 8080."
 		fi
-	done
+	elif port_busy "$HTTP_PORT"; then
+		die "port $HTTP_PORT sudah dipakai program lain; pilih LAJUR_HTTP_PORT lain."
+	fi
+	info "Port: HTTPS 443, HTTP ${HTTP_PORT}"
 }
 
 install_docker() {
@@ -80,8 +111,13 @@ install_docker() {
 
 # ------------------------------------------------------------------ sertifikat
 
+# lan_ips: IPv4 global server (LAN dan ZeroTier), tanpa bridge Docker dan alamat link-local.
 lan_ips() {
-	hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true
+	if command -v ip >/dev/null 2>&1; then
+		ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth)/ {split($4, a, "/"); if (a[1] !~ /^169\.254\./) print a[1]}'
+	else
+		hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | grep -v -E '^(169\.254|172\.17)\.' || true
+	fi
 }
 
 # make_ca membuat CA lokal sekali saja; PC pengguna memasang lajur-ca.crt sebagai CA tepercaya.
@@ -134,7 +170,13 @@ write_env() {
 	pg_pass=$(rand_hex 24)
 	app_key=$(rand_b64 32)
 	updater_token=$(rand_hex 32)
-	tz=$(timedatectl show -p Timezone --value 2>/dev/null || echo Asia/Jakarta)
+	tz="${LAJUR_TIMEZONE:-$(timedatectl show -p Timezone --value 2>/dev/null || true)}"
+	case "$tz" in
+	"" | UTC | Etc/UTC | Etc/Universal)
+		tz=Asia/Jakarta
+		warn "zona waktu server masih UTC; Lajur memakai Asia/Jakarta (ganti dengan LAJUR_TIMEZONE=Asia/Makassar atau Asia/Jayapura)."
+		;;
+	esac
 	umask 077
 	cat >"$env" <<EOF
 # Dibuat install.sh $(date -Iseconds). Simpan file ini; tanpa LAJUR_APP_KEY rahasia 2FA dan
@@ -163,6 +205,25 @@ EOF
 	return 0
 }
 
+# env_default menambah KEY=VALUE ke .env bila KEY belum ada, juga untuk instalasi lama.
+env_default() {
+	grep -q "^$1=" "$LAJUR_DIR/.env" || printf '%s=%s\n' "$1" "$2" >>"$LAJUR_DIR/.env"
+}
+
+# tune_env menulis port HTTP dan memori PostgreSQL sesuai RAM server: shared_buffers 25%,
+# effective_cache_size 75%, maintenance_work_mem 1/16 (maks. 512 MB).
+tune_env() {
+	local sb ec mm wm=32MB
+	sb=$((MEM_MB / 4)) ec=$((MEM_MB * 3 / 4)) mm=$((MEM_MB / 16))
+	[ "$mm" -le 512 ] || mm=512
+	[ "$MEM_MB" -ge 6000 ] || wm=16MB
+	env_default LAJUR_HTTP_PORT "$HTTP_PORT"
+	env_default PG_SHARED_BUFFERS "${sb}MB"
+	env_default PG_EFFECTIVE_CACHE "${ec}MB"
+	env_default PG_MAINTENANCE_MEM "${mm}MB"
+	env_default PG_WORK_MEM "$wm"
+}
+
 # backup_key membuat pasangan kunci backup. Kunci privat hanya ditampilkan di layar sekali.
 backup_key() {
 	local env="$LAJUR_DIR/.env" out
@@ -175,12 +236,46 @@ backup_key() {
 }
 
 install_compose() {
-	local src
-	src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-compose.yml"
+	local src="$SCRIPT_DIR/docker-compose.yml"
 	[ -f "$src" ] || die "docker-compose.yml tidak ditemukan di samping install.sh."
 	cp "$src" "$LAJUR_DIR/docker-compose.yml"
 	mkdir -p "$LAJUR_DIR/data"
 	chown 10001:10001 "$LAJUR_DIR/data"
+}
+
+# set_images menulis nama image dari paket ke .env lama, sehingga paket versi baru memperbarui instalasi.
+set_images() {
+	local env="$LAJUR_DIR/.env"
+	sed -i -e "s|^LAJUR_IMAGE=.*|LAJUR_IMAGE=${LAJUR_IMAGE}|" -e "s|^LAJUR_UPDATER_IMAGE=.*|LAJUR_UPDATER_IMAGE=${UPDATER_IMAGE}|" "$env"
+	info "Image: ${LAJUR_IMAGE}"
+}
+
+# backup_before_upgrade membuat backup bila Lajur sudah berjalan dengan image lain; pembaruan
+# dibatalkan bila backup gagal.
+backup_before_upgrade() {
+	local current
+	docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^lajur-app$' || return 0
+	current=$(docker inspect -f '{{.Config.Image}}' lajur-app)
+	[ "$current" != "$LAJUR_IMAGE" ] || return 0
+	bold "Backup sebelum pembaruan ${current} → ${LAJUR_IMAGE}…"
+	(cd "$LAJUR_DIR" && docker compose exec -T app lajur backup) || die "backup gagal; pembaruan dibatalkan dan versi lama tetap berjalan."
+}
+
+# load_images memuat image Lajur dari paket offline; tanpa paket, semua image diunduh dari registry.
+# Image PostgreSQL selalu diunduh dari Docker Hub.
+load_images() {
+	if [ "$BUNDLE" = 1 ]; then
+		if [ -f "$SCRIPT_DIR/SHA256SUMS" ]; then
+			(cd "$SCRIPT_DIR" && sha256sum -c --quiet SHA256SUMS) || die "paket rusak (checksum tidak cocok); salin ulang paketnya."
+		fi
+		bold "Memuat image Lajur dari paket…"
+		gunzip -c "$SCRIPT_DIR/images.tar.gz" | docker load -q >/dev/null
+		bold "Mengunduh image database…"
+		(cd "$LAJUR_DIR" && docker compose pull -q db)
+	else
+		bold "Mengunduh image Lajur…"
+		(cd "$LAJUR_DIR" && docker compose pull -q)
+	fi
 }
 
 wait_healthy() {
@@ -203,7 +298,9 @@ summary() {
 	for ip in $(lan_ips); do echo "    https://${ip}/"; done
 	echo
 	echo "  Sebelumnya, pasang sertifikat CA di setiap PC pengguna (sekali saja):"
-	echo "    unduh http://$(lan_ips | head -1)/ca.crt atau salin ${LAJUR_DIR}/ca/lajur-ca.crt"
+	local port=""
+	[ "${HTTP_PORT:-80}" = 80 ] || port=":${HTTP_PORT}"
+	echo "    unduh http://$(lan_ips | head -1)${port}/ca.crt atau salin ${LAJUR_DIR}/ca/lajur-ca.crt"
 	echo "    Windows: klik dua kali → Install Certificate → Local Machine → Trusted Root Certification Authorities"
 	echo "    macOS  : buka di Keychain Access → System → klik dua kali → Trust → Always Trust"
 	echo
@@ -229,12 +326,15 @@ cmd_install() {
 	install_docker
 	check_resources
 	mkdir -p "$LAJUR_DIR" && chmod 755 "$LAJUR_DIR"
+	backup_before_upgrade
 	install_compose
-	write_env || true
+	if ! write_env && [ "$BUNDLE" = 1 ]; then
+		set_images
+	fi
+	tune_env
 	make_ca
 	[ -s "$LAJUR_DIR/tls/server.crt" ] || make_cert
-	bold "Mengunduh image Lajur…"
-	(cd "$LAJUR_DIR" && docker compose pull -q)
+	load_images
 	backup_key
 	bold "Menjalankan Lajur…"
 	(cd "$LAJUR_DIR" && docker compose up -d)

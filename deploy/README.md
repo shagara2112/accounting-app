@@ -8,14 +8,28 @@ kantor dan dibuka dari browser di PC lain lewat HTTPS.
 - Ubuntu 22.04+ atau Debian 12+, 64-bit, dengan akses root (sudo).
 - RAM minimal 4 GB (disarankan 8 GB), disk kosong minimal 20 GB.
 - IP LAN tetap (atur reservasi DHCP di router), dan internet untuk lisensi serta pembaruan.
-- Port 80 dan 443 belum dipakai program lain.
+- Port 443 belum dipakai program lain. Bila port 80 sudah dipakai (mis. dasbor CasaOS), unduhan
+  `ca.crt` dan pengalihan HTTP otomatis pindah ke port 8080 (atau pilih sendiri dengan
+  `LAJUR_HTTP_PORT=<port>`).
+- Zona waktu server diatur ke zona kantor (`sudo timedatectl set-timezone Asia/Jakarta`); bila server
+  masih UTC, Lajur memakai Asia/Jakarta. Untuk WITA/WIT jalankan skrip dengan
+  `LAJUR_TIMEZONE=Asia/Makassar` atau `Asia/Jayapura`.
+- Memori PostgreSQL disetel otomatis dari RAM server (bisa diubah di `/opt/lajur/.env`, `PG_*`).
 - Client ID dan license key dari License Console (aplikasi **Lajur**), serta alamat License Console.
 
 ## Instal
 
+Lajur dikirim sebagai paket offline `lajur-<versi>-linux-amd64.tar.gz` (±50 MB). Salin ke server
+(USB atau `scp`), lalu:
+
 ```bash
+tar xzf lajur-1.0.0-linux-amd64.tar.gz
+cd lajur-1.0.0-linux-amd64
 sudo bash install.sh
 ```
+
+Image Lajur dimuat dari paket dan diperiksa dengan `SHA256SUMS`. Server tetap butuh internet untuk
+memasang Docker (bila belum ada), mengunduh image PostgreSQL, dan check-in lisensi.
 
 Skrip ini:
 
@@ -29,6 +43,13 @@ Skrip ini:
 5. Menjalankan `docker compose up -d`, lalu menampilkan alamat Lajur.
 
 Menjalankan ulang skrip aman: konfigurasi, CA, dan sertifikat yang sudah ada tetap dipakai.
+
+## Memperbarui dengan paket versi baru
+
+Salin dan ekstrak paket versi baru, lalu jalankan `sudo bash install.sh` dari foldernya. Skrip
+membuat backup dulu (pembaruan dibatalkan bila backup gagal), memuat image baru, mengganti nama
+image di `/opt/lajur/.env`, lalu menjalankan ulang Lajur. Data, konfigurasi, dan sertifikat tetap.
+Migrasi basis data berjalan otomatis saat Lajur menyala.
 
 ## Memasang sertifikat CA di PC pengguna
 

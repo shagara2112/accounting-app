@@ -8,7 +8,9 @@ export
 VERSION ?= 0.0.0-dev
 REGISTRY ?= ghcr.io/lajur
 
-.PHONY: dev-db dev-db-down sqlc web-install web-build web-dev build build-release image run serve seed test vet
+PLATFORM ?= linux/amd64
+
+.PHONY: dev-db dev-db-down sqlc web-install web-build web-dev build build-release image bundle run serve seed test vet
 
 dev-db:          ## Nyalakan PostgreSQL pengembangan di 127.0.0.1:5433
 	docker compose -f deploy/docker-compose.dev.yml up -d --wait
@@ -37,6 +39,13 @@ build-release: web-build ## Binary rilis: tanpa provider lisensi local dan tanpa
 image:           ## Image Docker rilis (app dan updater): make image VERSION=1.2.3 REGISTRY=ghcr.io/lajur
 	docker build --build-arg VERSION=$(VERSION) -t $(REGISTRY)/lajur:$(VERSION) .
 	docker build --build-arg VERSION=$(VERSION) -f Dockerfile.updater -t $(REGISTRY)/lajur-updater:$(VERSION) .
+
+bundle:          ## Paket instalasi offline untuk server klien: make bundle VERSION=1.0.0 (hasil di dist/)
+	@[ "$(VERSION)" != "0.0.0-dev" ] || { echo "Isi VERSION, mis. make bundle VERSION=1.0.0"; exit 1; }
+	@ls internal/platform/license/keys/release/*.pem >/dev/null 2>&1 || { echo "Kunci publik lisensi produksi belum ada di internal/platform/license/keys/release/"; exit 1; }
+	docker buildx build --platform $(PLATFORM) --build-arg VERSION=$(VERSION) -t lajur/lajur:$(VERSION) --load .
+	docker buildx build --platform $(PLATFORM) --build-arg VERSION=$(VERSION) -f Dockerfile.updater -t lajur/lajur-updater:$(VERSION) --load .
+	bash deploy/bundle.sh $(VERSION) $(PLATFORM)
 
 run:             ## Jalankan server dari kode sumber (migrasi otomatis) di LAJUR_LISTEN
 	$(GO) run ./cmd/lajur serve

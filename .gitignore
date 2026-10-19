@@ -12,3 +12,8 @@ web/dist/*
 
 # Kunci privat pengembangan (License Console tiruan dan manifest pembaruan) tidak masuk git.
 deploy/dev/*.pem
+
+# Kunci privat produksi: pindahkan ke tempat aman lalu hapus folder ini. Jangan pernah di-commit.
+deploy/prod-keys/
+# Paket instalasi offline hasil make bundle.
+/dist/

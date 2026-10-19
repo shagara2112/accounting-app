@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	// Data zona waktu ditanam di binary: image updater (dan server tanpa paket tzdata) tetap bisa
+	// memuat Asia/Jakarta.
+	_ "time/tzdata"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
