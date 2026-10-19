@@ -121,10 +121,11 @@ export function useWorksheet(companyId: string | null, month: string) {
   })
 }
 
-export function useAccountLedger(companyId: string | null, accountId: string | null, from: string, to: string) {
+/** branch/department: id, 'none' (tanpa dimensi), atau kosong (semua). */
+export function useAccountLedger(companyId: string | null, accountId: string | null, from: string, to: string, branch = '', department = '') {
   return useQuery({
-    queryKey: key(companyId, 'account-ledger', accountId, from, to),
-    queryFn: () => api<AccountLedger>('GET', `/ledger/accounts/${accountId}/ledger` + query({ from, to })),
+    queryKey: key(companyId, 'account-ledger', accountId, from, to, branch, department),
+    queryFn: () => api<AccountLedger>('GET', `/ledger/accounts/${accountId}/ledger` + query({ from, to, branch, department })),
     enabled: companyId !== null && accountId !== null && from !== '' && to !== '' && from <= to,
     placeholderData: keepPreviousData,
   })

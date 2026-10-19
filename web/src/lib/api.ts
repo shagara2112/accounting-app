@@ -229,6 +229,8 @@ export type LedgerLine = {
   credit: string
   balance: string
   projectId?: string
+  branchId?: string
+  departmentId?: string
 }
 
 export type AccountLedger = {

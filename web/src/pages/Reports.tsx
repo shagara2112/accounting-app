@@ -14,6 +14,7 @@ import {
   useProfitLoss,
   useSummary,
   useTrialBalance,
+  type ReportColumn,
   type ReportLine,
   type ReportName,
   type Statement,
@@ -213,6 +214,9 @@ const rowStyle: Record<ReportLine['kind'], string> = {
 
 export function StatementTable({ st, diff, onAccount }: { st: Statement; diff?: boolean; onAccount?: (id: string, column: number) => void }) {
   const showDiff = diff && st.columns.length === 2
+  // Kolom per cabang/departemen: klik nama akun membuka kolom Jumlah; klik angka membuka kolomnya.
+  const perDim = st.columns.some((c) => c.branch !== st.columns[0].branch || c.department !== st.columns[0].department)
+  const nameColumn = perDim ? st.columns.length - 1 : 0
   return (
     <TableShell minWidth={st.columns.length > 1 ? 760 : 560}>
       <thead className="bg-hover/60">
@@ -235,15 +239,27 @@ export function StatementTable({ st, diff, onAccount }: { st: Statement; diff?: 
           return (
             <tr
               key={i}
-              onClick={clickable ? () => onAccount(l.accountId!, 0) : undefined}
+              onClick={clickable ? () => onAccount(l.accountId!, nameColumn) : undefined}
               className={`border-t border-line ${rowStyle[l.kind]} ${clickable ? 'cursor-pointer transition-colors duration-150 hover:bg-hover' : ''}`}
             >
               <td className={`${td} ${l.kind === 'section' ? 'py-2' : ''}`} style={{ paddingLeft: 16 + indent * 18 }}>
                 {l.kind === 'account' && <span className="num mr-2 text-[12.5px] text-muted">{l.code}</span>}
                 {l.name}
               </td>
-              {st.columns.map((_, c) => (
-                <td key={c} className={`${td} num text-right whitespace-nowrap ${values[c] && toUnits(values[c]) < 0n ? 'text-bad' : ''}`}>
+              {st.columns.map((col, c) => (
+                <td
+                  key={c}
+                  title={clickable ? `Buku besar ${l.code} · ${col.label}` : undefined}
+                  onClick={
+                    clickable
+                      ? (e) => {
+                          e.stopPropagation()
+                          onAccount(l.accountId!, c)
+                        }
+                      : undefined
+                  }
+                  className={`${td} num text-right whitespace-nowrap ${values[c] && toUnits(values[c]) < 0n ? 'text-bad' : ''} ${clickable ? 'hover:text-accent hover:underline' : ''}`}
+                >
                   {values[c] !== undefined ? formatAmount(values[c], { parens: true }) : ''}
                 </td>
               ))}
@@ -256,12 +272,14 @@ export function StatementTable({ st, diff, onAccount }: { st: Statement; diff?: 
   )
 }
 
-function useLedgerLink(columns: { from: string; to: string }[] | undefined) {
+/** Tautan ke buku besar akun untuk periode dan saringan cabang/departemen satu kolom laporan. */
+function useLedgerLink(columns: ReportColumn[] | undefined) {
   const navigate = useNavigate()
   return (accountId: string, column: number) => {
     const c = columns?.[column]
     if (!c) return
-    navigate(`/buku-besar?akun=${accountId}&dari=${c.from}&sampai=${c.to}`)
+    const dims = `${c.branch ? `&cabang=${c.branch}` : ''}${c.department ? `&departemen=${c.department}` : ''}`
+    navigate(`/buku-besar?akun=${accountId}&dari=${c.from}&sampai=${c.to}${dims}`)
   }
 }
 
@@ -313,7 +331,9 @@ function ProfitLossTab({ me }: { me: Me }) {
   const branches = allowedBranches(me, useDimensions(me.activeCompanyId, 'cabang').data ?? [])
   const departments = (useDimensions(me.activeCompanyId, 'departemen').data ?? []).filter((d) => d.active)
   const restricted = isRestricted(me)
-  const per = branch === 'per'
+  const perBranch = branch === 'per'
+  const perDept = department === 'per'
+  const per = perBranch || perDept
   const range = presetRange(preset, fiscal, custom)
   const cmp = per ? null : compareRange(range, compare)
   const params = {
@@ -321,16 +341,16 @@ function ProfitLossTab({ me }: { me: Me }) {
     to: range.to,
     compareFrom: cmp?.from,
     compareTo: cmp?.to,
-    branch: per ? undefined : branch || undefined,
-    department: department || undefined,
-    per: per ? 'cabang' : undefined,
+    branch: perBranch ? undefined : branch || undefined,
+    department: perDept ? undefined : department || undefined,
+    per: perBranch ? 'cabang' : perDept ? 'departemen' : undefined,
   }
   const report = useProfitLoss(me.activeCompanyId, params)
   const st = report.data
   const onAccount = useLedgerLink(st?.columns)
   const dimText = [
-    per ? 'per cabang' : branch && branches.find((b) => b.id === branch)?.name,
-    department && `departemen ${departments.find((d) => d.id === department)?.name ?? ''}`,
+    perBranch ? 'per cabang' : branch && branches.find((b) => b.id === branch)?.name,
+    perDept ? 'per departemen' : department && `departemen ${departments.find((d) => d.id === department)?.name ?? ''}`,
   ].filter(Boolean)
   return (
     <ReportFrame
@@ -352,7 +372,9 @@ function ProfitLossTab({ me }: { me: Me }) {
           {branches.length > 0 && (
             <SelectField id="lr-cabang" label="Cabang" value={branch} onChange={(e) => setBranch(e.target.value)}>
               <option value="">{restricted ? 'Semua cabang saya' : 'Semua cabang'}</option>
-              <option value="per">Per cabang (kolom)</option>
+              <option value="per" disabled={perDept}>
+                Per cabang (kolom)
+              </option>
               {branches.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.code} · {b.name}
@@ -363,6 +385,9 @@ function ProfitLossTab({ me }: { me: Me }) {
           {departments.length > 0 && (
             <SelectField id="lr-departemen" label="Departemen" value={department} onChange={(e) => setDepartment(e.target.value)}>
               <option value="">Semua departemen</option>
+              <option value="per" disabled={perBranch}>
+                Per departemen (kolom)
+              </option>
               {departments.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.code} · {d.name}
@@ -378,8 +403,8 @@ function ProfitLossTab({ me }: { me: Me }) {
       {st && (branch || department) && (
         <p className="text-[13px] text-muted print:hidden">
           {per
-            ? 'Jurnal tanpa cabang, mis. penyusutan atau jurnal umum, dikumpulkan di kolom Tanpa cabang.'
-            : 'Hanya jurnal dengan cabang atau departemen sesuai filter yang dihitung; jurnal tanpa dimensi, mis. penyusutan atau jurnal umum, tidak ikut.'}
+            ? `Jurnal tanpa ${perDept ? 'departemen' : 'cabang'}, mis. penyusutan atau jurnal umum tanpa ${perDept ? 'departemen' : 'cabang'}, dikumpulkan di kolom Tanpa ${perDept ? 'departemen' : 'cabang'}. Klik angka untuk melihat rincian jurnalnya di buku besar.`
+            : 'Hanya jurnal dengan cabang atau departemen sesuai filter yang dihitung; jurnal tanpa dimensi, mis. penyusutan atau jurnal umum, tidak ikut. Klik angka untuk melihat rincian jurnalnya di buku besar.'}
         </p>
       )}
     </ReportFrame>

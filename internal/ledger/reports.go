@@ -256,6 +256,10 @@ func pairOf(net money.Amount) Pair {
 
 // AccountLedger mengembalikan buku besar satu akun: saldo awal, mutasi, dan saldo berjalan.
 func (l *ledger) AccountLedger(ctx context.Context, companyID, accountID uuid.UUID, from, to civil.Date) (AccountLedger, error) {
+	return l.AccountLedgerBy(ctx, companyID, accountID, from, to, LedgerDim{})
+}
+
+func (l *ledger) AccountLedgerBy(ctx context.Context, companyID, accountID uuid.UUID, from, to civil.Date, dim LedgerDim) (AccountLedger, error) {
 	if from.IsZero() || to.IsZero() || to.Before(from) {
 		return AccountLedger{}, httpx.BadRequest("ledger.range", "Rentang tanggal tidak valid.")
 	}
@@ -278,18 +282,21 @@ func (l *ledger) AccountLedger(ctx context.Context, companyID, accountID uuid.UU
 	}
 	opening, err := q.AccountOpening(ctx, store.AccountOpeningParams{
 		CompanyID: companyID, AccountID: accountID, BeforeDate: from, SinceDate: since,
+		BranchID: dim.BranchID, BranchNull: dim.NoBranch, DepartmentID: dim.DepartmentID, DepartmentNull: dim.NoDepartment,
 	})
 	if err != nil {
 		return AccountLedger{}, err
 	}
 	closing, err := q.AccountOpening(ctx, store.AccountOpeningParams{
 		CompanyID: companyID, AccountID: accountID, BeforeDate: to.AddDays(1), SinceDate: since,
+		BranchID: dim.BranchID, BranchNull: dim.NoBranch, DepartmentID: dim.DepartmentID, DepartmentNull: dim.NoDepartment,
 	})
 	if err != nil {
 		return AccountLedger{}, err
 	}
 	rows, err := q.AccountLines(ctx, store.AccountLinesParams{
 		CompanyID: companyID, AccountID: accountID, FromDate: from, ToDate: to, RowLimit: maxLedgerLines,
+		BranchID: dim.BranchID, BranchNull: dim.NoBranch, DepartmentID: dim.DepartmentID, DepartmentNull: dim.NoDepartment,
 	})
 	if err != nil {
 		return AccountLedger{}, err
@@ -310,6 +317,7 @@ func (l *ledger) AccountLedger(ctx context.Context, companyID, accountID uuid.UU
 		out.Lines = append(out.Lines, LedgerLine{
 			EntryID: r.EntryID, Number: r.Number, Kind: Kind(r.Kind), Status: r.Status, Date: r.EntryDate,
 			Memo: memo, Debit: r.Debit, Credit: r.Credit, Balance: class.Present(running), ProjectID: r.ProjectID,
+			BranchID: r.BranchID, DepartmentID: r.DepartmentID,
 		})
 		out.TotalDebit = out.TotalDebit.Add(r.Debit)
 		out.TotalCredit = out.TotalCredit.Add(r.Credit)

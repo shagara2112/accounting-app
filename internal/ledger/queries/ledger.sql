@@ -187,18 +187,28 @@ JOIN ledger.accounts a ON a.id = b.account_id
 WHERE b.company_id = @company_id AND a.class >= 4 AND b.month < @fiscal_start;
 
 -- name: AccountOpening :one
+-- Saldo satu akun sebelum before_date, bisa disaring cabang/departemen (GL-09); *_null memilih
+-- baris tanpa dimensi itu.
 SELECT coalesce(sum(debit - credit), 0)::numeric AS net
 FROM ledger.journal_lines
 WHERE company_id = @company_id AND account_id = @account_id
-  AND entry_date < @before_date AND entry_date >= @since_date;
+  AND entry_date < @before_date AND entry_date >= @since_date
+  AND (sqlc.narg(branch_id)::uuid IS NULL OR branch_id = sqlc.narg(branch_id)::uuid)
+  AND (NOT @branch_null::boolean OR branch_id IS NULL)
+  AND (sqlc.narg(department_id)::uuid IS NULL OR department_id = sqlc.narg(department_id)::uuid)
+  AND (NOT @department_null::boolean OR department_id IS NULL);
 
 -- name: AccountLines :many
 SELECT l.entry_id, e.number, e.kind, e.status, e.source_type, l.entry_date, l.line_no,
-       e.memo AS entry_memo, l.memo, l.debit, l.credit, l.project_id
+       e.memo AS entry_memo, l.memo, l.debit, l.credit, l.project_id, l.branch_id, l.department_id
 FROM ledger.journal_lines l
 JOIN ledger.journal_entries e ON e.id = l.entry_id
 WHERE l.company_id = @company_id AND l.account_id = @account_id
   AND l.entry_date >= @from_date AND l.entry_date <= @to_date
+  AND (sqlc.narg(branch_id)::uuid IS NULL OR l.branch_id = sqlc.narg(branch_id)::uuid)
+  AND (NOT @branch_null::boolean OR l.branch_id IS NULL)
+  AND (sqlc.narg(department_id)::uuid IS NULL OR l.department_id = sqlc.narg(department_id)::uuid)
+  AND (NOT @department_null::boolean OR l.department_id IS NULL)
 ORDER BY l.entry_date, e.posted_at, e.number, l.line_no
 LIMIT @row_limit;
 

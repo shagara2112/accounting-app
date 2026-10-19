@@ -146,7 +146,8 @@ func (h handlers) profitLoss(r *http.Request) (built, error) {
 	if err != nil {
 		return built{}, err
 	}
-	f := DimFilter{BranchID: branch, DepartmentID: dept, PerBranch: r.URL.Query().Get("per") == "cabang", Branches: api.Branches(r)}
+	f := DimFilter{BranchID: branch, DepartmentID: dept, PerBranch: r.URL.Query().Get("per") == "cabang",
+		PerDepartment: r.URL.Query().Get("per") == "departemen", Branches: api.Branches(r)}
 	st, err := h.svc.ProfitLossBy(r.Context(), api.CompanyID(r), periods, f)
 	return built{body: st, table: st.Table(periodLabel(p)), file: fmt.Sprintf("laba-rugi-%s_%s", p.From, p.To)}, err
 }

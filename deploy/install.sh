@@ -292,7 +292,11 @@ wait_healthy() {
 summary() {
 	local ip
 	bold ""
-	bold "Lajur siap."
+	if [ "${UPGRADE:-0}" = 1 ]; then
+		bold "Lajur siap${LAJUR_VERSION:+ (versi ${LAJUR_VERSION})}. Data, pengguna, lisensi, dan sertifikat tidak berubah."
+	else
+		bold "Lajur siap."
+	fi
 	echo "  Buka dari PC di jaringan kantor:"
 	echo "    https://${HOSTNAME_FQDN}/"
 	for ip in $(lan_ips); do echo "    https://${ip}/"; done
@@ -304,7 +308,7 @@ summary() {
 	echo "    Windows: klik dua kali → Install Certificate → Local Machine → Trusted Root Certification Authorities"
 	echo "    macOS  : buka di Keychain Access → System → klik dua kali → Trust → Always Trust"
 	echo
-	echo "  Setup wizard di browser meminta Client ID, license key, dan alamat License Console."
+	[ "${UPGRADE:-0}" = 1 ] || echo "  Setup wizard di browser meminta Client ID, license key, dan alamat License Console."
 	if [ -n "${BACKUP_PRIVATE:-}" ]; then
 		echo
 		bold "  KUNCI PRIVAT BACKUP — serahkan ke Pemilik, simpan di dua tempat (pengelola kata sandi dan"
@@ -328,8 +332,9 @@ cmd_install() {
 	mkdir -p "$LAJUR_DIR" && chmod 755 "$LAJUR_DIR"
 	backup_before_upgrade
 	install_compose
-	if ! write_env && [ "$BUNDLE" = 1 ]; then
-		set_images
+	if ! write_env; then
+		UPGRADE=1
+		[ "$BUNDLE" = 0 ] || set_images
 	fi
 	tune_env
 	make_ca

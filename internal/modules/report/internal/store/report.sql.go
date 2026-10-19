@@ -129,6 +129,7 @@ func (q *Queries) NetByAccount(ctx context.Context, arg NetByAccountParams) ([]N
 
 const netByDimension = `-- name: NetByDimension :many
 SELECT l.account_id, coalesce(l.branch_id, '00000000-0000-0000-0000-000000000000'::uuid) AS branch_id,
+       coalesce(l.department_id, '00000000-0000-0000-0000-000000000000'::uuid) AS department_id,
        sum(l.debit)::numeric AS debit, sum(l.credit)::numeric AS credit
 FROM ledger.journal_lines l
 JOIN ledger.journal_entries e ON e.id = l.entry_id
@@ -137,7 +138,7 @@ WHERE l.company_id = $1 AND l.entry_date >= $2 AND l.entry_date <= $3 AND e.kind
   AND (NOT $5::boolean OR l.branch_id IS NULL)
   AND ($6::uuid IS NULL OR l.department_id = $6::uuid)
   AND (NOT $7::boolean OR l.department_id IS NULL)
-GROUP BY l.account_id, coalesce(l.branch_id, '00000000-0000-0000-0000-000000000000'::uuid)
+GROUP BY 1, 2, 3
 `
 
 type NetByDimensionParams struct {
@@ -151,10 +152,11 @@ type NetByDimensionParams struct {
 }
 
 type NetByDimensionRow struct {
-	AccountID uuid.UUID
-	BranchID  *uuid.UUID
-	Debit     money.Amount
-	Credit    money.Amount
+	AccountID    uuid.UUID
+	BranchID     *uuid.UUID
+	DepartmentID *uuid.UUID
+	Debit        money.Amount
+	Credit       money.Amount
 }
 
 // Mutasi per akun dari baris jurnal untuk rentang tanggal, disaring cabang dan/atau departemen
@@ -179,6 +181,7 @@ func (q *Queries) NetByDimension(ctx context.Context, arg NetByDimensionParams) 
 		if err := rows.Scan(
 			&i.AccountID,
 			&i.BranchID,
+			&i.DepartmentID,
 			&i.Debit,
 			&i.Credit,
 		); err != nil {

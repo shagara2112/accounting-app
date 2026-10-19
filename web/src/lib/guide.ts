@@ -741,15 +741,24 @@ export const topics: GuideTopic[] = [
     page: { to: '/laporan', label: 'Laporan keuangan' },
     paths: ['/laporan'],
     visible: allow('report.view'),
-    keywords: ['neraca', 'laba rugi', 'arus kas', 'excel', 'pdf', 'cetak'],
+    keywords: ['neraca', 'laba rugi', 'arus kas', 'excel', 'pdf', 'cetak', 'departemen', 'divisi', 'cabang', 'per departemen'],
     sections: [
       {
         title: 'Membuka laporan',
         steps: [
           'Buka Laporan keuangan, pilih tab: Neraca, Laba rugi, Arus kas, Neraca saldo, Penjualan dan pembelian, atau Kartu kontak.',
           'Pilih periode: Bulan ini, Bulan lalu, atau Pilih tanggal.',
-          'Laba rugi bisa dipilah per cabang dan departemen.',
+          'Laba rugi bisa dipilah per cabang dan departemen (lihat bagian di bawah).',
         ],
+      },
+      {
+        title: 'Pendapatan dan beban per departemen atau cabang',
+        steps: [
+          'Buka tab Laba rugi dan pilih periodenya.',
+          'Di kotak Departemen, pilih satu departemen untuk melihat pendapatan, beban, dan labanya saja, atau pilih Per departemen (kolom) untuk melihat semua departemen berdampingan. Cara yang sama berlaku untuk Cabang.',
+          'Klik angka di laporan untuk membuka rincian jurnalnya di Buku besar, sudah tersaring departemen dan periode yang sama.',
+        ],
+        note: 'Hanya transaksi yang diberi departemen yang masuk ke departemen itu: isi Departemen di faktur dan tagihan, di setiap baris kas dan bank, dan di setiap baris jurnal. Yang tidak diberi departemen muncul di kolom Tanpa departemen.',
       },
       {
         title: 'Ekspor dan cetak',
@@ -806,7 +815,7 @@ export const topics: GuideTopic[] = [
         steps: [
           'Buka Jurnal, tekan Buat jurnal umum.',
           'Isi tanggal dan keterangan.',
-          'Isi baris akun dengan debit atau kredit. Proyek, cabang, dan departemen bisa diisi per baris.',
+          'Isi baris akun dengan debit atau kredit. Proyek dipilih di bawah akun; Cabang dan Departemen dipilih di bawah keterangan setiap baris, supaya jurnal ikut terhitung di laba rugi per cabang/departemen.',
           'Total debit harus sama dengan kredit. Tombol Isi selisih membantu mengisi baris terakhir.',
           'Tekan Posting jurnal.',
         ],
@@ -815,7 +824,7 @@ export const topics: GuideTopic[] = [
         title: 'Jurnal penyesuaian',
         points: [
           'Tekan Jurnal penyesuaian untuk akrual, koreksi akhir bulan, dan sejenisnya. Nomornya berseri JP dan bertanggal akhir periode.',
-          'Centang Balik otomatis untuk akrual: Lajur langsung membuat jurnal pembalik (seri JB) di awal bulan berikutnya.',
+          'Centang Balik otomatis untuk akrual: Lajur langsung membuat jurnal pembalik (seri JB) di awal bulan berikutnya, lengkap dengan proyek, cabang, dan departemen setiap barisnya.',
           'Hanya jurnal penyesuaian yang boleh masuk ke periode berstatus Penyesuaian.',
         ],
       },
@@ -841,7 +850,12 @@ export const topics: GuideTopic[] = [
     sections: [
       {
         title: 'Buku besar',
-        steps: ['Buka Buku besar, ketik kode atau nama akun.', 'Pilih rentang tanggal Dari dan Sampai.', 'Klik nomor jurnal untuk melihat detailnya dan membuka dokumen sumbernya.'],
+        steps: [
+          'Buka Buku besar, ketik kode atau nama akun.',
+          'Pilih rentang tanggal Dari dan Sampai.',
+          'Bila perlu, saring per Cabang atau Departemen (termasuk Tanpa departemen). Saldo awal dan akhir ikut dihitung dari baris yang tersaring.',
+          'Klik nomor jurnal untuk melihat detailnya dan membuka dokumen sumbernya.',
+        ],
       },
       {
         title: 'Neraca lajur',
@@ -1083,6 +1097,11 @@ export const faqs: Faq[] = [
     q: 'Faktur pajak masukan baru diterima bulan depan, bagaimana?',
     a: 'Buka Pajak → Faktur masukan, klik tagihannya, catat nomor faktur pajak, dan pilih masa pengkreditan yang lebih akhir (paling lama tiga masa sesudah masa faktur).',
     topic: 'faktur-masukan',
+  },
+  {
+    q: 'Bagaimana melihat pendapatan dan pengeluaran per departemen?',
+    a: 'Buka Laporan keuangan → Laba rugi, lalu di kotak Departemen pilih satu departemen, atau Per departemen (kolom) untuk membandingkan semua departemen. Klik angkanya untuk melihat jurnal penyusunnya di Buku besar. Pastikan transaksi diberi departemen saat dicatat; yang tanpa departemen dikumpulkan di kolom Tanpa departemen.',
+    topic: 'laporan',
   },
   {
     q: 'Bagaimana menyimpan laporan sebagai PDF?',

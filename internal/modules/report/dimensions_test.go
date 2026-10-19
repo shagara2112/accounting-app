@@ -143,3 +143,76 @@ func TestRecurringJournals(t *testing.T) {
 		t.Fatalf("beban sewa = %s", e.Net("6-2001", day("2026-10-31")))
 	}
 }
+
+// GL-09: laba rugi satu kolom per departemen (termasuk Tanpa departemen), kolom membawa saringan
+// untuk tautan buku besar, dan buku besar bisa disaring per departemen.
+func TestProfitLossPerDepartmentAndLedgerFilter(t *testing.T) {
+	e := fixture.New(t)
+	dept := func(code, name string) uuid.UUID {
+		d, err := e.Core.SaveDimension(e.Ctx, e.Company, core.DimDepartment, nil, core.DimensionInput{Code: code, Name: name}, e.Actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.ID
+	}
+	ops, mkt := dept("OPS", "Operasional"), dept("MKT", "Pemasaran")
+	sellTo := func(d *uuid.UUID, amount int64) {
+		inv, err := e.Sales.CreateInvoice(e.Ctx, e.Company, sales.InvoiceInput{CustomerID: e.Customer, Date: day("2026-10-05"), DepartmentID: d, Lines: []trade.LineInput{{
+			Description: "Jasa", AccountID: e.Acc["4-1001"], Qty: money.FromInt(1), UnitPrice: rp(amount), TaxCode: "PPN",
+		}}}, e.Actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.Sales.PostInvoice(e.Ctx, e.Company, inv.ID, e.Actor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sellTo(&ops, 10_000_000)
+	sellTo(&mkt, 4_000_000)
+	sellTo(nil, 1_000_000)
+	oct := []report.Period{{From: day("2026-10-01"), To: day("2026-10-31")}}
+
+	st, err := e.Report.ProfitLossBy(e.Ctx, e.Company, oct, report.DimFilter{PerDepartment: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Kolom urut kode departemen: MKT, OPS, lalu Tanpa departemen dan Jumlah.
+	if len(st.Columns) != 4 || st.Columns[1].Label != "OPS Operasional" || st.Columns[2].Label != "Tanpa departemen" {
+		t.Fatalf("kolom laba rugi per departemen = %+v", st.Columns)
+	}
+	if st.Columns[1].Department != ops.String() || st.Columns[2].Department != "none" || st.Columns[3].Department != "" {
+		t.Fatalf("saringan kolom = %+v", st.Columns)
+	}
+	rev := line(t, st, "Jumlah pendapatan usaha")
+	if !rev.Values[0].Equal(rp(4_000_000)) || !rev.Values[1].Equal(rp(10_000_000)) || !rev.Values[2].Equal(rp(1_000_000)) || !rev.Values[3].Equal(rp(15_000_000)) {
+		t.Fatalf("pendapatan per departemen = %v", rev.Values)
+	}
+
+	one, err := e.Report.ProfitLossBy(e.Ctx, e.Company, oct, report.DimFilter{DepartmentID: &mkt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Columns[0].Department != mkt.String() || !line(t, one, "Jumlah pendapatan usaha").Values[0].Equal(rp(4_000_000)) {
+		t.Fatalf("laba rugi departemen pemasaran = %+v", one.Columns)
+	}
+	if _, err := e.Report.ProfitLossBy(e.Ctx, e.Company, oct, report.DimFilter{PerBranch: true, PerDepartment: true}); code(err) != "report.columns" {
+		t.Fatalf("kolom per cabang dan per departemen sekaligus seharusnya ditolak: %v", err)
+	}
+
+	ledgerOf := func(dim ledger.LedgerDim) ledger.AccountLedger {
+		l, err := e.Ledger.AccountLedgerBy(e.Ctx, e.Company, e.Acc["4-1001"], day("2026-10-01"), day("2026-10-31"), dim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	if l := ledgerOf(ledger.LedgerDim{DepartmentID: &ops}); !l.Closing.Equal(rp(10_000_000)) || len(l.Lines) != 1 || l.Lines[0].DepartmentID == nil || *l.Lines[0].DepartmentID != ops {
+		t.Fatalf("buku besar OPS = %+v", l)
+	}
+	if l := ledgerOf(ledger.LedgerDim{NoDepartment: true}); !l.Closing.Equal(rp(1_000_000)) || len(l.Lines) != 1 {
+		t.Fatalf("buku besar tanpa departemen = %+v", l)
+	}
+	if l := ledgerOf(ledger.LedgerDim{}); !l.Closing.Equal(rp(15_000_000)) || len(l.Lines) != 3 {
+		t.Fatalf("buku besar semua departemen = %+v", l)
+	}
+}

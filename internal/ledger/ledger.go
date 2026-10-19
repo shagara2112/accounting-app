@@ -239,16 +239,27 @@ type Worksheet struct {
 }
 
 type LedgerLine struct {
-	EntryID   uuid.UUID    `json:"entryId"`
-	Number    string       `json:"number"`
-	Kind      Kind         `json:"kind"`
-	Status    string       `json:"status"`
-	Date      civil.Date   `json:"date"`
-	Memo      string       `json:"memo"`
-	Debit     money.Amount `json:"debit"`
-	Credit    money.Amount `json:"credit"`
-	Balance   money.Amount `json:"balance"` // saldo berjalan menurut sisi normal
-	ProjectID *uuid.UUID   `json:"projectId,omitempty"`
+	EntryID      uuid.UUID    `json:"entryId"`
+	Number       string       `json:"number"`
+	Kind         Kind         `json:"kind"`
+	Status       string       `json:"status"`
+	Date         civil.Date   `json:"date"`
+	Memo         string       `json:"memo"`
+	Debit        money.Amount `json:"debit"`
+	Credit       money.Amount `json:"credit"`
+	Balance      money.Amount `json:"balance"` // saldo berjalan menurut sisi normal
+	ProjectID    *uuid.UUID   `json:"projectId,omitempty"`
+	BranchID     *uuid.UUID   `json:"branchId,omitempty"`
+	DepartmentID *uuid.UUID   `json:"departmentId,omitempty"`
+}
+
+// LedgerDim menyaring buku besar per cabang/departemen (GL-09). No* memilih baris tanpa
+// dimensi itu; semua kosong = semua baris.
+type LedgerDim struct {
+	BranchID     *uuid.UUID
+	NoBranch     bool
+	DepartmentID *uuid.UUID
+	NoDepartment bool
 }
 
 // ProjectBalance adalah mutasi satu akun untuk satu proyek dalam rentang bulan.
@@ -336,6 +347,8 @@ type Service interface {
 
 	Worksheet(ctx context.Context, companyID uuid.UUID, month civil.Date) (Worksheet, error)
 	AccountLedger(ctx context.Context, companyID, accountID uuid.UUID, from, to civil.Date) (AccountLedger, error)
+	// AccountLedgerBy sama dengan AccountLedger, hanya baris dengan cabang/departemen dim.
+	AccountLedgerBy(ctx context.Context, companyID, accountID uuid.UUID, from, to civil.Date, dim LedgerDim) (AccountLedger, error)
 	VerifyBalances(ctx context.Context, companyID uuid.UUID) (int64, error)
 
 	// ProjectBalances mengembalikan mutasi per proyek dan akun untuk bulan from s.d. to;
