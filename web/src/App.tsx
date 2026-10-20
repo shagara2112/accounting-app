@@ -6,6 +6,7 @@ import { Skeleton } from './components/ui'
 import { Login } from './pages/Login'
 import { GuidePage } from './pages/Guide'
 import { Home } from './pages/Home'
+import { OpeningBalancePage } from './pages/OpeningBalance'
 import { Audit } from './pages/Audit'
 import { Journals } from './pages/Journals'
 import { JournalEdit, JournalForm } from './pages/JournalForm'
@@ -81,6 +82,7 @@ export function App() {
         <Route path="buku-besar" element={<AccountLedgerPage me={me.data} />} />
         <Route path="neraca-lajur" element={<Worksheet me={me.data} />} />
         <Route path="akun" element={<Accounts me={me.data} />} />
+        <Route path="saldo-awal" element={<OpeningBalancePage me={me.data} />} />
         <Route path="periode" element={<Periods me={me.data} />} />
         <Route path="penjualan" element={<TradePage key="sales" me={me.data} kind="sales" />} />
         <Route path="penjualan/baru" element={<TradeDocForm key="sales" me={me.data} kind="sales" />} />

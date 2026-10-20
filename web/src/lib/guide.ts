@@ -873,6 +873,45 @@ export const topics: GuideTopic[] = [
     ],
   },
   {
+    id: 'saldo-awal',
+    group: 'Akuntansi',
+    title: 'Saldo awal',
+    summary: 'Mengetik saldo setiap akun saat mulai memakai Lajur, termasuk bila mulai di tengah tahun.',
+    page: { to: '/saldo-awal', label: 'Saldo awal' },
+    paths: ['/saldo-awal'],
+    visible: allow('ledger.view', true),
+    keywords: ['saldo awal', 'opening balance', 'migrasi', 'mulai pakai', 'tengah tahun', 'buku besar awal'],
+    sections: [
+      {
+        title: 'Mengisi saldo awal',
+        steps: [
+          'Buka Akuntansi → Saldo awal.',
+          'Isi Tanggal saldo awal, biasanya akhir bulan sebelum mulai memakai Lajur (mis. 30/09/2026 bila mulai Oktober).',
+          'Ketik saldo setiap akun di kolom Debit atau Kredit sesuai neraca saldo dari pembukuan lama. Pakai kotak cari untuk menemukan akun.',
+          'Bila mulai di tengah tahun, isi juga akun pendapatan dan beban dengan jumlah sejak awal tahun buku, supaya laba rugi setahun tetap lengkap.',
+          'Tekan Simpan saldo awal. Lajur membuat satu jurnal saldo awal (seri SA).',
+        ],
+        note: 'Sesudah disimpan, Buku besar dan laporan untuk tanggal sesudahnya langsung memakai saldo ini sebagai saldo awal.',
+      },
+      {
+        title: 'Piutang, utang, dan persediaan',
+        points: [
+          'Akun piutang usaha, utang usaha, dan persediaan tidak diketik di sini. Isi per faktur, per tagihan, dan per barang lewat Impor data → Saldo awal piutang, Saldo awal utang, dan Saldo awal stok, supaya umur piutang/utang dan kartu stok benar.',
+          'Sampai semuanya diisi, selisih sementara dicatat di akun ekuitas saldo awal (3-3001). Bila semua saldo awal sudah lengkap dan cocok dengan pembukuan lama, saldo akun itu menjadi nol.',
+          'Aset tetap lama didaftarkan di menu Aset tetap dengan akumulasi penyusutan sampai tanggal saldo awal.',
+        ],
+      },
+      {
+        title: 'Mengoreksi',
+        points: [
+          'Selama periodenya belum dikunci, ubah angka di halaman ini lalu tekan Simpan perubahan. Nomor jurnal tetap dan versi lamanya tersimpan di riwayat.',
+          'Mengganti tanggal ke bulan lain membatalkan (void) jurnal saldo awal lama dan membuat yang baru.',
+          'Setelah semuanya cocok, kunci periode sampai tanggal saldo awal di menu Periode.',
+        ],
+      },
+    ],
+  },
+  {
     id: 'periode',
     group: 'Akuntansi',
     title: 'Tutup buku bulanan',
@@ -1089,9 +1128,9 @@ export const faqs: Faq[] = [
     topic: 'aset',
   },
   {
-    q: 'Bagaimana memasukkan saldo awal saat mulai memakai Lajur?',
-    a: 'Lewat Impor data: neraca saldo awal, saldo awal piutang, saldo awal utang, dan saldo awal stok. Ikuti urutan di panduan Impor data.',
-    topic: 'impor',
+    q: 'Bagaimana memasukkan saldo awal saat mulai memakai Lajur, misalnya di bulan Oktober?',
+    a: 'Ketik saldo setiap akun per akhir bulan sebelumnya (mis. 30 September) di Akuntansi → Saldo awal, atau impor dari Excel di Impor data. Bila mulai di tengah tahun, isi juga pendapatan dan beban sejak Januari supaya laba rugi setahun lengkap. Piutang, utang, dan stok diisi per dokumen lewat Impor data.',
+    topic: 'saldo-awal',
   },
   {
     q: 'Faktur pajak masukan baru diterima bulan depan, bagaimana?',

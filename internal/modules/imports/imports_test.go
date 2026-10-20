@@ -4,13 +4,14 @@ import (
 	"strings"
 	"testing"
 
+	"lajur/internal/ledger"
 	"lajur/internal/modules/fixture"
 	"lajur/internal/modules/imports"
 	"lajur/internal/modules/sales"
 	"lajur/internal/platform/money"
 )
 
-var day, rp = fixture.Day, fixture.Rp
+var day, rp, code = fixture.Day, fixture.Rp, fixture.Code
 
 func run(t *testing.T, e *fixture.Env, kind, csv string, o imports.Options) imports.Result {
 	t.Helper()
@@ -94,6 +95,79 @@ func TestOpeningMigration(t *testing.T) {
 	}
 	if rows, _ := e.Sales.ByCustomer(e.Ctx, e.Company, day("2026-01-01"), day("2026-12-31")); len(rows) != 0 {
 		t.Fatalf("faktur saldo awal tidak boleh masuk ringkasan penjualan: %+v", rows)
+	}
+	e.VerifyLedger()
+}
+
+// Halaman Saldo awal: saldo per akun diketik di layar (termasuk pendapatan dan beban sejak awal
+// tahun untuk PT yang mulai di tengah tahun), bisa diubah selama periodenya terbuka, dan pindah
+// bulan mem-void jurnal lama. Akun piutang, utang, dan persediaan tetap diisi per dokumen.
+func TestOpeningForm(t *testing.T) {
+	e := fixture.New(t)
+	st, err := e.Imports.Opening(e.Ctx, e.Company)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.EntryID != nil || len(st.Controlled) < 2 {
+		t.Fatalf("saldo awal kosong = %+v", st)
+	}
+	line := func(code string, debit, credit int64) imports.OpeningLine {
+		return imports.OpeningLine{AccountID: e.Acc[code], Debit: rp(debit), Credit: rp(credit)}
+	}
+	save := func(date string, revision int, lines ...imports.OpeningLine) (imports.OpeningState, error) {
+		return e.Imports.SaveOpening(e.Ctx, e.Company, imports.OpeningInput{Date: day(date), Lines: lines, Revision: revision}, e.Actor)
+	}
+
+	_, err = save("2026-09-30", 0, line("1-1111", 250_000_000, 0), line("1-1201", 5_000_000, 0))
+	if code(err) != "opening.invalid" || fixture.Fields(err)["lines."+e.Acc["1-1201"].String()] == "" {
+		t.Fatalf("piutang usaha seharusnya ditolak: %v", err)
+	}
+
+	// Mulai Oktober: neraca per 30 September plus pendapatan dan beban Januari–September.
+	st, err = save("2026-09-30", 0,
+		line("1-1111", 250_000_000, 0), line("3-1001", 0, 200_000_000),
+		line("4-1001", 0, 80_000_000), line("6-2001", 30_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.EntryID == nil || st.Number != "SA/2026/09/0001" || len(st.Lines) != 4 || !st.OpeningEquity.IsZero() {
+		t.Fatalf("saldo awal = %+v", st)
+	}
+	if !e.Net("4-1001", day("2026-12-31")).Equal(rp(-80_000_000)) {
+		t.Fatalf("pendapatan setahun = %s", e.Net("4-1001", day("2026-12-31")))
+	}
+
+	// Koreksi: bank 260 jt; selisihnya sementara ke ekuitas saldo awal. Versi lama ditolak.
+	if _, err := save("2026-09-30", st.Revision+1, line("1-1111", 260_000_000, 0)); code(err) != "conflict.version" {
+		t.Fatalf("versi basi seharusnya ditolak: %v", err)
+	}
+	st, err = save("2026-09-30", st.Revision,
+		line("1-1111", 260_000_000, 0), line("3-1001", 0, 200_000_000),
+		line("4-1001", 0, 80_000_000), line("6-2001", 30_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Number != "SA/2026/09/0001" || st.Revision != 1 || !st.OpeningEquity.Equal(rp(-10_000_000)) {
+		t.Fatalf("saldo awal sesudah koreksi = %+v", st)
+	}
+	if _, err := e.Ledger.Revise(e.Ctx, e.Company, *st.EntryID, ledger.ReviseInput{Date: day("2026-09-30"), Lines: nil, Revision: st.Revision}, e.Actor); code(err) != "journal.edit_opening" {
+		t.Fatalf("jurnal saldo awal tidak boleh diubah lewat formulir jurnal: %v", err)
+	}
+
+	// Pindah ke 31 Agustus: jurnal September di-void, jurnal baru diposting.
+	old := *st.EntryID
+	st, err = save("2026-08-31", st.Revision, line("1-1111", 200_000_000, 0), line("3-1001", 0, 200_000_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Number != "SA/2026/08/0001" || st.Date.String() != "2026-08-31" || *st.EntryID == old {
+		t.Fatalf("saldo awal pindah bulan = %+v", st)
+	}
+	if prev, _ := e.Ledger.Entry(e.Ctx, e.Company, old); prev.Status != "void" {
+		t.Fatalf("saldo awal lama seharusnya di-void: %s", prev.Status)
+	}
+	if !e.Net("1-1111", day("2026-09-30")).Equal(rp(200_000_000)) || !e.Net("4-1001", day("2026-12-31")).IsZero() {
+		t.Fatalf("saldo sesudah pindah bulan: bank %s, pendapatan %s", e.Net("1-1111", day("2026-09-30")), e.Net("4-1001", day("2026-12-31")))
 	}
 	e.VerifyLedger()
 }

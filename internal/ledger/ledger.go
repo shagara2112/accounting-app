@@ -308,6 +308,8 @@ type Service interface {
 	VoidSource(ctx context.Context, companyID, entryID uuid.UUID, sourceType string, date civil.Date, reason string, actor Actor) (Voided, error)
 	// Revise mengubah jurnal manual yang periodenya belum dikunci; versi lama disimpan di riwayat.
 	Revise(ctx context.Context, companyID, entryID uuid.UUID, in ReviseInput, actor Actor) (Ref, error)
+	// ReviseOpening mengganti isi jurnal saldo awal; hanya dipanggil halaman Saldo awal.
+	ReviseOpening(ctx context.Context, companyID, entryID uuid.UUID, in ReviseInput, actor Actor) (Ref, error)
 	// NextNumber mengambil nomor dokumen tanpa celah, mis. FJ/2026/10/0001 (GL-07).
 	NextNumber(ctx context.Context, companyID uuid.UUID, series string, date civil.Date) (string, error)
 	// NextNumberFor sama dengan NextNumber untuk dokumen bercabang: bila seri diatur bernomor per

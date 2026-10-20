@@ -18,6 +18,7 @@ const icons = {
   ledger: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5M8 7h8M8 11h6',
   worksheet: 'M3 3h18v18H3zM3 9h18M9 3v18M15 3v18',
   accounts: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  opening: 'M4 22V4M4 4h13l-2.5 4L17 12H4',
   periods: 'M8 2v4M16 2v4M3 8h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 15l2 2 4-4',
   audit: 'M12 3l8 4v5c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V7zM9 12l2 2 4-4',
   sales: 'M3 17l6-6 4 4 8-8M14 7h7v7',
@@ -125,6 +126,7 @@ export function Shell({ me }: { me: Me }) {
               <NavItem to="/buku-besar" label="Buku besar" icon={icons.ledger} />
               <NavItem to="/neraca-lajur" label="Neraca lajur" icon={icons.worksheet} />
               <NavItem to="/akun" label="Bagan akun" icon={icons.accounts} />
+              <NavItem to="/saldo-awal" label="Saldo awal" icon={icons.opening} />
               <NavItem to="/periode" label="Periode" icon={icons.periods} />
               <NavItem to="/cabang" label="Cabang dan penomoran" icon={icons.branches} />
               <NavItem to="/impor" label="Impor data" icon={icons.imports} />

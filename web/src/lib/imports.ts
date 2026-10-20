@@ -52,3 +52,30 @@ export function useRunImport(companyId: string | null) {
     },
   })
 }
+
+// Halaman Saldo awal: saldo per akun diketik di layar, hasilnya satu jurnal saldo awal (seri SA).
+export type OpeningLine = { accountId: string; debit: string; credit: string }
+export type ControlledAccount = { accountId: string; kind: 'piutang-awal' | 'utang-awal' | 'stok-awal'; reason: string; balance: string }
+export type OpeningState = {
+  entryId?: string
+  number?: string
+  date?: string
+  revision: number
+  lines: OpeningLine[]
+  controlled: ControlledAccount[]
+  openingEquityId: string
+  /** Saldo ekuitas saldo awal per tanggal saldo awal (debit − kredit); nol = lengkap. */
+  openingEquity: string
+}
+
+export function useOpening(companyId: string | null) {
+  return useQuery({ queryKey: ['imports', companyId, 'opening'], queryFn: () => api<OpeningState>('GET', '/imports/opening'), enabled: companyId !== null })
+}
+
+export function useSaveOpening(companyId: string | null) {
+  const invalidate = useInvalidateCompany(companyId)
+  return useMutation({
+    mutationFn: (v: { date: string; lines: OpeningLine[]; revision: number; reason: string }) => api<OpeningState>('PUT', '/imports/opening', v),
+    onSuccess: invalidate,
+  })
+}

@@ -237,6 +237,8 @@ var openingKind = kind{
 		"Saldo per akun pada tanggal saldo awal, dari neraca saldo aplikasi lama. Isi debit atau kredit, bukan keduanya.",
 		"Piutang usaha, utang usaha, dan akun persediaan dilewati: impor per pelanggan, pemasok, dan barang lewat impor saldo awal piutang, utang, dan stok.",
 		"Selisihnya masuk akun ekuitas saldo awal, yang menjadi nol setelah semua saldo awal selesai diimpor.",
+		"Mulai di tengah tahun? Isi juga saldo akun pendapatan dan beban sejak awal tahun buku, supaya laba rugi setahun tetap lengkap.",
+		"Saldo awal juga bisa diketik langsung (dan dikoreksi) di menu Akuntansi → Saldo awal.",
 	},
 	columns: []sheet.Column{
 		col("code", true, "Kode akun*", "Kode akun", "Kode"),
