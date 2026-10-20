@@ -506,6 +506,14 @@ type LedgerRecurringRun struct {
 	CreatedAt   time.Time
 }
 
+type LedgerRoleAccount struct {
+	CompanyID uuid.UUID
+	Role      string
+	AccountID uuid.UUID
+	PinnedAt  time.Time
+	PinnedBy  *uuid.UUID
+}
+
 type LedgerSequence struct {
 	CompanyID uuid.UUID
 	Series    string

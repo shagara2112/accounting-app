@@ -600,8 +600,35 @@ func TestAccountCodeCorrection(t *testing.T) {
 			t.Fatal("akun biasa tidak boleh ditandai akun sistem")
 		}
 	}
-	_, err = f.svc.UpdateAccount(f.ctx, f.company, receivable, ledger.AccountChange{Code: "1-1209", Name: "Piutang usaha", Active: true, Version: 1}, f.actor)
-	expectCode(t, err, "account.invalid")
+	// Akun sistem boleh diganti kodenya (skema kode PT sendiri); perannya dikunci ke akun itu.
+	recoded, err := f.svc.UpdateAccount(f.ctx, f.company, receivable, ledger.AccountChange{Code: "1-13101", Name: "Piutang usaha", Active: true, Version: 1}, f.actor)
+	if err != nil || recoded.Code != "1-13101" {
+		t.Fatalf("ganti kode akun sistem = %+v, %v", recoded, err)
+	}
+	if r, err := f.svc.RoleAccount(f.ctx, f.company, ledger.Receivable); err != nil || r.ID != receivable {
+		t.Fatalf("piutang usaha sesudah ganti kode = %+v, %v", r, err)
+	}
+	// Akun baru berkode bawaan 1-1201 tidak mengambil alih peran yang sudah dikunci.
+	fresh, err := f.svc.CreateAccount(f.ctx, f.company, ledger.NewAccount{Code: "1-1201", Name: "Piutang baru", ParentID: ptr(f.acc["1-1200"]), Postable: true}, f.actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := f.svc.RoleAccount(f.ctx, f.company, ledger.Receivable); r.ID != receivable {
+		t.Fatalf("akun baru 1-1201 mengambil alih piutang usaha: %+v", r)
+	}
+	accounts, _ = f.svc.Accounts(f.ctx, f.company)
+	for _, a := range accounts {
+		switch a.ID {
+		case receivable:
+			if !a.System || len(a.SystemRoles) != 1 || a.SystemRoles[0] != "piutang usaha" {
+				t.Fatalf("akun sistem sesudah ganti kode = %+v", a)
+			}
+		case fresh.ID:
+			if a.System {
+				t.Fatal("akun baru berkode 1-1201 tidak boleh menjadi akun sistem")
+			}
+		}
+	}
 	_, err = f.svc.UpdateAccount(f.ctx, f.company, f.acc["1"], ledger.AccountChange{Code: "1-9", Name: "Aset", Active: true, Version: 1}, f.actor)
 	expectCode(t, err, "account.invalid")
 

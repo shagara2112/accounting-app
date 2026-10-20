@@ -1561,6 +1561,30 @@ func (q *Queries) PeriodStatus(ctx context.Context, arg PeriodStatusParams) (str
 	return status, err
 }
 
+const pinRoleAccount = `-- name: PinRoleAccount :exec
+INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (company_id, role) DO NOTHING
+`
+
+type PinRoleAccountParams struct {
+	CompanyID uuid.UUID
+	Role      string
+	AccountID uuid.UUID
+	PinnedBy  *uuid.UUID
+}
+
+// Mengunci peran akun sistem ke akunnya sebelum kodenya diganti; pemetaan yang sudah ada tetap.
+func (q *Queries) PinRoleAccount(ctx context.Context, arg PinRoleAccountParams) error {
+	_, err := q.db.Exec(ctx, pinRoleAccount,
+		arg.CompanyID,
+		arg.Role,
+		arg.AccountID,
+		arg.PinnedBy,
+	)
+	return err
+}
+
 const priorYearsResult = `-- name: PriorYearsResult :one
 SELECT coalesce(sum(b.debit - b.credit), 0)::numeric AS net
 FROM ledger.balances b
@@ -1921,6 +1945,51 @@ func (q *Queries) ReviseEntry(ctx context.Context, arg ReviseEntryParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const roleAccountMapping = `-- name: RoleAccountMapping :one
+SELECT account_id FROM ledger.role_accounts WHERE company_id = $1 AND role = $2
+`
+
+type RoleAccountMappingParams struct {
+	CompanyID uuid.UUID
+	Role      string
+}
+
+func (q *Queries) RoleAccountMapping(ctx context.Context, arg RoleAccountMappingParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, roleAccountMapping, arg.CompanyID, arg.Role)
+	var account_id uuid.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
+const roleAccountMappings = `-- name: RoleAccountMappings :many
+SELECT role, account_id FROM ledger.role_accounts WHERE company_id = $1
+`
+
+type RoleAccountMappingsRow struct {
+	Role      string
+	AccountID uuid.UUID
+}
+
+func (q *Queries) RoleAccountMappings(ctx context.Context, companyID uuid.UUID) ([]RoleAccountMappingsRow, error) {
+	rows, err := q.db.Query(ctx, roleAccountMappings, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RoleAccountMappingsRow
+	for rows.Next() {
+		var i RoleAccountMappingsRow
+		if err := rows.Scan(&i.Role, &i.AccountID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setAccountLevel = `-- name: SetAccountLevel :exec

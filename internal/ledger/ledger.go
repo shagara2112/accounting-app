@@ -90,8 +90,10 @@ type Account struct {
 	Active   bool         `json:"active"`
 	Version  int          `json:"version"`
 	Balance  money.Amount `json:"balance"` // menurut sisi saldo normal; akun header = jumlah anaknya
-	// System: akun sistem untuk posting otomatis (lihat roles.go); kodenya tidak bisa diubah.
-	System bool `json:"system,omitempty"`
+	// System: akun sistem untuk posting otomatis (lihat roles.go). SystemRoles = perannya, mis.
+	// "piutang usaha". Kodenya boleh diganti; perannya lalu dikunci ke akun ini.
+	System      bool     `json:"system,omitempty"`
+	SystemRoles []string `json:"systemRoles,omitempty"`
 }
 
 type NewAccount struct {

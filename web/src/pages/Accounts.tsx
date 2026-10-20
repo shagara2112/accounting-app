@@ -86,6 +86,11 @@ export function Accounts({ me }: { me: Me }) {
                   <span className="flex items-center gap-2" style={{ paddingLeft: q ? 0 : (a.level - 1) * 18 }}>
                     <span className={a.postable ? '' : 'font-semibold'}>{a.name}</span>
                     {!a.active && <Badge tone="neutral">Nonaktif</Badge>}
+                    {a.system && (
+                      <span title={`Dipakai posting otomatis: ${a.systemRoles?.join(', ')}`}>
+                        <Badge tone="accent">Akun sistem</Badge>
+                      </span>
+                    )}
                   </span>
                 </td>
                 <td className={`${td} text-[13px] text-muted`}>{group && cls ? `${cls.normal === 'debit' ? 'Debit' : 'Kredit'} · ${cls.statement === 'neraca' ? 'Neraca' : 'Laba rugi'}` : ''}</td>
@@ -360,15 +365,15 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
         className="num"
         value={code}
         maxLength={20}
-        disabled={!account || account.system || account.level === 1}
+        disabled={!account || account.level === 1}
         onChange={(e) => setCode(e.target.value)}
         error={err?.fields.code}
         hint={
-          account?.system
-            ? 'Akun sistem dipakai posting otomatis (faktur, tagihan, pajak); kodenya tidak bisa diubah.'
-            : account?.level === 1
-              ? 'Kode akun kelompok tidak bisa diubah.'
-              : `Untuk koreksi salah ketik. Angka kepala ${account?.class ?? ''} harus tetap supaya letaknya di laporan tidak berubah.`
+          account?.level === 1
+            ? 'Kode akun kelompok tidak bisa diubah.'
+            : account?.system
+              ? `Akun sistem untuk ${account.systemRoles?.join(', ') ?? 'posting otomatis'}. Kodenya boleh diganti sesuai skema kode PT (angka kepala ${account.class} tetap); posting otomatis tetap memakai akun ini.`
+              : `Untuk koreksi salah ketik atau skema kode PT. Angka kepala ${account?.class ?? ''} harus tetap supaya letaknya di laporan tidak berubah.`
         }
       />
       <Field id="ubah-nama" label="Nama akun" data-autofocus value={name} maxLength={120} onChange={(e) => setName(e.target.value)} error={err?.fields.name} />

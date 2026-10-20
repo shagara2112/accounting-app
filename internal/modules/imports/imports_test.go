@@ -8,6 +8,7 @@ import (
 	"lajur/internal/modules/fixture"
 	"lajur/internal/modules/imports"
 	"lajur/internal/modules/sales"
+	"lajur/internal/modules/trade"
 	"lajur/internal/platform/money"
 )
 
@@ -168,6 +169,51 @@ func TestOpeningForm(t *testing.T) {
 	}
 	if !e.Net("1-1111", day("2026-09-30")).Equal(rp(200_000_000)) || !e.Net("4-1001", day("2026-12-31")).IsZero() {
 		t.Fatalf("saldo sesudah pindah bulan: bank %s, pendapatan %s", e.Net("1-1111", day("2026-09-30")), e.Net("4-1001", day("2026-12-31")))
+	}
+	e.VerifyLedger()
+}
+
+// Skema kode PT sendiri: kode akun sistem (piutang usaha, PPN keluaran) diganti, posting
+// otomatis faktur tetap memakai akun yang sama.
+func TestRecodedSystemAccountsKeepPosting(t *testing.T) {
+	e := fixture.New(t)
+	recode := func(old, code string) {
+		list, err := e.Ledger.Accounts(e.Ctx, e.Company)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range list {
+			if a.Code == old {
+				if _, err := e.Ledger.UpdateAccount(e.Ctx, e.Company, a.ID, ledger.AccountChange{Code: code, Name: a.Name, Active: true, Version: a.Version}, e.Actor); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+		}
+		t.Fatalf("akun %s tidak ada", old)
+	}
+	recode("1-1201", "1-13101")
+	recode("2-1201", "2-12101")
+
+	inv, err := e.Sales.CreateInvoice(e.Ctx, e.Company, sales.InvoiceInput{CustomerID: e.Customer, Date: day("2026-10-05"),
+		Lines: []trade.LineInput{{Description: "Jasa", AccountID: e.Acc["4-1001"], Qty: money.FromInt(1), UnitPrice: rp(10_000_000), TaxCode: "PPN"}}}, e.Actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posted, err := e.Sales.PostInvoice(e.Ctx, e.Company, inv.ID, e.Actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := e.Ledger.Entry(e.Ctx, e.Company, *posted.JournalEntryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codes := map[string]bool{}
+	for _, l := range j.Lines {
+		codes[l.AccountCode] = true
+	}
+	if !codes["1-13101"] || !codes["2-12101"] {
+		t.Fatalf("jurnal faktur memakai akun %v, seharusnya kode baru 1-13101 dan 2-12101", codes)
 	}
 	e.VerifyLedger()
 }

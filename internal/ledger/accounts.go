@@ -34,10 +34,18 @@ func (l *ledger) Accounts(ctx context.Context, companyID uuid.UUID) ([]Account, 
 		return nil, err
 	}
 
+	pinned, err := pinnedRoles(ctx, q, companyID)
+	if err != nil {
+		return nil, err
+	}
+	system := systemRoles(rows, pinned)
 	out := make([]Account, len(rows))
 	index := make(map[uuid.UUID]int, len(rows))
 	for i, r := range rows {
 		out[i] = toAccount(r)
+		if roles := system[r.ID]; len(roles) > 0 {
+			out[i].System, out[i].SystemRoles = true, roleLabels(roles)
+		}
 		index[r.ID] = i
 	}
 	for _, n := range nets {
@@ -193,8 +201,13 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 			}
 		}
 		code := cur.Code
+		var pinned []string
 		if c.Code != "" && c.Code != cur.Code {
 			if err := checkCodeChange(ctx, q, companyID, cur, c.Code); err != nil {
+				return err
+			}
+			// Akun sistem dikunci ke akunnya dulu, supaya posting otomatis tetap memakainya.
+			if pinned, err = pinRoles(ctx, q, companyID, cur.ID, actor); err != nil {
 				return err
 			}
 			code = c.Code
@@ -246,6 +259,9 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 			}
 			before["parent"], after["parent"] = old, parentCode
 		}
+		if len(pinned) > 0 {
+			after["systemRoles"] = pinned
+		}
 		_, err = audit.Write(ctx, db.Conn(ctx, l.pool), audit.Entry{
 			UserID: userRef(actor), CompanyID: &companyID, Action: "ledger.account.update",
 			ObjectType: "account", ObjectID: row.ID.String(), IP: actor.IP,
@@ -264,8 +280,6 @@ func checkCodeChange(ctx context.Context, q *store.Queries, companyID uuid.UUID,
 	switch class := classOfCode(code); {
 	case len(cur.Code) == 1:
 		return fail("Kode akun kelompok tidak bisa diubah.")
-	case roleCodes[cur.Code]:
-		return fail(fmt.Sprintf("%s %s adalah akun sistem untuk posting otomatis; kodenya tidak bisa diubah.", cur.Code, cur.Name))
 	case class == 0 || len(code) == 1:
 		return fail("Format kode: angka kepala 1–9, lalu tanda hubung dan angka, mis. 1-1101.")
 	case class != int(cur.Class):
@@ -398,7 +412,6 @@ func toAccount(r store.LedgerAccount) Account {
 	return Account{
 		ID: r.ID, Code: r.Code, Name: r.Name, Class: int(r.Class), ParentID: r.ParentID,
 		Level: int(r.Level), Postable: r.Postable, Active: r.Active, Version: int(r.Version),
-		System: roleCodes[r.Code],
 	}
 }
 

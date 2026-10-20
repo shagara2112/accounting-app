@@ -866,7 +866,7 @@ export const topics: GuideTopic[] = [
         points: [
           'Angka kepala kode menentukan kelompok: 1 aset, 2 liabilitas, 3 ekuitas, 4 pendapatan usaha, 5 beban pokok, 6 beban usaha, 7 pendapatan lain-lain, 8 beban lain-lain, 9 pajak penghasilan.',
           'Tekan Akun baru untuk menambah akun di bawah akun induknya. Akun header hanya mengelompokkan; jurnal memakai akun detail.',
-          'Kode akun yang salah ketik bisa dikoreksi lewat tombol ubah di baris akun, selama angka kepalanya sama (mis. 6-1105 menjadi 6-1150). Kode akun sistem (mis. 1-1401 PPN masukan) dan akun kelompok terkunci karena dipakai posting otomatis.',
+          'Kode akun bisa dikoreksi atau disesuaikan dengan skema kode PT lewat tombol ubah di baris akun, selama angka kepalanya sama (mis. 1-1101 menjadi 1-11101). Akun berlabel Akun sistem (mis. piutang usaha, PPN masukan) juga boleh diganti kodenya; posting otomatis tetap memakai akun itu. Hanya kode akun kelompok (1–9) yang terkunci.',
           'Akun yang salah kelompok bisa dipindah: tombol ubah → pilih Induk lain di kelas yang sama. Akun header ikut membawa akun di bawahnya, dan laporan (termasuk periode lalu) langsung memakai pengelompokan baru. Sesuaikan juga kodenya bila perlu.',
           'Akun tidak dihapus. Bila tidak dipakai lagi, klik akunnya dan matikan Akun aktif (akun yang masih bersaldo tidak bisa dinonaktifkan).',
         ],
@@ -1160,7 +1160,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Salah ketik nama PT, kode akun, atau salah kelompok akun, bisa diperbaiki?',
-    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Di Bagan akun, tombol ubah di baris akun bisa mengganti Induk (pindah kelompok) dan kode, selama angka kepalanya tetap sama; jurnal lama dan laporan ikut memakai pengelompokan dan kode baru. Kode akun sistem untuk posting otomatis tidak bisa diubah.',
+    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Di Bagan akun, tombol ubah di baris akun bisa mengganti Induk (pindah kelompok) dan kode, selama angka kepalanya tetap sama; jurnal lama dan laporan ikut memakai pengelompokan dan kode baru. Kode akun sistem juga boleh diganti; posting otomatis tetap memakai akun yang sama.',
     topic: 'buku-besar',
   },
   {

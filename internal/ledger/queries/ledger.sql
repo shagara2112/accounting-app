@@ -382,3 +382,15 @@ FROM ledger.journal_revisions r
 LEFT JOIN platform.users u ON u.id = r.revised_by
 WHERE r.company_id = $1 AND r.entry_id = $2
 ORDER BY r.revision DESC;
+
+-- name: RoleAccountMapping :one
+SELECT account_id FROM ledger.role_accounts WHERE company_id = $1 AND role = $2;
+
+-- name: RoleAccountMappings :many
+SELECT role, account_id FROM ledger.role_accounts WHERE company_id = $1;
+
+-- name: PinRoleAccount :exec
+-- Mengunci peran akun sistem ke akunnya sebelum kodenya diganti; pemetaan yang sudah ada tetap.
+INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
+VALUES (@company_id, @role, @account_id, @pinned_by)
+ON CONFLICT (company_id, role) DO NOTHING;

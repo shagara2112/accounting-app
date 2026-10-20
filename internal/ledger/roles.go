@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 
@@ -66,17 +67,77 @@ var roles = map[Role]roleInfo{
 	NonCreditableVAT: {[]string{"6-4003", "6-4002"}, "beban PPN masukan tidak dapat dikreditkan"},
 }
 
-// roleCodes adalah semua kode akun sistem; kodenya tidak boleh diganti karena posting otomatis
-// mencari akun lewat kode ini.
-var roleCodes = func() map[string]bool {
-	out := map[string]bool{}
-	for _, info := range roles {
+// systemRoles memetakan akun ke peran akun sistem yang dilayaninya, dengan aturan yang sama
+// dengan RoleAccount: pemetaan tersimpan (pinned) didahulukan, selain itu kode bawaan pertama
+// yang ada, aktif, dan akun detail.
+func systemRoles(rows []store.LedgerAccount, pinned map[Role]uuid.UUID) map[uuid.UUID][]Role {
+	byCode := make(map[string]store.LedgerAccount, len(rows))
+	for _, r := range rows {
+		byCode[r.Code] = r
+	}
+	out := map[uuid.UUID][]Role{}
+	for role, info := range roles {
+		if id, ok := pinned[role]; ok {
+			out[id] = append(out[id], role)
+			continue
+		}
 		for _, c := range info.codes {
-			out[c] = true
+			if r, ok := byCode[c]; ok && r.Postable && r.Active {
+				out[r.ID] = append(out[r.ID], role)
+				break
+			}
 		}
 	}
+	for id := range out {
+		sort.Slice(out[id], func(i, j int) bool { return out[id][i] < out[id][j] })
+	}
 	return out
-}()
+}
+
+func pinnedRoles(ctx context.Context, q *store.Queries, companyID uuid.UUID) (map[Role]uuid.UUID, error) {
+	rows, err := q.RoleAccountMappings(ctx, companyID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[Role]uuid.UUID, len(rows))
+	for _, r := range rows {
+		out[Role(r.Role)] = r.AccountID
+	}
+	return out, nil
+}
+
+// pinRoles mengunci peran akun sistem yang saat ini dilayani akun id ke akun itu, supaya
+// posting otomatis tetap memakainya walau kodenya diganti.
+func pinRoles(ctx context.Context, q *store.Queries, companyID, id uuid.UUID, actor Actor) ([]string, error) {
+	rows, err := q.ListAccounts(ctx, companyID)
+	if err != nil {
+		return nil, err
+	}
+	pinned, err := pinnedRoles(ctx, q, companyID)
+	if err != nil {
+		return nil, err
+	}
+	var labels []string
+	for _, role := range systemRoles(rows, pinned)[id] {
+		if _, ok := pinned[role]; ok {
+			continue
+		}
+		if err := q.PinRoleAccount(ctx, store.PinRoleAccountParams{CompanyID: companyID, Role: string(role), AccountID: id, PinnedBy: userRef(actor)}); err != nil {
+			return nil, err
+		}
+		labels = append(labels, roles[role].label)
+	}
+	return labels, nil
+}
+
+// RoleLabels mengubah daftar peran menjadi nama yang dibaca pengguna, mis. "piutang usaha".
+func roleLabels(list []Role) []string {
+	out := make([]string, len(list))
+	for i, r := range list {
+		out[i] = roles[r].label
+	}
+	return out
+}
 
 // RoleAccount mencari akun sistem dari kode defaultnya. Akun harus ada, aktif, dan akun detail;
 // bila tidak, pesan galat menyebut kode yang perlu dibuat di bagan akun.
@@ -84,6 +145,20 @@ func (l *ledger) RoleAccount(ctx context.Context, companyID uuid.UUID, role Role
 	info, ok := roles[role]
 	if !ok {
 		return Account{}, fmt.Errorf("akun sistem %q tidak dikenal", role)
+	}
+	// Peran yang sudah dikunci ke akunnya (kode akunnya pernah diganti) tidak lagi dicari lewat kode.
+	if id, err := l.q(ctx).RoleAccountMapping(ctx, store.RoleAccountMappingParams{CompanyID: companyID, Role: string(role)}); err == nil {
+		r, err := l.q(ctx).GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: id})
+		if err != nil {
+			return Account{}, err
+		}
+		if !r.Postable || !r.Active {
+			return Account{}, httpx.Unprocessable("ledger.role_account", fmt.Sprintf(
+				"Akun sistem untuk %s (%s %s) nonaktif; aktifkan lagi di bagan akun.", info.label, r.Code, r.Name))
+		}
+		return toAccount(r), nil
+	} else if !isNoRows(err) {
+		return Account{}, err
 	}
 	for _, code := range info.codes {
 		r, err := l.q(ctx).GetAccountByCode(ctx, store.GetAccountByCodeParams{CompanyID: companyID, Code: code})
