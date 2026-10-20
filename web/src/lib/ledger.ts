@@ -45,7 +45,7 @@ export function useCreateAccount(companyId: string | null) {
 export function useUpdateAccount(companyId: string | null) {
   const invalidate = useInvalidateLedger(companyId)
   return useMutation({
-    mutationFn: ({ id, ...v }: { id: string; code: string; name: string; active: boolean; version: number }) =>
+    mutationFn: ({ id, ...v }: { id: string; code: string; name: string; active: boolean; version: number; parentId?: string }) =>
       api<Account>('PATCH', `/ledger/accounts/${id}`, v),
     onSuccess: invalidate,
   })
@@ -163,4 +163,40 @@ export function useUpdateLedgerSettings(companyId: string | null) {
     mutationFn: (fiscalYearStartMonth: number) => api('PUT', '/ledger/settings', { fiscalYearStartMonth }),
     onSuccess: invalidate,
   })
+}
+
+/** Urutan pohon bagan akun: setiap induk diikuti anak-anaknya (urut kode), supaya akun yang
+ *  dipindah ke induk lain tampil di bawah induk barunya walau kodenya belum disesuaikan. */
+export function treeOrder(list: Account[]): Account[] {
+  const children = new Map<string, Account[]>()
+  const roots: Account[] = []
+  for (const a of list) {
+    if (!a.parentId) roots.push(a)
+    else children.set(a.parentId, [...(children.get(a.parentId) ?? []), a])
+  }
+  const byCode = (x: Account, y: Account) => x.code.localeCompare(y.code)
+  const out: Account[] = []
+  const walk = (a: Account) => {
+    out.push(a)
+    for (const c of (children.get(a.id) ?? []).sort(byCode)) walk(c)
+  }
+  roots.sort(byCode).forEach(walk)
+  // Akun yang induknya tidak ada di daftar (seharusnya tidak terjadi) tetap ditampilkan.
+  return out.length === list.length ? out : [...out, ...list.filter((a) => !out.includes(a))]
+}
+
+/** Id akun a beserta seluruh turunannya. */
+export function subtreeIds(list: Account[], id: string): Set<string> {
+  const out = new Set([id])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const a of list) {
+      if (a.parentId && out.has(a.parentId) && !out.has(a.id)) {
+        out.add(a.id)
+        grew = true
+      }
+    }
+  }
+  return out
 }

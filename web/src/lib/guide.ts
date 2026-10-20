@@ -867,6 +867,7 @@ export const topics: GuideTopic[] = [
           'Angka kepala kode menentukan kelompok: 1 aset, 2 liabilitas, 3 ekuitas, 4 pendapatan usaha, 5 beban pokok, 6 beban usaha, 7 pendapatan lain-lain, 8 beban lain-lain, 9 pajak penghasilan.',
           'Tekan Akun baru untuk menambah akun di bawah akun induknya. Akun header hanya mengelompokkan; jurnal memakai akun detail.',
           'Kode akun yang salah ketik bisa dikoreksi lewat tombol ubah di baris akun, selama angka kepalanya sama (mis. 6-1105 menjadi 6-1150). Kode akun sistem (mis. 1-1401 PPN masukan) dan akun kelompok terkunci karena dipakai posting otomatis.',
+          'Akun yang salah kelompok bisa dipindah: tombol ubah → pilih Induk lain di kelas yang sama. Akun header ikut membawa akun di bawahnya, dan laporan (termasuk periode lalu) langsung memakai pengelompokan baru. Sesuaikan juga kodenya bila perlu.',
           'Akun tidak dihapus. Bila tidak dipakai lagi, klik akunnya dan matikan Akun aktif (akun yang masih bersaldo tidak bisa dinonaktifkan).',
         ],
       },
@@ -1158,8 +1159,8 @@ export const faqs: Faq[] = [
     topic: 'sistem',
   },
   {
-    q: 'Salah ketik nama PT atau kode akun, bisa diperbaiki?',
-    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Kode akun diubah di Bagan akun lewat tombol ubah di baris akunnya, selama angka kepalanya tetap sama; jurnal lama ikut memakai kode baru. Kode akun sistem untuk posting otomatis tidak bisa diubah.',
+    q: 'Salah ketik nama PT, kode akun, atau salah kelompok akun, bisa diperbaiki?',
+    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Di Bagan akun, tombol ubah di baris akun bisa mengganti Induk (pindah kelompok) dan kode, selama angka kepalanya tetap sama; jurnal lama dan laporan ikut memakai pengelompokan dan kode baru. Kode akun sistem untuk posting otomatis tidak bisa diubah.',
     topic: 'buku-besar',
   },
   {

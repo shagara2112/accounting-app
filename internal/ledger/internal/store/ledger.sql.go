@@ -299,6 +299,40 @@ func (q *Queries) BranchCode(ctx context.Context, arg BranchCodeParams) (string,
 	return code, err
 }
 
+const childAccounts = `-- name: ChildAccounts :many
+SELECT id, level FROM ledger.accounts WHERE company_id = $1 AND parent_id = $2 ORDER BY code
+`
+
+type ChildAccountsParams struct {
+	CompanyID uuid.UUID
+	ParentID  *uuid.UUID
+}
+
+type ChildAccountsRow struct {
+	ID    uuid.UUID
+	Level int16
+}
+
+func (q *Queries) ChildAccounts(ctx context.Context, arg ChildAccountsParams) ([]ChildAccountsRow, error) {
+	rows, err := q.db.Query(ctx, childAccounts, arg.CompanyID, arg.ParentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChildAccountsRow
+	for rows.Next() {
+		var i ChildAccountsRow
+		if err := rows.Scan(&i.ID, &i.Level); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countAccounts = `-- name: CountAccounts :one
 SELECT count(*) FROM ledger.accounts WHERE company_id = $1
 `
@@ -1889,6 +1923,22 @@ func (q *Queries) ReviseEntry(ctx context.Context, arg ReviseEntryParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const setAccountLevel = `-- name: SetAccountLevel :exec
+UPDATE ledger.accounts SET level = $1 WHERE company_id = $2 AND id = $3
+`
+
+type SetAccountLevelParams struct {
+	Level     int16
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+// Turunan akun header yang dipindah ke induk lain ikut bergeser levelnya (dari atas ke bawah).
+func (q *Queries) SetAccountLevel(ctx context.Context, arg SetAccountLevelParams) error {
+	_, err := q.db.Exec(ctx, setAccountLevel, arg.Level, arg.CompanyID, arg.ID)
+	return err
+}
+
 const setPeriodStatus = `-- name: SetPeriodStatus :exec
 UPDATE ledger.periods
 SET status = $3, changed_at = now(), changed_by = $4, reason = $5
@@ -1926,8 +1976,8 @@ func (q *Queries) SetRevising(ctx context.Context, entryID string) error {
 
 const updateAccount = `-- name: UpdateAccount :one
 UPDATE ledger.accounts
-SET code = $1, name = $2, active = $3, version = version + 1
-WHERE company_id = $4 AND id = $5 AND version = $6
+SET code = $1, name = $2, active = $3, parent_id = $4, level = $5, version = version + 1
+WHERE company_id = $6 AND id = $7 AND version = $8
 RETURNING id, company_id, code, name, class, parent_id, level, postable, active, created_at, created_by, version
 `
 
@@ -1935,6 +1985,8 @@ type UpdateAccountParams struct {
 	Code      string
 	Name      string
 	Active    bool
+	ParentID  *uuid.UUID
+	Level     int16
 	CompanyID uuid.UUID
 	ID        uuid.UUID
 	Version   int32
@@ -1945,6 +1997,8 @@ func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (L
 		arg.Code,
 		arg.Name,
 		arg.Active,
+		arg.ParentID,
+		arg.Level,
 		arg.CompanyID,
 		arg.ID,
 		arg.Version,

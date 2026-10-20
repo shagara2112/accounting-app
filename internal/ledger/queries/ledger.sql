@@ -74,9 +74,16 @@ RETURNING *;
 
 -- name: UpdateAccount :one
 UPDATE ledger.accounts
-SET code = @code, name = @name, active = @active, version = version + 1
+SET code = @code, name = @name, active = @active, parent_id = @parent_id, level = @level, version = version + 1
 WHERE company_id = @company_id AND id = @id AND version = @version
 RETURNING *;
+
+-- name: ChildAccounts :many
+SELECT id, level FROM ledger.accounts WHERE company_id = $1 AND parent_id = $2 ORDER BY code;
+
+-- name: SetAccountLevel :exec
+-- Turunan akun header yang dipindah ke induk lain ikut bergeser levelnya (dari atas ke bawah).
+UPDATE ledger.accounts SET level = @level WHERE company_id = @company_id AND id = @id;
 
 -- name: AccountNetAllTime :one
 SELECT coalesce(sum(debit - credit), 0)::numeric AS net

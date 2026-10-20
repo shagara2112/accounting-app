@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ApiError, type Account, type AccountClass, type Me } from '../lib/api'
-import { useAccounts, useApplyTemplate, useCreateAccount, useUpdateAccount } from '../lib/ledger'
+import { subtreeIds, treeOrder, useAccounts, useApplyTemplate, useCreateAccount, useUpdateAccount } from '../lib/ledger'
 import { formatAmount } from '../lib/money'
 import { activeCompany, can } from '../lib/session'
 import { useToast } from '../components/Toast'
@@ -22,7 +22,7 @@ export function Accounts({ me }: { me: Me }) {
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Account | null>(null)
 
-  const list = accounts.data?.items ?? []
+  const list = useMemo(() => treeOrder(accounts.data?.items ?? []), [accounts.data])
   const classes = accounts.data?.classes ?? []
   const q = search.trim().toLowerCase()
   const visible = q ? list.filter((a) => a.code.toLowerCase().startsWith(q) || a.name.toLowerCase().includes(q)) : list
@@ -179,7 +179,7 @@ function NewAccountDialog({ me, open, onClose, accounts, classes }: { me: Me; op
   const [postable, setPostable] = useState(true)
   const [attempt, setAttempt] = useState(0)
 
-  const parents = useMemo(() => accounts.filter((a) => !a.postable && a.active && a.level < 5), [accounts])
+  const parents = useMemo(() => treeOrder(accounts).filter((a) => !a.postable && a.active && a.level < 5), [accounts])
   const parent = accounts.find((a) => a.id === parentId)
   const head = /^[1-9]/.test(code) ? Number(code[0]) : 0
   const cls = head ? classes[head - 1] : undefined
@@ -270,7 +270,9 @@ function NewAccountDialog({ me, open, onClose, accounts, classes }: { me: Me; op
 
 function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account | null; onClose: () => void }) {
   const update = useUpdateAccount(me.activeCompanyId)
+  const all = useAccounts(me.activeCompanyId).data?.items
   const toast = useToast()
+  const [parentId, setParentId] = useState('')
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [active, setActive] = useState(true)
@@ -279,6 +281,7 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
 
   if (account && shownFor !== account.id) {
     setShownFor(account.id)
+    setParentId(account.parentId ?? '')
     setCode(account.code)
     setName(account.name)
     setActive(account.active)
@@ -291,12 +294,18 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
   }
 
   const err = update.error instanceof ApiError ? update.error : null
+  // Induk yang boleh dipilih: akun header aktif di kelas yang sama, bukan akun ini atau turunannya.
+  const parents = useMemo(() => {
+    if (!account || !all) return []
+    const own = subtreeIds(all, account.id)
+    return treeOrder(all).filter((a) => !a.postable && a.class === account.class && !own.has(a.id) && (a.active || a.id === account.parentId) && a.level < 5)
+  }, [account, all])
   return (
     <Dialog
       open={account !== null}
       onClose={close}
       title={account ? `Ubah ${account.code}` : 'Ubah akun'}
-      description="Induk dan jenis akun tidak bisa diubah. Kode bisa dikoreksi selama angka kepalanya sama, dan riwayat jurnal ikut memakai kode baru."
+      description="Jenis akun (header atau detail) tidak bisa diubah. Induk dan kode bisa dikoreksi selama angka kepalanya sama; laporan dan riwayat jurnal ikut memakai pengelompokan dan kode baru."
       footer={
         <>
           <Button variant="secondary" onClick={close}>
@@ -309,7 +318,7 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
               if (!account) return
               setAttempt((n) => n + 1)
               update.mutate(
-                { id: account.id, code: code.trim(), name: name.trim(), active, version: account.version },
+                { id: account.id, code: code.trim(), name: name.trim(), active, version: account.version, parentId: parentId && parentId !== account.parentId ? parentId : undefined },
                 {
                   onSuccess: (a) => {
                     toast(`Akun ${a.code} disimpan`)
@@ -324,6 +333,27 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
         </>
       }
     >
+      <SelectField
+        id="ubah-induk"
+        label="Induk"
+        value={parentId}
+        disabled={!account || account.level === 1}
+        onChange={(e) => setParentId(e.target.value)}
+        error={err?.fields.parentId}
+        hint={
+          account?.level === 1
+            ? 'Akun kelompok tidak punya induk.'
+            : 'Pindahkan ke kelompok lain di kelas yang sama untuk memperbaiki pengelompokan. Akun header ikut membawa akun-akun di bawahnya.'
+        }
+      >
+        {account?.level === 1 && <option value="">— Tanpa induk —</option>}
+        {parents.map((a) => (
+          <option key={a.id} value={a.id}>
+            {'\u00a0\u00a0'.repeat(a.level - 1)}
+            {a.code} · {a.name}
+          </option>
+        ))}
+      </SelectField>
       <Field
         id="ubah-kode"
         label="Kode akun"
@@ -348,7 +378,7 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
         label="Akun aktif"
         hint="Akun nonaktif tidak bisa dipakai di jurnal baru. Akun yang masih bersaldo tidak bisa dinonaktifkan."
       />
-      {err && !err.fields.name && !err.fields.code && <Alert shakeKey={attempt}>{err.message}</Alert>}
+      {err && !err.fields.name && !err.fields.code && !err.fields.parentId && <Alert shakeKey={attempt}>{err.message}</Alert>}
     </Dialog>
   )
 }

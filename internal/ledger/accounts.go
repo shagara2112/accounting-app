@@ -199,6 +199,15 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 			}
 			code = c.Code
 		}
+		parentID, level := cur.ParentID, cur.Level
+		var parentCode string
+		if c.ParentID != nil && (cur.ParentID == nil || *c.ParentID != *cur.ParentID) {
+			parent, err := checkParentChange(ctx, q, companyID, cur, *c.ParentID)
+			if err != nil {
+				return err
+			}
+			parentID, level, parentCode = c.ParentID, parent.Level+1, parent.Code
+		}
 		if !cur.Active && c.Active && cur.ParentID != nil {
 			parent, err := q.GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: *cur.ParentID})
 			if err != nil {
@@ -212,6 +221,7 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 
 		row, err := q.UpdateAccount(ctx, store.UpdateAccountParams{
 			CompanyID: companyID, ID: accountID, Code: code, Name: c.Name, Active: c.Active, Version: int32(c.Version),
+			ParentID: parentID, Level: level,
 		})
 		if isNoRows(err) {
 			return httpx.Conflict("conflict.version", "Akun ini baru saja diubah orang lain. Muat ulang lalu coba lagi.")
@@ -219,12 +229,27 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 		if err != nil {
 			return err
 		}
+		if level != cur.Level {
+			if err := shiftSubtree(ctx, q, companyID, row.ID, level); err != nil {
+				return err
+			}
+		}
 		out = toAccount(row)
+		before := map[string]any{"code": cur.Code, "name": cur.Name, "active": cur.Active}
+		after := map[string]any{"code": row.Code, "name": row.Name, "active": row.Active}
+		if parentCode != "" {
+			old := ""
+			if cur.ParentID != nil {
+				if p, err := q.GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: *cur.ParentID}); err == nil {
+					old = p.Code
+				}
+			}
+			before["parent"], after["parent"] = old, parentCode
+		}
 		_, err = audit.Write(ctx, db.Conn(ctx, l.pool), audit.Entry{
 			UserID: userRef(actor), CompanyID: &companyID, Action: "ledger.account.update",
 			ObjectType: "account", ObjectID: row.ID.String(), IP: actor.IP,
-			Before: map[string]any{"code": cur.Code, "name": cur.Name, "active": cur.Active},
-			After:  map[string]any{"code": row.Code, "name": row.Name, "active": row.Active},
+			Before: before, After: after,
 		})
 		return err
 	})
@@ -251,6 +276,76 @@ func checkCodeChange(ctx context.Context, q *store.Queries, companyID uuid.UUID,
 		return httpx.Conflict("account.code_taken", msg).WithFields(map[string]string{"code": msg})
 	} else if !isNoRows(err) {
 		return err
+	}
+	return nil
+}
+
+// checkParentChange memeriksa pemindahan cur ke induk parentID: induk harus akun header aktif di
+// PT dan kelas yang sama, bukan cur atau turunannya, dan pohonnya tetap paling dalam MaxLevel.
+func checkParentChange(ctx context.Context, q *store.Queries, companyID uuid.UUID, cur store.LedgerAccount, parentID uuid.UUID) (store.LedgerAccount, error) {
+	fail := func(msg string) (store.LedgerAccount, error) {
+		return store.LedgerAccount{}, httpx.Unprocessable("account.invalid", msg).WithFields(map[string]string{"parentId": msg})
+	}
+	if cur.ParentID == nil {
+		return fail("Akun kelompok (kode satu angka) tidak punya induk dan tidak bisa dipindah.")
+	}
+	parent, err := q.GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: parentID})
+	if isNoRows(err) {
+		return fail("Akun induk tidak ditemukan di PT ini.")
+	}
+	if err != nil {
+		return store.LedgerAccount{}, err
+	}
+	switch {
+	case parent.Postable:
+		return fail(fmt.Sprintf("%s %s adalah akun detail; induk harus akun header.", parent.Code, parent.Name))
+	case !parent.Active:
+		return fail(fmt.Sprintf("Akun induk %s %s nonaktif.", parent.Code, parent.Name))
+	case parent.Class != cur.Class:
+		return fail(fmt.Sprintf("Induk harus berkepala %d (%s); akun tidak bisa dipindah ke kelas lain.", cur.Class, ClassOf(int(cur.Class)).Name))
+	}
+	// Turunan cur dan kedalaman relatifnya, untuk mencegah lingkaran dan pohon yang terlalu dalam.
+	depth := 0
+	level := []uuid.UUID{cur.ID}
+	for d := 0; len(level) > 0; d++ {
+		var next []uuid.UUID
+		for _, id := range level {
+			if id == parent.ID {
+				return fail("Induk tidak boleh akun itu sendiri atau turunannya.")
+			}
+			children, err := q.ChildAccounts(ctx, store.ChildAccountsParams{CompanyID: companyID, ParentID: &id})
+			if err != nil {
+				return store.LedgerAccount{}, err
+			}
+			for _, ch := range children {
+				next = append(next, ch.ID)
+			}
+		}
+		if len(next) > 0 {
+			depth = d + 1
+		}
+		level = next
+	}
+	if int(parent.Level)+1+depth > MaxLevel {
+		return fail(fmt.Sprintf("Bagan akun maksimal %d tingkat; pilih induk yang lebih atas.", MaxLevel))
+	}
+	return parent, nil
+}
+
+// shiftSubtree menyesuaikan level turunan akun id (yang kini berlevel level), dari atas ke bawah
+// supaya setiap baris lolos penjaga basis data (level = level induk + 1).
+func shiftSubtree(ctx context.Context, q *store.Queries, companyID, id uuid.UUID, level int16) error {
+	children, err := q.ChildAccounts(ctx, store.ChildAccountsParams{CompanyID: companyID, ParentID: &id})
+	if err != nil {
+		return err
+	}
+	for _, ch := range children {
+		if err := q.SetAccountLevel(ctx, store.SetAccountLevelParams{CompanyID: companyID, ID: ch.ID, Level: level + 1}); err != nil {
+			return err
+		}
+		if err := shiftSubtree(ctx, q, companyID, ch.ID, level+1); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -611,6 +611,79 @@ func TestAccountCodeCorrection(t *testing.T) {
 	}
 }
 
+// Koreksi pengelompokan: akun detail atau akun header (beserta turunannya) bisa dipindah ke induk
+// lain di kelas yang sama; induk harus header aktif, bukan turunannya sendiri, maksimal 5 tingkat.
+func TestAccountReparent(t *testing.T) {
+	f := setup(t)
+	accounts := func() map[uuid.UUID]ledger.Account {
+		list, err := f.svc.Accounts(f.ctx, f.company)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[uuid.UUID]ledger.Account{}
+		for _, a := range list {
+			out[a.ID] = a
+		}
+		return out
+	}
+	move := func(code, parent string) (ledger.Account, error) {
+		a := accounts()[f.acc[code]]
+		p := f.acc[parent]
+		return f.svc.UpdateAccount(f.ctx, f.company, a.ID, ledger.AccountChange{Name: a.Name, Active: a.Active, Version: a.Version, ParentID: &p}, f.actor)
+	}
+	f.mustPost(ledger.General, "2026-10-05", f.line("6-1003", "500", "0"), f.line("1-1111", "0", "500"))
+
+	bpjs, err := move("6-1003", "6-2000")
+	if err != nil || bpjs.ParentID == nil || *bpjs.ParentID != f.acc["6-2000"] || bpjs.Level != 3 {
+		t.Fatalf("pindah akun detail = %+v, %v", bpjs, err)
+	}
+	if l, err := f.svc.AccountLedger(f.ctx, f.company, bpjs.ID, day("2026-10-01"), day("2026-10-31")); err != nil || !l.Closing.Equal(money.MustParse("500")) {
+		t.Fatalf("saldo sesudah pindah induk = %+v, %v", l, err)
+	}
+
+	// Akun header beserta anaknya: 6-1000 pindah ke bawah 6-2000, anak-anaknya turun ke level 4.
+	pegawai, err := move("6-1000", "6-2000")
+	if err != nil || pegawai.Level != 3 {
+		t.Fatalf("pindah akun header = %+v, %v", pegawai, err)
+	}
+	if gaji := accounts()[f.acc["6-1001"]]; gaji.Level != 4 || *gaji.ParentID != f.acc["6-1000"] {
+		t.Fatalf("anak akun header = %+v", gaji)
+	}
+
+	for _, c := range []struct{ name, code, parent string }{
+		{"induk turunannya sendiri", "6-2000", "6-1000"},
+		{"induk akun detail", "6-2002", "6-2001"},
+		{"kelas lain", "6-2002", "1-1100"},
+		{"akun kelompok", "6", "1"},
+	} {
+		if _, err := move(c.code, c.parent); errCode(err) != "account.invalid" {
+			t.Errorf("%s: error = %v, seharusnya account.invalid", c.name, err)
+		}
+	}
+
+	// Terlalu dalam: 6-1000 (dengan anak) ke bawah header level 4 membuat anaknya di level 6.
+	h3, err := f.svc.CreateAccount(f.ctx, f.company, ledger.NewAccount{Code: "6-2100", Name: "Beban kantor", ParentID: ptr(f.acc["6-2000"])}, f.actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h4, err := f.svc.CreateAccount(f.ctx, f.company, ledger.NewAccount{Code: "6-2110", Name: "Beban kantor pusat", ParentID: &h3.ID}, f.actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.acc["6-2110"] = h4.ID
+	if _, err := move("6-1000", "6-2110"); errCode(err) != "account.invalid" {
+		t.Fatalf("pohon lebih dari 5 tingkat seharusnya ditolak: %v", err)
+	}
+
+	// Penjaga di basis data tetap menolak induk dari kelas lain walau lewat SQL langsung.
+	if _, err := f.pool.Exec(f.ctx, "UPDATE ledger.accounts SET parent_id = $1, level = 3 WHERE id = $2", f.acc["1-1100"], f.acc["6-2002"]); err == nil {
+		t.Fatal("trigger seharusnya menolak induk dari kelas lain")
+	}
+	if _, err := f.pool.Exec(f.ctx, "UPDATE ledger.accounts SET parent_id = $1, level = 4 WHERE id = $2", f.acc["6-1000"], f.acc["6-2000"]); err == nil {
+		t.Fatal("trigger seharusnya menolak induk yang merupakan turunan akun itu sendiri")
+	}
+}
+
 // Tes acak: serangkaian posting dan void sembarang tidak pernah membuat saldo agregat
 // berbeda dari baris jurnal, dan neraca lajur setiap bulan selalu seimbang.
 func TestRandomPostingsKeepInvariants(t *testing.T) {
@@ -657,6 +730,13 @@ func TestRandomPostingsKeepInvariants(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func errCode(err error) string {
+	if p := problem(err); p != nil {
+		return p.Code
+	}
+	return ""
+}
 
 // Revisi klien: jurnal manual bisa diubah selama periodenya belum dikunci. Nomor tetap, versi
 // lama tersimpan, saldo agregat ikut, dan pembalik otomatis jurnal penyesuaian ikut berubah.

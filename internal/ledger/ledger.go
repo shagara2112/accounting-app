@@ -103,10 +103,12 @@ type NewAccount struct {
 
 type AccountChange struct {
 	// Code kosong = kode tidak diubah. Kode baru harus berangka kepala sama (koreksi salah ketik).
-	Code    string `json:"code"`
-	Name    string `json:"name"`
-	Active  bool   `json:"active"`
-	Version int    `json:"version"`
+	Code string `json:"code"`
+	// ParentID kosong = induk tidak diubah. Induk baru harus akun header aktif di kelas yang sama.
+	ParentID *uuid.UUID `json:"parentId,omitempty"`
+	Name     string     `json:"name"`
+	Active   bool       `json:"active"`
+	Version  int        `json:"version"`
 }
 
 type Settings struct {
