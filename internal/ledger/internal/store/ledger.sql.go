@@ -14,6 +14,22 @@ import (
 	"lajur/internal/platform/money"
 )
 
+const accountHasLines = `-- name: AccountHasLines :one
+SELECT EXISTS (SELECT 1 FROM ledger.journal_lines WHERE company_id = $1 AND account_id = $2)
+`
+
+type AccountHasLinesParams struct {
+	CompanyID uuid.UUID
+	AccountID uuid.UUID
+}
+
+func (q *Queries) AccountHasLines(ctx context.Context, arg AccountHasLinesParams) (bool, error) {
+	row := q.db.QueryRow(ctx, accountHasLines, arg.CompanyID, arg.AccountID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const accountLines = `-- name: AccountLines :many
 SELECT l.entry_id, e.number, e.kind, e.status, e.source_type, l.entry_date, l.line_no,
        e.memo AS entry_memo, l.memo, l.debit, l.credit, l.project_id, l.branch_id, l.department_id
@@ -360,6 +376,22 @@ func (q *Queries) CountActiveChildren(ctx context.Context, arg CountActiveChildr
 	return count, err
 }
 
+const countChildren = `-- name: CountChildren :one
+SELECT count(*) FROM ledger.accounts WHERE company_id = $1 AND parent_id = $2
+`
+
+type CountChildrenParams struct {
+	CompanyID uuid.UUID
+	ParentID  *uuid.UUID
+}
+
+func (q *Queries) CountChildren(ctx context.Context, arg CountChildrenParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countChildren, arg.CompanyID, arg.ParentID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countEntries = `-- name: CountEntries :one
 SELECT count(*) FROM ledger.journal_entries WHERE company_id = $1
 `
@@ -369,6 +401,25 @@ func (q *Queries) CountEntries(ctx context.Context, companyID uuid.UUID) (int64,
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteAccount = `-- name: DeleteAccount :execrows
+DELETE FROM ledger.accounts WHERE company_id = $1 AND id = $2 AND version = $3
+`
+
+type DeleteAccountParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+	Version   int32
+}
+
+// Hanya akun yang belum dipakai; foreign key dari tabel pemakai menolak sisanya (migrasi 00027).
+func (q *Queries) DeleteAccount(ctx context.Context, arg DeleteAccountParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAccount, arg.CompanyID, arg.ID, arg.Version)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteEntryLines = `-- name: DeleteEntryLines :exec

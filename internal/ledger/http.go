@@ -31,6 +31,7 @@ func Routes(svc Service) []api.Route {
 		write(http.MethodPost, "/api/v1/ledger/accounts", rbac.AccountCreate, h.createAccount),
 		write(http.MethodPost, "/api/v1/ledger/accounts/template", rbac.AccountCreate, h.applyTemplate),
 		write(http.MethodPatch, "/api/v1/ledger/accounts/{id}", rbac.AccountEdit, h.updateAccount),
+		write(http.MethodDelete, "/api/v1/ledger/accounts/{id}", rbac.AccountEdit, h.deleteAccount),
 		read(http.MethodGet, "/api/v1/ledger/accounts/{id}/ledger", rbac.LedgerView, h.accountLedger),
 		read(http.MethodGet, "/api/v1/ledger/system-accounts", rbac.LedgerView, h.systemAccounts),
 		write(http.MethodPut, "/api/v1/ledger/system-accounts/{role}", rbac.AccountEdit, h.setSystemAccount),
@@ -180,6 +181,22 @@ func (h handlers) setSystemAccount(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h handlers) deleteAccount(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	version, err := strconv.Atoi(r.URL.Query().Get("version"))
+	if err != nil {
+		return httpx.BadRequest("request.query", "Parameter version wajib diisi.")
+	}
+	if err := h.svc.DeleteAccount(r.Context(), company(r), id, version, actor(r)); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (h handlers) applyTemplate(w http.ResponseWriter, r *http.Request) error {

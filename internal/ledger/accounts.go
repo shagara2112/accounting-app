@@ -2,11 +2,13 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"lajur/internal/ledger/internal/store"
 	"lajur/internal/platform/audit"
@@ -270,6 +272,89 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 		return err
 	})
 	return out, err
+}
+
+// accountUsers menamai tabel yang memakai akun, untuk pesan saat akun yang masih dipakai
+// hendak dihapus (foreign key menolak penghapusannya).
+var accountUsers = map[string]string{
+	"journal_lines": "jurnal", "balances": "jurnal", "project_balances": "jurnal",
+	"accounts": "rekening kas/bank atau akun di bawahnya", "transaction_lines": "transaksi kas dan bank",
+	"contacts": "kontak PT grup", "invoices": "faktur penjualan", "invoice_lines": "faktur penjualan (termasuk draf)",
+	"bill_lines": "tagihan pembelian (termasuk draf)", "credit_note_lines": "nota kredit", "debit_note_lines": "nota debit",
+	"daily_sale_lines": "penjualan harian", "daily_sale_payments": "penjualan harian",
+	"projects": "proyek", "budget_lines": "anggaran proyek", "products": "produk dan jasa",
+	"movements": "kartu stok", "adjustments": "penyesuaian stok", "account_map": "pemetaan konsolidasi",
+	"recurring_lines": "jurnal berulang", "categories": "kategori aset tetap", "assets": "aset tetap",
+	"disposals": "pelepasan aset tetap", "role_accounts": "Akun sistem",
+}
+
+// DeleteAccount menghapus akun yang salah dibuat dan belum pernah dipakai. Akun kelompok, akun
+// yang masih punya akun di bawahnya, akun sistem, dan akun yang sudah dipakai jurnal atau data
+// lain (rekening kas, produk, aset, draf dokumen, dan seterusnya) ditolak; akun seperti itu
+// cukup dinonaktifkan.
+func (l *ledger) DeleteAccount(ctx context.Context, companyID, accountID uuid.UUID, version int, actor Actor) error {
+	return db.Run(ctx, l.pool, func(ctx context.Context) error {
+		q := l.q(ctx)
+		cur, err := q.GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: accountID})
+		if isNoRows(err) {
+			return httpx.NotFound("account.not_found", "Akun tidak ditemukan.")
+		}
+		if err != nil {
+			return err
+		}
+		label := cur.Code + " " + cur.Name
+		fail := func(msg string) error { return httpx.Unprocessable("account.in_use", msg) }
+		if cur.ParentID == nil {
+			return fail("Akun kelompok tidak bisa dihapus.")
+		}
+		n, err := q.CountChildren(ctx, store.CountChildrenParams{CompanyID: companyID, ParentID: &accountID})
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			return fail(fmt.Sprintf("%s masih punya %d akun di bawahnya. Hapus atau pindahkan akun-akun itu dulu.", label, n))
+		}
+		rows, err := q.ListAccounts(ctx, companyID)
+		if err != nil {
+			return err
+		}
+		pinned, err := pinnedRoles(ctx, q, companyID)
+		if err != nil {
+			return err
+		}
+		if roles := systemRoles(rows, pinned)[accountID]; len(roles) > 0 {
+			return fail(fmt.Sprintf("%s dipakai sebagai akun sistem untuk %s. Pilih akun lain di Bagan akun → Akun sistem dulu, atau nonaktifkan saja.",
+				label, strings.Join(roleLabels(roles), ", ")))
+		}
+		used, err := q.AccountHasLines(ctx, store.AccountHasLinesParams{CompanyID: companyID, AccountID: accountID})
+		if err != nil {
+			return err
+		}
+		if used {
+			return fail(fmt.Sprintf("%s sudah dipakai di jurnal, jadi tidak bisa dihapus. Nonaktifkan saja supaya tidak muncul di pilihan akun.", label))
+		}
+		deleted, err := q.DeleteAccount(ctx, store.DeleteAccountParams{CompanyID: companyID, ID: accountID, Version: int32(version)})
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "23503" {
+			where := accountUsers[pg.TableName]
+			if where == "" {
+				where = "data lain"
+			}
+			return fail(fmt.Sprintf("%s masih dipakai di %s, jadi tidak bisa dihapus. Ganti akunnya di sana dulu, atau nonaktifkan saja.", label, where))
+		}
+		if err != nil {
+			return err
+		}
+		if deleted == 0 {
+			return httpx.Conflict("conflict.version", "Akun ini baru saja diubah orang lain. Muat ulang lalu coba lagi.")
+		}
+		_, err = audit.Write(ctx, db.Conn(ctx, l.pool), audit.Entry{
+			UserID: userRef(actor), CompanyID: &companyID, Action: "ledger.account.delete",
+			ObjectType: "account", ObjectID: accountID.String(), IP: actor.IP,
+			Before: map[string]any{"code": cur.Code, "name": cur.Name, "parentId": cur.ParentID, "postable": cur.Postable},
+		})
+		return err
+	})
 }
 
 // checkCodeChange memeriksa koreksi kode akun cur menjadi code.

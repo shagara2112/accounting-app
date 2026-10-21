@@ -347,6 +347,8 @@ type Service interface {
 	CheckAccount(ctx context.Context, companyID, accountID uuid.UUID, classes []int) error
 	CreateAccount(ctx context.Context, companyID uuid.UUID, a NewAccount, actor Actor) (Account, error)
 	UpdateAccount(ctx context.Context, companyID, accountID uuid.UUID, c AccountChange, actor Actor) (Account, error)
+	// DeleteAccount menghapus akun yang salah dibuat dan belum pernah dipakai.
+	DeleteAccount(ctx context.Context, companyID, accountID uuid.UUID, version int, actor Actor) error
 	ApplyTemplate(ctx context.Context, companyID uuid.UUID, template string, actor Actor) (int, error)
 
 	Settings(ctx context.Context, companyID uuid.UUID) (Settings, error)

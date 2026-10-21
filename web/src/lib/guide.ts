@@ -872,7 +872,7 @@ export const topics: GuideTopic[] = [
           'Kode akun bisa dikoreksi atau disesuaikan dengan skema kode PT lewat tombol ubah di baris akun, selama angka kepalanya sama (mis. 1-1101 menjadi 1-11101). Akun berlabel Akun sistem (mis. piutang usaha, PPN masukan) juga boleh diganti kodenya; posting otomatis tetap memakai akun itu. Hanya kode akun kelompok (1–9) yang terkunci.',
           'Akun sistem adalah akun yang dipakai posting otomatis (piutang usaha, utang usaha, PPN, ekuitas saldo awal, dan lainnya). Tombol Akun sistem di Bagan akun menampilkan semuanya. Bila bagan akun disusun dengan skema kode sendiri, pilih akunnya di sana; faktur, tagihan, dan Saldo awal baru bisa diposting setelah akunnya dipilih.',
           'Akun yang salah kelompok bisa dipindah: tombol ubah → pilih Induk lain di kelas yang sama. Akun header ikut membawa akun di bawahnya, dan laporan (termasuk periode lalu) langsung memakai pengelompokan baru. Sesuaikan juga kodenya bila perlu.',
-          'Akun tidak dihapus. Bila tidak dipakai lagi, klik akunnya dan matikan Akun aktif (akun yang masih bersaldo tidak bisa dinonaktifkan).',
+          'Akun yang salah dibuat dan belum pernah dipakai bisa dihapus: tombol ubah → Hapus akun. Akun yang sudah dipakai (ada jurnal, draf dokumen, rekening kas, produk, aset, atau dipilih di Akun sistem) tidak bisa dihapus; matikan Akun aktif saja supaya tidak muncul di pilihan akun (akun yang masih bersaldo tidak bisa dinonaktifkan).',
         ],
       },
     ],
@@ -1169,8 +1169,8 @@ export const faqs: Faq[] = [
     topic: 'sistem',
   },
   {
-    q: 'Salah ketik nama PT, kode akun, atau salah kelompok akun, bisa diperbaiki?',
-    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Di Bagan akun, tombol ubah di baris akun bisa mengganti Induk (pindah kelompok) dan kode, selama angka kepalanya tetap sama; jurnal lama dan laporan ikut memakai pengelompokan dan kode baru. Kode akun sistem juga boleh diganti; posting otomatis tetap memakai akun yang sama. Untuk skema kode sendiri, pilih akun posting otomatis di Bagan akun → Akun sistem.',
+    q: 'Salah ketik nama PT, kode akun, salah kelompok akun, atau salah membuat akun, bisa diperbaiki atau dihapus?',
+    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Di Bagan akun, tombol ubah di baris akun bisa mengganti Induk (pindah kelompok) dan kode, selama angka kepalanya tetap sama; jurnal lama dan laporan ikut memakai pengelompokan dan kode baru. Kode akun sistem juga boleh diganti; posting otomatis tetap memakai akun yang sama. Akun yang salah dibuat dan belum pernah dipakai bisa dihapus lewat tombol ubah → Hapus akun; yang sudah dipakai cukup dinonaktifkan. Untuk skema kode sendiri, pilih akun posting otomatis di Bagan akun → Akun sistem.',
     topic: 'buku-besar',
   },
   {

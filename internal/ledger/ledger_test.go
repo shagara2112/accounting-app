@@ -269,7 +269,10 @@ func TestDatabaseGuardsLedgerInvariants(t *testing.T) {
 		"UPDATE ledger.journal_entries SET memo = 'diubah'",
 		"DELETE FROM ledger.journal_entries",
 		"UPDATE ledger.accounts SET code = '2-1199' WHERE code = '1-1101'",
-		"DELETE FROM ledger.accounts WHERE code = '1-1101'",
+		// Akun yang sudah dipakai jurnal dan akun kelompok tidak bisa dihapus (akun yang belum
+		// dipakai boleh, lihat TestDeleteUnusedAccount).
+		"DELETE FROM ledger.accounts WHERE code = '1-1111'",
+		"DELETE FROM ledger.accounts WHERE code = '1'",
 	} {
 		if _, err := f.pool.Exec(f.ctx, sql); err == nil {
 			t.Errorf("%q seharusnya ditolak basis data", sql)
@@ -754,6 +757,82 @@ func TestSystemAccountsForOwnChart(t *testing.T) {
 	}
 	if r, _ := f.svc.RoleAccount(f.ctx, f.company, ledger.OutputVATRetail); r.ID != f.acc["2-1201"] {
 		t.Fatalf("PPN digunggung PT bertemplate seharusnya 2-1201: %+v", r)
+	}
+}
+
+// Revisi klien: akun yang salah dibuat dan belum pernah dipakai bisa dihapus; akun kelompok,
+// akun yang punya anak, akun sistem, dan akun yang sudah dipakai jurnal atau data lain ditolak.
+func TestDeleteUnusedAccount(t *testing.T) {
+	f := setup(t)
+	create := func(code, name string, parent uuid.UUID, postable bool) ledger.Account {
+		t.Helper()
+		a, err := f.svc.CreateAccount(f.ctx, f.company, ledger.NewAccount{Code: code, Name: name, ParentID: &parent, Postable: postable}, f.actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	del := func(a ledger.Account) error { return f.svc.DeleteAccount(f.ctx, f.company, a.ID, a.Version, f.actor) }
+	exists := func(id uuid.UUID) bool {
+		list, _ := f.svc.Accounts(f.ctx, f.company)
+		for _, a := range list {
+			if a.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	wrong := create("1-1139", "Bank salah ketik", f.acc["1-1100"], true)
+	if err := f.svc.DeleteAccount(f.ctx, f.company, wrong.ID, wrong.Version+1, f.actor); errCode(err) != "conflict.version" {
+		t.Fatalf("versi lama seharusnya ditolak: %v", err)
+	}
+	if err := del(wrong); err != nil || exists(wrong.ID) {
+		t.Fatalf("hapus akun yang belum dipakai: %v", err)
+	}
+
+	header := create("1-1190", "Kelompok salah", f.acc["1-1100"], false)
+	child := create("1-1191", "Anak", header.ID, true)
+	if err := del(header); errCode(err) != "account.in_use" {
+		t.Fatalf("akun header yang punya anak seharusnya ditolak: %v", err)
+	}
+	if err := del(child); err != nil {
+		t.Fatal(err)
+	}
+	if err := del(header); err != nil {
+		t.Fatalf("akun header kosong seharusnya bisa dihapus: %v", err)
+	}
+
+	group := ledger.Account{ID: f.acc["1"], Version: 1}
+	if err := del(group); errCode(err) != "account.in_use" {
+		t.Fatalf("akun kelompok seharusnya ditolak: %v", err)
+	}
+	if err := del(ledger.Account{ID: f.acc["1-1201"], Version: 1}); errCode(err) != "account.in_use" || !strings.Contains(problem(err).Detail, "akun sistem") {
+		t.Fatalf("akun sistem seharusnya ditolak: %v", err)
+	}
+
+	used := create("1-1138", "Bank dipakai", f.acc["1-1100"], true)
+	f.acc["1-1138"] = used.ID
+	f.mustPost(ledger.General, "2026-10-05", f.line("1-1138", "1000", "0"), f.line("3-1001", "0", "1000"))
+	if err := del(used); errCode(err) != "account.in_use" || !strings.Contains(problem(err).Detail, "jurnal") {
+		t.Fatalf("akun yang sudah dipakai jurnal seharusnya ditolak: %v", err)
+	}
+
+	// Akun yang dipakai data lain (mis. didaftarkan sebagai rekening bank) ditolak foreign key.
+	bank := create("1-1137", "Bank belum dipakai jurnal", f.acc["1-1100"], true)
+	if _, err := f.pool.Exec(f.ctx, "INSERT INTO cash.accounts (company_id, account_id, kind) VALUES ($1, $2, 'bank')", f.company, bank.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := del(bank); errCode(err) != "account.in_use" || !strings.Contains(problem(err).Detail, "rekening kas/bank") {
+		t.Fatalf("akun rekening bank seharusnya ditolak: %v", err)
+	}
+
+	// Penjaga di basis data tetap menolak akun kelompok dan akun berjurnal walau lewat SQL langsung.
+	if _, err := f.pool.Exec(f.ctx, "DELETE FROM ledger.accounts WHERE id = $1", f.acc["1"]); err == nil {
+		t.Fatal("trigger seharusnya menolak hapus akun kelompok")
+	}
+	if _, err := f.pool.Exec(f.ctx, "DELETE FROM ledger.accounts WHERE id = $1", used.ID); err == nil {
+		t.Fatal("trigger seharusnya menolak hapus akun yang sudah dipakai jurnal")
 	}
 }
 

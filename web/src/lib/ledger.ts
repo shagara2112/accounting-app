@@ -73,6 +73,15 @@ export function useSetSystemAccount(companyId: string | null) {
   })
 }
 
+/** Menghapus akun yang salah dibuat dan belum pernah dipakai; yang sudah dipakai ditolak server. */
+export function useDeleteAccount(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({
+    mutationFn: ({ id, version }: { id: string; version: number }) => api<void>('DELETE', `/ledger/accounts/${id}?version=${version}`),
+    onSuccess: invalidate,
+  })
+}
+
 export function useApplyTemplate(companyId: string | null) {
   const invalidate = useInvalidateLedger(companyId)
   return useMutation({

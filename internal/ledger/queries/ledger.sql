@@ -383,6 +383,16 @@ LEFT JOIN platform.users u ON u.id = r.revised_by
 WHERE r.company_id = $1 AND r.entry_id = $2
 ORDER BY r.revision DESC;
 
+-- name: CountChildren :one
+SELECT count(*) FROM ledger.accounts WHERE company_id = @company_id AND parent_id = @parent_id;
+
+-- name: AccountHasLines :one
+SELECT EXISTS (SELECT 1 FROM ledger.journal_lines WHERE company_id = @company_id AND account_id = @account_id);
+
+-- name: DeleteAccount :execrows
+-- Hanya akun yang belum dipakai; foreign key dari tabel pemakai menolak sisanya (migrasi 00027).
+DELETE FROM ledger.accounts WHERE company_id = @company_id AND id = @id AND version = @version;
+
 -- name: RoleAccountMapping :one
 SELECT account_id FROM ledger.role_accounts WHERE company_id = $1 AND role = $2;
 

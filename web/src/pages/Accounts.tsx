@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { ApiError, type Account, type AccountClass, type Me } from '../lib/api'
-import { essentialRoles, subtreeIds, treeOrder, useAccounts, useApplyTemplate, useCreateAccount, useSystemAccounts, useUpdateAccount } from '../lib/ledger'
+import { essentialRoles, subtreeIds, treeOrder, useAccounts, useApplyTemplate, useCreateAccount, useDeleteAccount, useSystemAccounts, useUpdateAccount } from '../lib/ledger'
 import { formatAmount } from '../lib/money'
 import { activeCompany, can } from '../lib/session'
 import { useToast } from '../components/Toast'
@@ -292,8 +292,10 @@ function NewAccountDialog({ me, open, onClose, accounts, classes }: { me: Me; op
 
 function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account | null; onClose: () => void }) {
   const update = useUpdateAccount(me.activeCompanyId)
+  const remove = useDeleteAccount(me.activeCompanyId)
   const all = useAccounts(me.activeCompanyId).data?.items
   const toast = useToast()
+  const [confirming, setConfirming] = useState(false)
   const [parentId, setParentId] = useState('')
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
@@ -307,7 +309,9 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
     setCode(account.code)
     setName(account.name)
     setActive(account.active)
+    setConfirming(false)
     update.reset()
+    remove.reset()
   }
 
   function close() {
@@ -329,32 +333,77 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
       title={account ? `Ubah ${account.code}` : 'Ubah akun'}
       description="Jenis akun (header atau detail) tidak bisa diubah. Induk dan kode bisa dikoreksi selama angka kepalanya sama; laporan dan riwayat jurnal ikut memakai pengelompokan dan kode baru."
       footer={
-        <>
-          <Button variant="secondary" onClick={close}>
-            Batal
-          </Button>
-          <Button
-            busy={update.isPending}
-            disabled={!name.trim() || !code.trim()}
-            onClick={() => {
-              if (!account) return
-              setAttempt((n) => n + 1)
-              update.mutate(
-                { id: account.id, code: code.trim(), name: name.trim(), active, version: account.version, parentId: parentId && parentId !== account.parentId ? parentId : undefined },
-                {
-                  onSuccess: (a) => {
-                    toast(`Akun ${a.code} disimpan`)
-                    close()
+        confirming && account ? (
+          <>
+            <Button variant="secondary" onClick={() => setConfirming(false)}>
+              Jangan hapus
+            </Button>
+            <Button
+              variant="danger"
+              busy={remove.isPending}
+              onClick={() =>
+                remove.mutate(
+                  { id: account.id, version: account.version },
+                  {
+                    onSuccess: () => {
+                      toast(`Akun ${account.code} ${account.name} dihapus`)
+                      close()
+                    },
+                    onError: () => setConfirming(false),
                   },
-                },
-              )
-            }}
-          >
-            Simpan
-          </Button>
-        </>
+                )
+              }
+            >
+              Ya, hapus {account.code}
+            </Button>
+          </>
+        ) : (
+          <>
+            {account && account.level > 1 && (
+              <Button
+                variant="ghost"
+                className="mr-auto text-bad"
+                onClick={() => {
+                  remove.reset()
+                  setConfirming(true)
+                }}
+              >
+                Hapus akun…
+              </Button>
+            )}
+            <Button variant="secondary" onClick={close}>
+              Batal
+            </Button>
+            <Button
+              busy={update.isPending}
+              disabled={!name.trim() || !code.trim()}
+              onClick={() => {
+                if (!account) return
+                setAttempt((n) => n + 1)
+                update.mutate(
+                  { id: account.id, code: code.trim(), name: name.trim(), active, version: account.version, parentId: parentId && parentId !== account.parentId ? parentId : undefined },
+                  {
+                    onSuccess: (a) => {
+                      toast(`Akun ${a.code} disimpan`)
+                      close()
+                    },
+                  },
+                )
+              }}
+            >
+              Simpan
+            </Button>
+          </>
+        )
       }
     >
+      {confirming && account && (
+        <Alert tone="warn">
+          Hapus {account.code} {account.name}? Hanya akun yang belum pernah dipakai (belum ada jurnal, draf dokumen, rekening kas, produk, atau aset yang memakainya) yang bisa dihapus.
+          Penghapusan tercatat di audit trail.
+        </Alert>
+      )}
+      {remove.error && <Alert>{remove.error.message}</Alert>}
       <SelectField
         id="ubah-induk"
         label="Induk"
