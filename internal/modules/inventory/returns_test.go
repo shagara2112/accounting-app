@@ -84,7 +84,7 @@ func TestSalesReturnRestocksAtIssueCost(t *testing.T) {
 	if s := stock(t, e, p, "2026-10-31"); !s.Qty.Equal(qty("24")) {
 		t.Fatal("potongan harga tanpa retur tidak boleh mengubah stok")
 	}
-	vat, err := e.Sales.VATByMonth(e.Ctx, e.Company, day("2026-10-01"), day("2026-11-01"))
+	vat, err := e.Sales.VATByMonth(e.Ctx, e.Company, day("2026-10-01"), day("2026-11-01"), sales.VATCodeOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}

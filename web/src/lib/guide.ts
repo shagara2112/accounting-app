@@ -187,7 +187,7 @@ export const topics: GuideTopic[] = [
     page: { to: '/penjualan?tab=pelunasan', label: 'Penjualan → Pelunasan' },
     paths: ['/penjualan?tab=pelunasan', '/penjualan/pelunasan', '/penjualan?tab=umur'],
     visible: allow('sales.view'),
-    keywords: ['pembayaran pelanggan', 'terima uang', 'piutang', 'cicilan', 'dp', 'uang muka', 'pph 23'],
+    keywords: ['pembayaran pelanggan', 'terima uang', 'piutang', 'cicilan', 'dp', 'uang muka', 'pph 23', 'wapu', 'ppn dipungut', 'bumn', 'instansi pemerintah'],
     sections: [
       {
         title: 'Mencatat pelunasan',
@@ -197,6 +197,7 @@ export const topics: GuideTopic[] = [
           'Isi tanggal dan rekening tujuan (Masuk ke rekening).',
           'Isi jumlah yang dilunasi di setiap faktur. Boleh sebagian, dan satu pembayaran boleh untuk banyak faktur.',
           'Bila pelanggan memotong PPh 23 atau PPh final 4(2), pilih kode PPh dan isi nominalnya di faktur itu.',
+          'Bila pelanggan pemungut PPN (WAPU, mis. instansi pemerintah atau BUMN), kolom PPN dipungut terisi otomatis dengan PPN faktur yang belum dipungut. Sesuaikan bila perlu.',
           'Periksa ringkasan Piutang dilunasi dan Uang diterima, lalu tekan Posting pelunasan.',
         ],
         note: 'Faktur dengan PPh dipotong tetap lunas penuh. Potongan PPh 23 dicatat sebagai PPh dibayar di muka, PPh final 4(2) sebagai beban PPh final; minta bukti potongnya dari pelanggan.',
@@ -429,7 +430,7 @@ export const topics: GuideTopic[] = [
     page: { to: '/kontak', label: 'Kontak' },
     paths: ['/kontak'],
     visible: allow('core.contact.view'),
-    keywords: ['pelanggan', 'pemasok', 'supplier', 'customer', 'npwp', 'nik', 'luar negeri'],
+    keywords: ['pelanggan', 'pemasok', 'supplier', 'customer', 'npwp', 'nik', 'luar negeri', 'wapu', 'pemungut ppn'],
     sections: [
       {
         title: 'Menambah kontak',
@@ -438,6 +439,7 @@ export const topics: GuideTopic[] = [
           'Isi nama, centang Pelanggan dan/atau Pemasok, dan Pengusaha Kena Pajak (PKP) bila berlaku.',
           'Untuk kontak dalam negeri, isi NPWP 16 digit (atau NIK bila tidak punya NPWP) dan NITKU. Data ini dipakai faktur pajak dan bukti potong.',
           'Untuk pemasok luar negeri, pilih Negara lalu isi TIN di negara asal dan alamatnya. Pemasok ini dipotong PPh 26.',
+          'Untuk pelanggan pemungut PPN (WAPU), pilih Pemungut PPN: 02 untuk instansi pemerintah, 03 untuk pemungut lain seperti BUMN. Fakturnya otomatis memakai kode transaksi 02/03.',
           'Isi termin pembayaran, email penagihan, telepon, alamat, rekening bank, dan limit kredit bila perlu, lalu simpan.',
         ],
       },
@@ -474,7 +476,7 @@ export const topics: GuideTopic[] = [
         steps: [
           'Buka Pajak → Faktur keluaran, pilih masa pajak.',
           'Periksa faktur bertanda merah (mis. NPWP pembeli kosong) dan perbaiki dulu.',
-          'Bila perlu, centang faktur lalu ubah kode transaksi. Kode 04 dipakai untuk DPP nilai lain.',
+          'Bila perlu, centang faktur lalu ubah kode transaksi. Kode 04 dipakai untuk DPP nilai lain; kode 02/03 otomatis untuk pelanggan pemungut PPN.',
           'Centang faktur yang siap, tekan Ekspor XML.',
           'Unggah berkas XML itu di Coretax lalu terbitkan faktur pajaknya di Coretax.',
         ],
@@ -596,6 +598,7 @@ export const topics: GuideTopic[] = [
         points: [
           'Menampilkan PPN keluaran, PPN masukan per masa pengkreditan, kompensasi, kurang bayar, dan lebih bayar per bulan.',
           'Lebih bayar otomatis dikompensasikan ke masa berikutnya. Kurang bayar disetor paling lambat akhir bulan berikutnya.',
+          'PPN faktur ke pemungut PPN (kode 02/03) tampil di kolom Dipungut pemungut dan tidak ikut kurang bayar, karena disetor oleh pembeli.',
         ],
       },
       {
@@ -1139,6 +1142,11 @@ export const faqs: Faq[] = [
     q: 'Faktur pajak masukan baru diterima bulan depan, bagaimana?',
     a: 'Buka Pajak → Faktur masukan, klik tagihannya, catat nomor faktur pajak, dan pilih masa pengkreditan yang lebih akhir (paling lama tiga masa sesudah masa faktur).',
     topic: 'faktur-masukan',
+  },
+  {
+    q: 'PPN keluaran kami dipisah per jenis (disetor sendiri, WAPU, DPP nilai lain, digunggung), bagaimana?',
+    a: 'Buka Bagan akun → Akun sistem. Pilih akun PPN keluaran utama, lalu akun PPN keluaran dipungut pemungut (02/03), DPP nilai lain (04), dan digunggung. Jenis yang tidak dipilih memakai akun PPN keluaran utama. Tandai pelanggan WAPU di Kontak → Pemungut PPN; saat pelunasan, isi PPN dipungut supaya fakturnya lunas tanpa uang masuk dan saldo akun WAPU kembali nol.',
+    topic: 'buku-besar',
   },
   {
     q: 'Bagaimana melihat pendapatan dan pengeluaran per departemen?',

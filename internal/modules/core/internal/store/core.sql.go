@@ -142,7 +142,7 @@ func (q *Queries) GetCompanyLogo(ctx context.Context, id uuid.UUID) ([]byte, err
 }
 
 const getContact = `-- name: GetContact :one
-SELECT id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin FROM core.contacts WHERE company_id = $1 AND id = $2
+SELECT id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin, vat_collector FROM core.contacts WHERE company_id = $1 AND id = $2
 `
 
 type GetContactParams struct {
@@ -181,12 +181,13 @@ func (q *Queries) GetContact(ctx context.Context, arg GetContactParams) (CoreCon
 		&i.IcCashAccountID,
 		&i.CountryCode,
 		&i.ForeignTin,
+		&i.VatCollector,
 	)
 	return i, err
 }
 
 const getLinkedContact = `-- name: GetLinkedContact :one
-SELECT id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin FROM core.contacts WHERE company_id = $1 AND linked_company_id = $2
+SELECT id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin, vat_collector FROM core.contacts WHERE company_id = $1 AND linked_company_id = $2
 `
 
 type GetLinkedContactParams struct {
@@ -225,6 +226,7 @@ func (q *Queries) GetLinkedContact(ctx context.Context, arg GetLinkedContactPara
 		&i.IcCashAccountID,
 		&i.CountryCode,
 		&i.ForeignTin,
+		&i.VatCollector,
 	)
 	return i, err
 }
@@ -264,9 +266,9 @@ const insertContact = `-- name: InsertContact :one
 INSERT INTO core.contacts
   (id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone,
    payment_terms_days, bank_name, bank_account, created_by, linked_company_id, ic_expense_account_id,
-   ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
-RETURNING id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin
+   ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin, vat_collector)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+RETURNING id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin, vat_collector
 `
 
 type InsertContactParams struct {
@@ -294,6 +296,7 @@ type InsertContactParams struct {
 	IcCashAccountID    *uuid.UUID
 	CountryCode        string
 	ForeignTin         string
+	VatCollector       string
 }
 
 func (q *Queries) InsertContact(ctx context.Context, arg InsertContactParams) (CoreContact, error) {
@@ -322,6 +325,7 @@ func (q *Queries) InsertContact(ctx context.Context, arg InsertContactParams) (C
 		arg.IcCashAccountID,
 		arg.CountryCode,
 		arg.ForeignTin,
+		arg.VatCollector,
 	)
 	var i CoreContact
 	err := row.Scan(
@@ -352,6 +356,7 @@ func (q *Queries) InsertContact(ctx context.Context, arg InsertContactParams) (C
 		&i.IcCashAccountID,
 		&i.CountryCode,
 		&i.ForeignTin,
+		&i.VatCollector,
 	)
 	return i, err
 }
@@ -534,7 +539,7 @@ func (q *Queries) ListCompanies(ctx context.Context) ([]CoreCompany, error) {
 }
 
 const listContacts = `-- name: ListContacts :many
-SELECT id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin FROM core.contacts
+SELECT id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin, vat_collector FROM core.contacts
 WHERE company_id = $1
   AND (NOT $2::bool OR is_customer)
   AND (NOT $3::bool OR is_supplier)
@@ -597,6 +602,7 @@ func (q *Queries) ListContacts(ctx context.Context, arg ListContactsParams) ([]C
 			&i.IcCashAccountID,
 			&i.CountryCode,
 			&i.ForeignTin,
+			&i.VatCollector,
 		); err != nil {
 			return nil, err
 		}
@@ -743,9 +749,9 @@ SET name = $1, is_customer = $2, is_supplier = $3, npwp = $4, nik = $5,
     active = $14, linked_company_id = $15, ic_expense_account_id = $16,
     ic_revenue_account_id = $17, credit_limit = $18,
     billing_contact = $19, ic_cash_account_id = $20,
-    country_code = $21, foreign_tin = $22, version = version + 1
-WHERE company_id = $23 AND id = $24 AND version = $25
-RETURNING id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin
+    country_code = $21, foreign_tin = $22, vat_collector = $23, version = version + 1
+WHERE company_id = $24 AND id = $25 AND version = $26
+RETURNING id, company_id, name, is_customer, is_supplier, npwp, nik, nitku, pkp, address, email, phone, payment_terms_days, bank_name, bank_account, active, created_at, created_by, version, linked_company_id, ic_expense_account_id, ic_revenue_account_id, credit_limit, billing_contact, ic_cash_account_id, country_code, foreign_tin, vat_collector
 `
 
 type UpdateContactParams struct {
@@ -771,6 +777,7 @@ type UpdateContactParams struct {
 	IcCashAccountID    *uuid.UUID
 	CountryCode        string
 	ForeignTin         string
+	VatCollector       string
 	CompanyID          uuid.UUID
 	ID                 uuid.UUID
 	Version            int32
@@ -800,6 +807,7 @@ func (q *Queries) UpdateContact(ctx context.Context, arg UpdateContactParams) (C
 		arg.IcCashAccountID,
 		arg.CountryCode,
 		arg.ForeignTin,
+		arg.VatCollector,
 		arg.CompanyID,
 		arg.ID,
 		arg.Version,
@@ -833,6 +841,7 @@ func (q *Queries) UpdateContact(ctx context.Context, arg UpdateContactParams) (C
 		&i.IcCashAccountID,
 		&i.CountryCode,
 		&i.ForeignTin,
+		&i.VatCollector,
 	)
 	return i, err
 }

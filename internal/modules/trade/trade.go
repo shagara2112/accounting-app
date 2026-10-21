@@ -244,4 +244,6 @@ type MonthVAT struct {
 	Documents int64        `json:"documents"`
 	DPP       money.Amount `json:"dpp"`
 	VAT       money.Amount `json:"vat"`
+	// Collected: bagian PPN keluaran yang dipungut pelanggan pemungut (kode transaksi 02/03).
+	Collected money.Amount `json:"collected"`
 }

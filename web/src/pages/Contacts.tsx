@@ -22,6 +22,7 @@ const empty: ContactInput = {
   pkp: false,
   countryCode: 'IDN',
   foreignTin: '',
+  vatCollector: '',
   address: '',
   email: '',
   phone: '',
@@ -126,6 +127,7 @@ export function Contacts({ me }: { me: Me }) {
                   {c.isCustomer && <Badge tone="accent">Pelanggan</Badge>}
                   {c.isSupplier && <Badge tone="warn">Pemasok</Badge>}
                   {c.pkp && <Badge tone="good">PKP</Badge>}
+                  {c.vatCollector && <Badge tone="neutral">Pemungut PPN {c.vatCollector}</Badge>}
                   {c.linkedCompanyId && <Badge tone="neutral">PT grup</Badge>}
                 </span>
               </td>
@@ -217,7 +219,7 @@ function ContactDialog({ me, editing, onClose }: { me: Me; editing: Contact | 'n
           id="k-negara"
           label="Negara"
           value={form.countryCode || 'IDN'}
-          onChange={(e) => set(e.target.value === 'IDN' ? { countryCode: 'IDN', foreignTin: '' } : { countryCode: e.target.value, npwp: '', nik: '', nitku: '', pkp: false })}
+          onChange={(e) => set(e.target.value === 'IDN' ? { countryCode: 'IDN', foreignTin: '' } : { countryCode: e.target.value, npwp: '', nik: '', nitku: '', pkp: false, vatCollector: '' })}
           error={err?.fields.countryCode}
           hint={foreign ? 'Pemasok luar negeri dipotong PPh 26 dan bukti potongnya diekspor sebagai BPNR.' : undefined}
         >
@@ -272,6 +274,20 @@ function ContactDialog({ me, editing, onClose }: { me: Me; editing: Contact | 'n
             error={err?.fields.creditLimit}
           />
           <Field id="k-penagihan" label="Kontak penagihan" placeholder="mis. Ibu Sari, bagian keuangan" value={form.billingContact} maxLength={200} onChange={(e) => set({ billingContact: e.target.value })} error={err?.fields.billingContact} />
+          {!foreign && (
+            <SelectField
+              id="k-pemungut"
+              label="Pemungut PPN (WAPU)"
+              hint="PPN faktur ke pemungut disetor sendiri oleh pelanggan: faktur memakai kode transaksi 02/03 dan akun PPN keluaran dipungut, dan pelunasan mencatat PPN dipungut."
+              value={form.vatCollector}
+              onChange={(e) => set({ vatCollector: e.target.value })}
+              error={err?.fields.vatCollector}
+            >
+              <option value="">Bukan pemungut PPN</option>
+              <option value="02">02 · Instansi pemerintah</option>
+              <option value="03">03 · Pemungut lain (mis. BUMN)</option>
+            </SelectField>
+          )}
         </div>
       )}
       {form.isSupplier && (

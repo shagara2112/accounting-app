@@ -48,13 +48,21 @@ export function SystemAccountsPage({ me }: { me: Me }) {
     )
   }
 
+  const byRole = new Map(items.map((r) => [r.role, r]))
+
   function status(r: SystemAccount) {
+    if (r.fallback && !r.accountId) return <Badge tone="neutral">Ikut {byRole.get(r.fallback)?.label ?? 'peran lain'}</Badge>
     if (!r.problem) return r.chosen ? <Badge tone="good">Dipilih</Badge> : <Badge tone="neutral">Kode bawaan</Badge>
     if (r.accountId) return <Badge tone="bad">Nonaktif</Badge>
     return <Badge tone={essentialRoles.includes(r.role) ? 'warn' : 'neutral'}>Belum dipilih</Badge>
   }
 
   function hint(r: SystemAccount) {
+    if (r.fallback && !r.accountId) {
+      const f = byRole.get(r.fallback)
+      const acc = f?.accountId ? byId.get(f.accountId) : undefined
+      return `Bila tidak dipilih, memakai akun ${f?.label ?? 'peran lain'}${acc ? ` (${acc.code} ${acc.name})` : ''}.`
+    }
     if (r.problem && r.accountId) return r.problem
     if (r.problem) return `Kode bawaan ${r.defaultCode} tidak ada di bagan akun; pilih akunnya.`
     if (!r.chosen) return `Ditemukan dari kode bawaan ${r.defaultCode}.`

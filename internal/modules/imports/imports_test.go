@@ -262,7 +262,7 @@ func TestImportDailySales(t *testing.T) {
 		!e.Net("5-1001", day("2026-10-31")).Equal(rp(17*12_000)) {
 		t.Fatal("kas toko, piutang QRIS, atau HPP salah")
 	}
-	vat, _ := e.Sales.VATByMonth(e.Ctx, e.Company, day("2026-10-01"), day("2026-11-01"))
+	vat, _ := e.Sales.VATByMonth(e.Ctx, e.Company, day("2026-10-01"), day("2026-11-01"), sales.VATCodeOverrides{})
 	if len(vat) != 1 || !vat[0].VAT.Equal(rp(19_800+8_250)) {
 		t.Fatalf("PPN keluaran Oktober = %+v", vat)
 	}

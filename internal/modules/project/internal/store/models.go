@@ -259,6 +259,7 @@ type CoreContact struct {
 	IcCashAccountID    *uuid.UUID
 	CountryCode        string
 	ForeignTin         string
+	VatCollector       string
 }
 
 type CoreDepartment struct {
@@ -987,6 +988,8 @@ type SalesInvoice struct {
 	Receivable     *money.Amount
 	BranchID       *uuid.UUID
 	DepartmentID   *uuid.UUID
+	VatCollector   string
+	VatAccountID   *uuid.UUID
 }
 
 type SalesInvoiceLine struct {
@@ -1027,6 +1030,7 @@ type SalesReceipt struct {
 	Kind           string
 	Advance        money.Amount
 	FromAdvance    money.Amount
+	VatCollected   money.Amount
 }
 
 type SalesReceiptAllocation struct {
@@ -1037,6 +1041,7 @@ type SalesReceiptAllocation struct {
 	Amount          money.Amount
 	WithholdingCode *string
 	Withholding     money.Amount
+	VatCollected    money.Amount
 }
 
 type TaxExportBatch struct {

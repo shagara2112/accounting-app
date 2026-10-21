@@ -404,6 +404,36 @@ func (q *Queries) OutputInvoiceStates(ctx context.Context, arg OutputInvoiceStat
 	return items, nil
 }
 
+const outputTrxCodes = `-- name: OutputTrxCodes :many
+SELECT invoice_id, trx_code FROM tax.output_invoices WHERE company_id = $1
+`
+
+type OutputTrxCodesRow struct {
+	InvoiceID uuid.UUID
+	TrxCode   string
+}
+
+// Kode transaksi yang ditetapkan staf pajak per faktur, untuk rekap PPN dipungut pemungut.
+func (q *Queries) OutputTrxCodes(ctx context.Context, companyID uuid.UUID) ([]OutputTrxCodesRow, error) {
+	rows, err := q.db.Query(ctx, outputTrxCodes, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OutputTrxCodesRow
+	for rows.Next() {
+		var i OutputTrxCodesRow
+		if err := rows.Scan(&i.InvoiceID, &i.TrxCode); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setWithholdingObjects = `-- name: SetWithholdingObjects :exec
 INSERT INTO tax.settings (company_id, withholding_objects, updated_at, updated_by)
 VALUES ($1, $2, now(), $3)

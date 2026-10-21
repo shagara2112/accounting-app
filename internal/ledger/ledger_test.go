@@ -731,6 +731,30 @@ func TestSystemAccountsForOwnChart(t *testing.T) {
 	if err := set(ledger.Payable, create("2-11102", "Utang Dagang", groups["2"], true)); err != nil {
 		t.Fatalf("ganti akun utang usaha yang belum bersaldo: %v", err)
 	}
+
+	// PPN keluaran per jenis faktur memakai akun PPN keluaran sampai dipilih sendiri.
+	_, err = f.svc.RoleAccount(f.ctx, c.ID, ledger.OutputVATCollected)
+	expectCode(t, err, "ledger.role_account")
+	ppn := create("2-14102", "PPN Keluaran (Disetor Sendiri)", groups["2"], true)
+	wapu := create("2-14103", "PPN Keluaran (Dipungut WAPU)", groups["2"], true)
+	if err := set(ledger.OutputVAT, ppn); err != nil {
+		t.Fatal(err)
+	}
+	if s := status(c.ID, ledger.OutputVATCollected); s.Fallback != ledger.OutputVAT || s.Problem != "" || s.AccountID != nil {
+		t.Fatalf("PPN dipungut sebelum dipilih = %+v", s)
+	}
+	if r, err := f.svc.RoleAccount(f.ctx, c.ID, ledger.OutputVATCollected); err != nil || r.ID != ppn {
+		t.Fatalf("PPN dipungut seharusnya memakai PPN keluaran: %+v, %v", r, err)
+	}
+	if err := set(ledger.OutputVATCollected, wapu); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := f.svc.RoleAccount(f.ctx, c.ID, ledger.OutputVATCollected); err != nil || r.ID != wapu {
+		t.Fatalf("PPN dipungut sesudah dipilih = %+v, %v", r, err)
+	}
+	if r, _ := f.svc.RoleAccount(f.ctx, f.company, ledger.OutputVATRetail); r.ID != f.acc["2-1201"] {
+		t.Fatalf("PPN digunggung PT bertemplate seharusnya 2-1201: %+v", r)
+	}
 }
 
 // Koreksi pengelompokan: akun detail atau akun header (beserta turunannya) bisa dipindah ke induk

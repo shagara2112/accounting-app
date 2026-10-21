@@ -37,6 +37,10 @@ const (
 	AssetLoss           Role = "rugi_pelepasan_aset"
 	WithholdingPPh26    Role = "utang_pph26"
 	NonCreditableVAT    Role = "beban_ppn_tidak_dikreditkan"
+	// PPN keluaran per jenis faktur; bila tidak dipilih, memakai PPN keluaran.
+	OutputVATCollected Role = "ppn_keluaran_dipungut"
+	OutputVATOtherDPP  Role = "ppn_keluaran_dpp_lain"
+	OutputVATRetail    Role = "ppn_keluaran_digunggung"
 )
 
 type roleInfo struct {
@@ -44,38 +48,44 @@ type roleInfo struct {
 	label   string
 	group   string // kelompok di halaman Akun sistem
 	purpose string // dipakai untuk apa, dalam kalimat pengguna
+	// fallback: peran yang dipakai bila peran ini tidak dipilih dan tidak punya kode bawaan.
+	fallback Role
 }
 
 var roles = map[Role]roleInfo{
-	Receivable:      {[]string{"1-1201"}, "piutang usaha", "Penjualan", "Faktur penjualan kredit, penerimaan pelanggan, dan saldo awal piutang."},
-	CustomerAdvance: {[]string{"2-1401"}, "uang muka pelanggan", "Penjualan", "Uang muka yang diterima dari pelanggan sebelum faktur."},
-	OutputVAT:       {[]string{"2-1201"}, "PPN keluaran", "Penjualan", "PPN atas faktur penjualan, nota retur, dan penjualan harian."},
-	PrepaidPPh23:    {[]string{"1-1403"}, "PPh 23 dibayar di muka", "Penjualan", "PPh 23 yang dipotong pelanggan saat membayar faktur."},
-	FinalTaxExpense: {[]string{"9-1003"}, "beban PPh final", "Penjualan", "PPh final 4(2) yang dipotong pelanggan saat membayar faktur."},
+	Receivable:      {[]string{"1-1201"}, "piutang usaha", "Penjualan", "Faktur penjualan kredit, penerimaan pelanggan, dan saldo awal piutang.", ""},
+	CustomerAdvance: {[]string{"2-1401"}, "uang muka pelanggan", "Penjualan", "Uang muka yang diterima dari pelanggan sebelum faktur.", ""},
+	OutputVAT:       {[]string{"2-1201"}, "PPN keluaran", "Penjualan", "PPN faktur penjualan dan nota retur; juga jenis PPN keluaran di bawah yang tidak dipilih.", ""},
+	// Akun PPN keluaran terpisah per jenis faktur pajak, untuk PT yang memisahkannya di bagan akun.
+	OutputVATCollected: {nil, "PPN keluaran dipungut pemungut", "Penjualan", "PPN faktur ke pelanggan pemungut PPN (kode 02/03, mis. instansi pemerintah dan BUMN); disetor oleh pelanggan.", OutputVAT},
+	OutputVATOtherDPP:  {nil, "PPN keluaran DPP nilai lain", "Penjualan", "PPN faktur dengan DPP nilai lain (kode 04).", OutputVAT},
+	OutputVATRetail:    {nil, "PPN keluaran digunggung", "Penjualan", "PPN penjualan harian tanpa faktur pajak per pembeli.", OutputVAT},
+	PrepaidPPh23:       {[]string{"1-1403"}, "PPh 23 dibayar di muka", "Penjualan", "PPh 23 yang dipotong pelanggan saat membayar faktur.", ""},
+	FinalTaxExpense:    {[]string{"9-1003"}, "beban PPh final", "Penjualan", "PPh final 4(2) yang dipotong pelanggan saat membayar faktur.", ""},
 	// Uang muka proyek konstruksi punya akun sendiri; PT lain memakai uang muka pelanggan.
-	ProjectAdvance:      {[]string{"2-1402", "2-1401"}, "uang muka proyek", "Penjualan", "Uang muka proyek konstruksi dari pemberi kerja."},
-	RetentionReceivable: {[]string{"1-1202"}, "piutang retensi", "Penjualan", "Retensi proyek yang ditahan pemberi kerja."},
-	Payable:             {[]string{"2-1101"}, "utang usaha", "Pembelian", "Tagihan pembelian kredit, pembayaran pemasok, dan saldo awal utang."},
-	SupplierAdvance:     {[]string{"1-1503"}, "uang muka pembelian", "Pembelian", "Uang muka yang dibayar ke pemasok sebelum tagihan."},
-	InputVAT:            {[]string{"1-1401"}, "PPN masukan", "Pembelian", "PPN atas tagihan pembelian dan nota retur pembelian."},
+	ProjectAdvance:      {[]string{"2-1402", "2-1401"}, "uang muka proyek", "Penjualan", "Uang muka proyek konstruksi dari pemberi kerja.", ""},
+	RetentionReceivable: {[]string{"1-1202"}, "piutang retensi", "Penjualan", "Retensi proyek yang ditahan pemberi kerja.", ""},
+	Payable:             {[]string{"2-1101"}, "utang usaha", "Pembelian", "Tagihan pembelian kredit, pembayaran pemasok, dan saldo awal utang.", ""},
+	SupplierAdvance:     {[]string{"1-1503"}, "uang muka pembelian", "Pembelian", "Uang muka yang dibayar ke pemasok sebelum tagihan.", ""},
+	InputVAT:            {[]string{"1-1401"}, "PPN masukan", "Pembelian", "PPN atas tagihan pembelian dan nota retur pembelian.", ""},
 	// PPN masukan tidak dikreditkan atas barang persediaan (TAX-07): akun persediaan hanya
 	// berubah lewat kartu stok, jadi PPN-nya dibebankan di sini.
-	NonCreditableVAT:    {[]string{"6-4003", "6-4002"}, "beban PPN masukan tidak dapat dikreditkan", "Pembelian", "PPN masukan yang tidak bisa dikreditkan."},
-	WithholdingPPh23:    {[]string{"2-1203"}, "utang PPh 23", "Pembelian", "PPh 23 yang dipotong dari tagihan pemasok."},
-	WithholdingPPhFinal: {[]string{"2-1204"}, "utang PPh 4(2)", "Pembelian", "PPh 4(2) yang dipotong dari tagihan pemasok."},
+	NonCreditableVAT:    {[]string{"6-4003", "6-4002"}, "beban PPN masukan tidak dapat dikreditkan", "Pembelian", "PPN masukan yang tidak bisa dikreditkan.", ""},
+	WithholdingPPh23:    {[]string{"2-1203"}, "utang PPh 23", "Pembelian", "PPh 23 yang dipotong dari tagihan pemasok.", ""},
+	WithholdingPPhFinal: {[]string{"2-1204"}, "utang PPh 4(2)", "Pembelian", "PPh 4(2) yang dipotong dari tagihan pemasok.", ""},
 	// PPh 26 pemasok luar negeri (TAX-08).
-	WithholdingPPh26: {[]string{"2-1206"}, "utang PPh 26", "Pembelian", "PPh 26 yang dipotong dari tagihan pemasok luar negeri."},
+	WithholdingPPh26: {[]string{"2-1206"}, "utang PPh 26", "Pembelian", "PPh 26 yang dipotong dari tagihan pemasok luar negeri.", ""},
 	// Penampung saldo awal: bernilai nol setelah semua saldo awal (neraca saldo, piutang,
 	// utang, dan stok per dokumen) selesai diimpor.
-	OpeningEquity: {[]string{"3-3001"}, "ekuitas saldo awal", "Lainnya", "Penampung selisih saldo awal; nol setelah saldo awal lengkap."},
+	OpeningEquity: {[]string{"3-3001"}, "ekuitas saldo awal", "Lainnya", "Penampung selisih saldo awal; nol setelah saldo awal lengkap.", ""},
 	// Pelepasan aset tetap (FA-03). PT lama tanpa akun rugi khusus memakai beban lain-lain.
-	AssetGain: {[]string{"7-1003"}, "laba pelepasan aset tetap", "Lainnya", "Laba penjualan aset tetap."},
-	AssetLoss: {[]string{"8-1005", "8-1009"}, "rugi pelepasan aset tetap", "Lainnya", "Rugi penjualan atau penghapusan aset tetap."},
+	AssetGain: {[]string{"7-1003"}, "laba pelepasan aset tetap", "Lainnya", "Laba penjualan aset tetap.", ""},
+	AssetLoss: {[]string{"8-1005", "8-1009"}, "rugi pelepasan aset tetap", "Lainnya", "Rugi penjualan atau penghapusan aset tetap.", ""},
 }
 
 // roleOrder adalah urutan peran di halaman Akun sistem.
 var roleOrder = []Role{
-	Receivable, CustomerAdvance, OutputVAT, PrepaidPPh23, FinalTaxExpense, ProjectAdvance, RetentionReceivable,
+	Receivable, CustomerAdvance, OutputVAT, OutputVATCollected, OutputVATOtherDPP, OutputVATRetail, PrepaidPPh23, FinalTaxExpense, ProjectAdvance, RetentionReceivable,
 	Payable, SupplierAdvance, InputVAT, NonCreditableVAT, WithholdingPPh23, WithholdingPPhFinal, WithholdingPPh26,
 	OpeningEquity, AssetGain, AssetLoss,
 }
@@ -83,7 +93,11 @@ var roleOrder = []Role{
 // roleClasses adalah kelas akun yang boleh melayani peran: akun neraca harus sekelas dengan kode
 // bawaannya; pendapatan boleh kelas 4 atau 7, beban boleh kelas 5, 6, 8, atau 9.
 func roleClasses(role Role) []int {
-	switch c := classOfCode(roles[role].codes[0]); c {
+	info := roles[role]
+	if len(info.codes) == 0 {
+		return roleClasses(info.fallback)
+	}
+	switch c := classOfCode(info.codes[0]); c {
 	case 4, 7:
 		return []int{4, 7}
 	case 5, 6, 8, 9:
@@ -196,6 +210,9 @@ func (l *ledger) RoleAccount(ctx context.Context, companyID uuid.UUID, role Role
 		}
 		return toAccount(r), nil
 	}
+	if info.fallback != "" {
+		return l.RoleAccount(ctx, companyID, info.fallback)
+	}
 	return Account{}, httpx.Unprocessable("ledger.role_account", fmt.Sprintf(
 		"Akun sistem untuk %s belum dipilih: pilih akunnya di Bagan akun → Akun sistem.", info.label))
 }
@@ -207,12 +224,14 @@ type SystemAccount struct {
 	Label       string `json:"label"`
 	Group       string `json:"group"`
 	Purpose     string `json:"purpose"`
-	DefaultCode string `json:"defaultCode"`
+	DefaultCode string `json:"defaultCode,omitempty"`
 	// Classes: kelas akun yang boleh dipilih untuk peran ini.
 	Classes   []int      `json:"classes"`
 	AccountID *uuid.UUID `json:"accountId,omitempty"`
 	// Chosen: akunnya dipilih pengguna (atau kodenya pernah diganti), bukan ditemukan dari kode bawaan.
 	Chosen bool `json:"chosen"`
+	// Fallback: peran yang akunnya dipakai karena peran ini belum dipilih, mis. PPN keluaran.
+	Fallback Role `json:"fallback,omitempty"`
 	// Problem: kenapa peran ini belum bisa dipakai posting; kosong berarti siap.
 	Problem string `json:"problem,omitempty"`
 }
@@ -227,7 +246,10 @@ func systemAccounts(rows []store.LedgerAccount, pinned map[Role]uuid.UUID) []Sys
 	out := make([]SystemAccount, 0, len(roleOrder))
 	for _, role := range roleOrder {
 		info := roles[role]
-		s := SystemAccount{Role: role, Label: info.label, Group: info.group, Purpose: info.purpose, DefaultCode: info.codes[0], Classes: roleClasses(role)}
+		s := SystemAccount{Role: role, Label: info.label, Group: info.group, Purpose: info.purpose, Classes: roleClasses(role)}
+		if len(info.codes) > 0 {
+			s.DefaultCode = info.codes[0]
+		}
 		if id, ok := pinned[role]; ok {
 			s.AccountID, s.Chosen = &id, true
 			if r := byID[id]; !r.Active || !r.Postable {
@@ -241,7 +263,10 @@ func systemAccounts(rows []store.LedgerAccount, pinned map[Role]uuid.UUID) []Sys
 					break
 				}
 			}
-			if s.AccountID == nil {
+			switch {
+			case s.AccountID == nil && info.fallback != "":
+				s.Fallback = info.fallback
+			case s.AccountID == nil:
 				s.Problem = "Belum dipilih."
 			}
 		}

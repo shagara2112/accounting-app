@@ -458,6 +458,8 @@ function VATRecapTab({ me }: { me: Me }) {
   const recap = useVATRecap(me.activeCompanyId, year)
   const r = recap.data
   const cell = `${td} num text-right`
+  // Kolom PPN dipungut pemungut (WAPU, kode 02/03) hanya bila tahun ini ada.
+  const collected = r ? toUnits(r.totals.collected) > 0n : false
   return (
     <>
       <div className="flex items-center gap-1 self-start rounded-[10px] border border-line-2 bg-surface p-1">
@@ -471,7 +473,7 @@ function VATRecapTab({ me }: { me: Me }) {
       </div>
       {r && !r.pkp && <Alert tone="warn">PT ini bukan PKP: tidak memungut PPN dan PPN masukan tidak bisa dikreditkan.</Alert>}
       <p className="text-sm text-muted">
-        Kurang bayar disetor paling lambat akhir bulan berikutnya. Lebih bayar otomatis dikompensasikan ke masa berikutnya; restitusi belum didukung.
+        Kurang bayar disetor paling lambat akhir bulan berikutnya. Lebih bayar otomatis dikompensasikan ke masa berikutnya; restitusi belum didukung. PPN faktur ke pemungut PPN (kode 02/03) disetor oleh pembeli, jadi tidak ikut kurang bayar.
       </p>
       <div className={`transition-opacity duration-150 ${recap.isPlaceholderData ? 'opacity-60' : ''}`}>
         <TableShell minWidth={860}>
@@ -479,6 +481,7 @@ function VATRecapTab({ me }: { me: Me }) {
             <tr>
               <th className={th}>Masa</th>
               <th className={`${th} text-right`}>PPN keluaran</th>
+              {collected && <th className={`${th} text-right`}>Dipungut pemungut</th>}
               <th className={`${th} text-right`}>PPN masukan</th>
               <th className={`${th} text-right`}>Kompensasi masa lalu</th>
               <th className={`${th} text-right`}>Kurang bayar</th>
@@ -488,7 +491,7 @@ function VATRecapTab({ me }: { me: Me }) {
           <tbody>
             {recap.isPending && (
               <tr>
-                <td colSpan={6} className={td}>
+                <td colSpan={collected ? 7 : 6} className={td}>
                   <Skeleton className="h-5" />
                 </td>
               </tr>
@@ -500,6 +503,7 @@ function VATRecapTab({ me }: { me: Me }) {
                   {formatAmount(m.output, { blankZero: true })}
                   {m.invoices > 0 && <span className="block text-xs text-muted">{m.invoices} faktur</span>}
                 </td>
+                {collected && <td className={cell}>{toUnits(m.collected) > 0n ? `−${formatAmount(m.collected)}` : ''}</td>}
                 <td className={cell}>
                   {formatAmount(m.input, { blankZero: true })}
                   {m.bills > 0 && <span className="block text-xs text-muted">{m.bills} tagihan</span>}
@@ -513,6 +517,7 @@ function VATRecapTab({ me }: { me: Me }) {
               <tr className="border-t border-line-2 bg-hover/40 font-semibold">
                 <td className={td}>Jumlah {year}</td>
                 <td className={cell}>{formatAmount(r.totals.output)}</td>
+                {collected && <td className={cell}>−{formatAmount(r.totals.collected)}</td>}
                 <td className={cell}>{formatAmount(r.totals.input)}</td>
                 <td className={cell} />
                 <td className={cell}>{formatAmount(r.totals.payable)}</td>

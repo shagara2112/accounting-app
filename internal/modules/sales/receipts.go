@@ -28,6 +28,8 @@ type AllocationInput struct {
 	Amount          money.Amount `json:"amount"`          // mengurangi sisa faktur
 	WithholdingCode string       `json:"withholdingCode"` // PPh yang dipotong pelanggan, kosong bila tidak ada
 	Withholding     money.Amount `json:"withholding"`
+	// VATCollected: PPN faktur yang dipungut dan disetor sendiri oleh pelanggan pemungut (WAPU).
+	VATCollected money.Amount `json:"vatCollected"`
 }
 
 // ReceiptInput: Advance adalah uang muka yang diterima di luar faktur (AR-04); FromAdvance
@@ -80,16 +82,18 @@ type ReceiptAllocation struct {
 	Amount          money.Amount `json:"amount"`
 	WithholdingCode *string      `json:"withholdingCode,omitempty"`
 	Withholding     money.Amount `json:"withholding"`
+	VATCollected    money.Amount `json:"vatCollected"`
 }
 
 type ReceiptDetail struct {
 	Receipt
-	Allocated   money.Amount        `json:"allocated"`
-	Withholding money.Amount        `json:"withholding"`
-	Allocations []ReceiptAllocation `json:"allocations"`
-	CreatedBy   *string             `json:"createdBy,omitempty"`
-	VoidedBy    *string             `json:"voidedBy,omitempty"`
-	VoidReason  *string             `json:"voidReason,omitempty"`
+	Allocated    money.Amount        `json:"allocated"`
+	Withholding  money.Amount        `json:"withholding"`
+	VATCollected money.Amount        `json:"vatCollected"`
+	Allocations  []ReceiptAllocation `json:"allocations"`
+	CreatedBy    *string             `json:"createdBy,omitempty"`
+	VoidedBy     *string             `json:"voidedBy,omitempty"`
+	VoidReason   *string             `json:"voidReason,omitempty"`
 }
 
 type ReceiptFilter struct {
@@ -98,7 +102,8 @@ type ReceiptFilter struct {
 }
 
 // CreateReceipt memposting pelunasan (AR-04): debit kas/bank sebesar uang diterima, debit PPh 23
-// dibayar di muka atau beban PPh final sebesar potongan, kredit piutang usaha sebesar alokasi.
+// dibayar di muka atau beban PPh final sebesar potongan, debit akun PPN keluaran faktur sebesar
+// PPN yang dipungut pelanggan pemungut, kredit piutang usaha sebesar alokasi.
 func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in ReceiptInput, actor audit.Actor) (ReceiptDetail, error) {
 	in.Memo = strings.TrimSpace(in.Memo)
 	f := map[string]string{}
@@ -134,6 +139,12 @@ func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in Rec
 		}
 		if a.Withholding.Sign() < 0 || (a.Withholding.Sign() > 0 && a.Withholding.Cmp(a.Amount) >= 0) {
 			f[key+"withholding"] = "Potongan PPh harus di bawah nominal pelunasan."
+		}
+		switch {
+		case a.VATCollected.Sign() < 0:
+			f[key+"vatCollected"] = "PPN dipungut tidak boleh negatif."
+		case a.VATCollected.Sign() > 0 && a.Withholding.Add(a.VATCollected).Cmp(a.Amount) > 0:
+			f[key+"vatCollected"] = "Potongan PPh dan PPN dipungut melebihi nominal pelunasan."
 		}
 		if (a.Withholding.Sign() > 0) != (a.WithholdingCode != "") {
 			f[key+"withholdingCode"] = "Isi kode dan nominal PPh bersamaan, atau kosongkan keduanya."
@@ -180,10 +191,22 @@ func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in Rec
 		for _, p := range paidRows {
 			paid[p.InvoiceID] = p.Paid
 		}
+		collectedRows, err := q.CollectedByInvoice(ctx, store.CollectedByInvoiceParams{CompanyID: companyID, Ids: ids})
+		if err != nil {
+			return err
+		}
+		collected := map[uuid.UUID]money.Amount{}
+		for _, c := range collectedRows {
+			collected[c.InvoiceID] = c.Collected
+		}
 
 		// Piutang dan potongan PPh dijurnal per proyek faktur, supaya laba dan piutang per
 		// proyek (termasuk beban PPh final 4(2)) ikut terbaca.
-		type sums struct{ allocated, wh23, whFinal money.Amount }
+		type sums struct {
+			allocated, wh23, whFinal money.Amount
+			vat                      map[uuid.UUID]money.Amount // PPN dipungut per akun PPN keluaran
+			vatAccounts              []uuid.UUID                // urut kemunculan
+		}
 		byProject := map[uuid.UUID]*sums{}
 		var projects []uuid.UUID // urut kemunculan; uuid.Nil = tanpa proyek
 		sumFor := func(p *uuid.UUID) *sums {
@@ -192,12 +215,12 @@ func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in Rec
 				k = *p
 			}
 			if _, ok := byProject[k]; !ok {
-				byProject[k] = &sums{}
+				byProject[k] = &sums{vat: map[uuid.UUID]money.Amount{}}
 				projects = append(projects, k)
 			}
 			return byProject[k]
 		}
-		var allocated, cashIn money.Amount
+		var allocated, cashIn, vatCollected money.Amount
 		af := map[string]string{}
 		var numbers []string
 		for i, a := range in.Allocations {
@@ -239,9 +262,25 @@ func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in Rec
 					sumFor(inv.ProjectID).whFinal = sumFor(inv.ProjectID).whFinal.Add(a.Withholding)
 				}
 			}
+			if a.VATCollected.Sign() > 0 {
+				acc, msg, err := s.collectedVATAccount(ctx, companyID, inv, a.VATCollected, collected[inv.ID])
+				if err != nil {
+					return err
+				}
+				if msg != "" {
+					af[key+"vatCollected"] = msg
+					continue
+				}
+				sm := sumFor(inv.ProjectID)
+				if _, ok := sm.vat[acc]; !ok {
+					sm.vatAccounts = append(sm.vatAccounts, acc)
+				}
+				sm.vat[acc] = sm.vat[acc].Add(a.VATCollected)
+				vatCollected = vatCollected.Add(a.VATCollected)
+			}
 			sumFor(inv.ProjectID).allocated = sumFor(inv.ProjectID).allocated.Add(a.Amount)
 			allocated = allocated.Add(a.Amount)
-			cashIn = cashIn.Add(a.Amount.Sub(a.Withholding))
+			cashIn = cashIn.Add(a.Amount.Sub(a.Withholding).Sub(a.VATCollected))
 			numbers = append(numbers, deref(inv.Number))
 		}
 		if len(af) > 0 {
@@ -335,6 +374,9 @@ func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in Rec
 				}
 				drafts = append(drafts, ledger.LineDraft{AccountID: finalTax.ID, Debit: sm.whFinal, Memo: "PPh final 4(2) dipotong " + customer.Name, ProjectID: project})
 			}
+			for _, acc := range sm.vatAccounts {
+				drafts = append(drafts, ledger.LineDraft{AccountID: acc, Debit: sm.vat[acc], Memo: "PPN dipungut " + customer.Name, ProjectID: project})
+			}
 		}
 		for _, k := range projects {
 			var project *uuid.UUID
@@ -360,6 +402,7 @@ func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in Rec
 			ID: id, CompanyID: companyID, Number: number, CustomerID: in.CustomerID, ReceiptDate: in.Date,
 			CashAccountID: cashAccount, Amount: cashIn, Memo: in.Memo, JournalEntryID: posted.ID,
 			CreatedBy: actor.UserRef(), Kind: ReceiptKindSettle, Advance: in.Advance, FromAdvance: in.FromAdvance,
+			VatCollected: vatCollected,
 		}); err != nil {
 			return err
 		}
@@ -371,7 +414,7 @@ func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in Rec
 			}
 			if err := q.InsertAllocation(ctx, store.InsertAllocationParams{
 				ID: uuid.Must(uuid.NewV7()), CompanyID: companyID, ReceiptID: id, InvoiceID: a.InvoiceID,
-				Amount: a.Amount, WithholdingCode: code, Withholding: a.Withholding,
+				Amount: a.Amount, WithholdingCode: code, Withholding: a.Withholding, VatCollected: a.VATCollected,
 			}); err != nil {
 				return err
 			}
@@ -380,7 +423,7 @@ func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in Rec
 			UserID: actor.UserRef(), CompanyID: &companyID, Action: "sales.receipt.post",
 			ObjectType: "sales_receipt", ObjectID: id.String(), IP: actor.IP,
 			After: map[string]any{"number": number, "amount": cashIn.String(), "allocated": allocated.String(), "invoices": numbers,
-				"advance": in.Advance.String(), "fromAdvance": in.FromAdvance.String()},
+				"advance": in.Advance.String(), "fromAdvance": in.FromAdvance.String(), "vatCollected": vatCollected.String()},
 		}); err != nil {
 			return err
 		}
@@ -393,6 +436,30 @@ func (s *service) CreateReceipt(ctx context.Context, companyID uuid.UUID, in Rec
 		return err
 	})
 	return out, err
+}
+
+// collectedVATAccount memeriksa PPN dipungut satu faktur dan mengembalikan akun yang didebit:
+// akun PPN keluaran yang dikredit faktur itu saat diposting, sehingga saldo akun PPN yang
+// disetor sendiri berkurang sebesar PPN yang disetor pelanggan. Faktur lama memakai PPN keluaran;
+// faktur saldo awal (tanpa PPN tercatat) memakai PPN keluaran dipungut. msg berisi alasan
+// penolakan untuk pengguna.
+func (s *service) collectedVATAccount(ctx context.Context, companyID uuid.UUID, inv store.SalesInvoice, amount, before money.Amount) (uuid.UUID, string, error) {
+	number := deref(inv.Number)
+	switch {
+	case inv.Vat.IsZero() && inv.Kind != KindOpening:
+		return uuid.Nil, fmt.Sprintf("Faktur %s tidak ber-PPN.", number), nil
+	case inv.Vat.Sign() > 0 && amount.Cmp(inv.Vat.Sub(before)) > 0:
+		return uuid.Nil, fmt.Sprintf("PPN dipungut melebihi PPN faktur %s yang belum dipungut (%s).", number, inv.Vat.Sub(before).IDR()), nil
+	}
+	if inv.VatAccountID != nil {
+		return *inv.VatAccountID, "", nil
+	}
+	role := ledger.OutputVAT
+	if inv.Vat.IsZero() {
+		role = ledger.OutputVATCollected
+	}
+	acc, err := s.Ledger.RoleAccount(ctx, companyID, role)
+	return acc.ID, "", err
 }
 
 func problemText(err error) string {
@@ -525,9 +592,10 @@ func (s *service) Receipt(ctx context.Context, companyID, id uuid.UUID) (Receipt
 	for _, a := range allocs {
 		out.Allocated = out.Allocated.Add(a.Amount)
 		out.Withholding = out.Withholding.Add(a.Withholding)
+		out.VATCollected = out.VATCollected.Add(a.VatCollected)
 		out.Allocations = append(out.Allocations, ReceiptAllocation{
 			InvoiceID: a.InvoiceID, InvoiceNumber: deref(a.InvoiceNumber), Amount: a.Amount,
-			WithholdingCode: a.WithholdingCode, Withholding: a.Withholding,
+			WithholdingCode: a.WithholdingCode, Withholding: a.Withholding, VATCollected: a.VatCollected,
 		})
 	}
 	return out, nil

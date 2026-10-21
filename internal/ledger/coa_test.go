@@ -99,6 +99,9 @@ func TestRoleAccountsExistInEveryTemplate(t *testing.T) {
 			postable[a.Code] = !a.Header
 		}
 		for role, info := range roles {
+			if len(info.codes) == 0 {
+				continue // memakai akun peran fallback-nya
+			}
 			found := false
 			for _, code := range info.codes {
 				found = found || postable[code]
@@ -119,7 +122,10 @@ func TestRoleOrderCoversAllRoles(t *testing.T) {
 		if !ok || seen[r] {
 			t.Fatalf("peran %s tidak dikenal atau dobel di roleOrder", r)
 		}
-		if info.group == "" || info.purpose == "" || classOfCode(info.codes[0]) == 0 {
+		if len(info.codes) == 0 && (info.fallback == "" || len(roles[info.fallback].codes) == 0) {
+			t.Fatalf("peran %s tanpa kode bawaan harus punya fallback berkode", r)
+		}
+		if info.group == "" || info.purpose == "" || (len(info.codes) > 0 && classOfCode(info.codes[0]) == 0) {
 			t.Fatalf("peran %s belum lengkap: %+v", r, info)
 		}
 		seen[r] = true
