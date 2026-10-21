@@ -638,6 +638,101 @@ func TestAccountCodeCorrection(t *testing.T) {
 	}
 }
 
+// Revisi klien: PT yang menyusun bagan akun sendiri (template kosong, tanpa kode bawaan) memilih
+// akun untuk tiap peran akun sistem di halaman Akun sistem.
+func TestSystemAccountsForOwnChart(t *testing.T) {
+	f := setup(t)
+	c, err := core.New(f.pool).CreateCompany(f.ctx, core.NewCompany{Name: "PT Uji Skema Sendiri", ShortName: "Skema"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.ApplyTemplate(f.ctx, c.ID, "kosong", f.actor); err != nil {
+		t.Fatal(err)
+	}
+	groups := map[string]uuid.UUID{}
+	list, _ := f.svc.Accounts(f.ctx, c.ID)
+	for _, a := range list {
+		groups[a.Code] = a.ID
+	}
+	create := func(code, name string, parent uuid.UUID, postable bool) uuid.UUID {
+		t.Helper()
+		a, err := f.svc.CreateAccount(f.ctx, c.ID, ledger.NewAccount{Code: code, Name: name, ParentID: &parent, Postable: postable}, f.actor)
+		if err != nil {
+			t.Fatalf("buat akun %s: %v", code, err)
+		}
+		return a.ID
+	}
+	header := create("1-12", "Piutang", groups["1"], false)
+	piutang := create("1-12101", "Piutang Usaha", header, true)
+	piutangLain := create("1-12102", "Piutang Usaha Cabang", header, true)
+	utang := create("2-11101", "Utang Usaha", groups["2"], true)
+	modal := create("3-11101", "Modal Disetor", groups["3"], true)
+	bebanPajak := create("6-19101", "Beban Pajak Final", groups["6"], true)
+
+	status := func(company uuid.UUID, role ledger.Role) ledger.SystemAccount {
+		t.Helper()
+		all, err := f.svc.SystemAccounts(f.ctx, company)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range all {
+			if s.Role == role {
+				return s
+			}
+		}
+		t.Fatalf("peran %s tidak ada di daftar", role)
+		return ledger.SystemAccount{}
+	}
+	if s := status(c.ID, ledger.Receivable); s.AccountID != nil || s.Problem == "" || s.Label != "piutang usaha" {
+		t.Fatalf("piutang usaha sebelum dipilih = %+v", s)
+	}
+	_, err = f.svc.RoleAccount(f.ctx, c.ID, ledger.Receivable)
+	if p := expectCode(t, err, "ledger.role_account"); !strings.Contains(p.Detail, "Akun sistem") {
+		t.Fatalf("pesan galat seharusnya menunjuk halaman Akun sistem: %q", p.Detail)
+	}
+	// PT bertemplate tetap memakai kode bawaannya tanpa dipilih.
+	if s := status(f.company, ledger.Receivable); s.AccountID == nil || *s.AccountID != f.acc["1-1201"] || s.Chosen || s.Problem != "" {
+		t.Fatalf("piutang usaha PT bertemplate = %+v", s)
+	}
+
+	set := func(role ledger.Role, id uuid.UUID) error {
+		_, err := f.svc.SetSystemAccount(f.ctx, c.ID, role, id, f.actor)
+		return err
+	}
+	expectCode(t, set(ledger.Receivable, header), "ledger.role_account_invalid")
+	expectCode(t, set(ledger.Receivable, utang), "ledger.role_account_invalid")
+	expectCode(t, set(ledger.Role("tidak_ada"), piutang), "ledger.role_unknown")
+	for role, id := range map[ledger.Role]uuid.UUID{ledger.Receivable: piutang, ledger.Payable: utang, ledger.OpeningEquity: modal, ledger.FinalTaxExpense: bebanPajak} {
+		if err := set(role, id); err != nil {
+			t.Fatalf("pilih akun %s: %v", role, err)
+		}
+	}
+	if s := status(c.ID, ledger.Receivable); s.AccountID == nil || *s.AccountID != piutang || !s.Chosen || s.Problem != "" {
+		t.Fatalf("piutang usaha sesudah dipilih = %+v", s)
+	}
+	if r, err := f.svc.RoleAccount(f.ctx, c.ID, ledger.Receivable); err != nil || r.ID != piutang {
+		t.Fatalf("RoleAccount piutang usaha = %+v, %v", r, err)
+	}
+	accounts, _ := f.svc.Accounts(f.ctx, c.ID)
+	for _, a := range accounts {
+		if a.ID == piutang && (!a.System || a.SystemRoles[0] != "piutang usaha") {
+			t.Fatalf("akun yang dipilih seharusnya ditandai akun sistem: %+v", a)
+		}
+	}
+
+	// Akun lama yang sudah bersaldo tidak bisa ditinggalkan; akun tanpa saldo bisa diganti.
+	if _, err := f.svc.Post(f.ctx, ledger.EntryDraft{CompanyID: c.ID, Kind: ledger.General, Date: day("2026-10-05"), Memo: "uji",
+		Lines: []ledger.LineDraft{{AccountID: piutang, Debit: money.MustParse("500")}, {AccountID: modal, Credit: money.MustParse("500")}}, Actor: f.actor}); err != nil {
+		t.Fatal(err)
+	}
+	if p := expectCode(t, set(ledger.Receivable, piutangLain), "ledger.role_account_invalid"); !strings.Contains(p.Detail, "bersaldo") {
+		t.Fatalf("pesan akun bersaldo = %q", p.Detail)
+	}
+	if err := set(ledger.Payable, create("2-11102", "Utang Dagang", groups["2"], true)); err != nil {
+		t.Fatalf("ganti akun utang usaha yang belum bersaldo: %v", err)
+	}
+}
+
 // Koreksi pengelompokan: akun detail atau akun header (beserta turunannya) bisa dipindah ke induk
 // lain di kelas yang sama; induk harus header aktif, bukan turunannya sendiri, maksimal 5 tingkat.
 func TestAccountReparent(t *testing.T) {

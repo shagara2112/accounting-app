@@ -394,3 +394,10 @@ SELECT role, account_id FROM ledger.role_accounts WHERE company_id = $1;
 INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
 VALUES (@company_id, @role, @account_id, @pinned_by)
 ON CONFLICT (company_id, role) DO NOTHING;
+
+-- name: SetRoleAccount :exec
+-- Memilih akun untuk satu peran akun sistem dari halaman Akun sistem; pilihan lama diganti.
+INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
+VALUES (@company_id, @role, @account_id, @pinned_by)
+ON CONFLICT (company_id, role) DO UPDATE
+SET account_id = EXCLUDED.account_id, pinned_at = now(), pinned_by = EXCLUDED.pinned_by;

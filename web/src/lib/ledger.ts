@@ -13,6 +13,7 @@ import {
   type LineInput,
   type PeriodStatus,
   type Posted,
+  type SystemAccount,
   type Voided,
   type Worksheet,
 } from './api'
@@ -47,6 +48,27 @@ export function useUpdateAccount(companyId: string | null) {
   return useMutation({
     mutationFn: ({ id, ...v }: { id: string; code: string; name: string; active: boolean; version: number; parentId?: string }) =>
       api<Account>('PATCH', `/ledger/accounts/${id}`, v),
+    onSuccess: invalidate,
+  })
+}
+
+/** Peran akun sistem yang dibutuhkan hampir semua PT: posting faktur, tagihan, PPN, dan Saldo awal. */
+export const essentialRoles = ['piutang_usaha', 'utang_usaha', 'ppn_keluaran', 'ppn_masukan', 'ekuitas_saldo_awal']
+
+export function useSystemAccounts(companyId: string | null) {
+  return useQuery({
+    queryKey: key(companyId, 'system-accounts'),
+    queryFn: () => api<{ items: SystemAccount[] }>('GET', '/ledger/system-accounts'),
+    enabled: companyId !== null,
+    staleTime: 30_000,
+  })
+}
+
+export function useSetSystemAccount(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({
+    mutationFn: ({ role, accountId }: { role: string; accountId: string }) =>
+      api<{ items: SystemAccount[] }>('PUT', `/ledger/system-accounts/${role}`, { accountId }),
     onSuccess: invalidate,
   })
 }

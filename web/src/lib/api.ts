@@ -131,6 +131,22 @@ export type Account = {
 
 export type AccountsResponse = { items: Account[]; classes: AccountClass[]; templates: string[] }
 
+/** Satu peran akun sistem (halaman Akun sistem): akun yang dipakai posting otomatis, mis. piutang usaha. */
+export type SystemAccount = {
+  role: string
+  label: string
+  group: string
+  purpose: string
+  defaultCode: string
+  /** Kelas akun yang boleh dipilih untuk peran ini. */
+  classes: number[]
+  accountId?: string
+  /** Dipilih pengguna (atau kodenya pernah diganti), bukan ditemukan dari kode bawaan. */
+  chosen: boolean
+  /** Kenapa peran ini belum bisa dipakai posting; kosong berarti siap. */
+  problem?: string
+}
+
 export type Kind = 'umum' | 'penyesuaian' | 'pembalik' | 'penutup'
 
 export type EntrySummary = {

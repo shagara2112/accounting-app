@@ -867,6 +867,7 @@ export const topics: GuideTopic[] = [
           'Angka kepala kode menentukan kelompok: 1 aset, 2 liabilitas, 3 ekuitas, 4 pendapatan usaha, 5 beban pokok, 6 beban usaha, 7 pendapatan lain-lain, 8 beban lain-lain, 9 pajak penghasilan.',
           'Tekan Akun baru untuk menambah akun di bawah akun induknya. Akun header hanya mengelompokkan; jurnal memakai akun detail.',
           'Kode akun bisa dikoreksi atau disesuaikan dengan skema kode PT lewat tombol ubah di baris akun, selama angka kepalanya sama (mis. 1-1101 menjadi 1-11101). Akun berlabel Akun sistem (mis. piutang usaha, PPN masukan) juga boleh diganti kodenya; posting otomatis tetap memakai akun itu. Hanya kode akun kelompok (1–9) yang terkunci.',
+          'Akun sistem adalah akun yang dipakai posting otomatis (piutang usaha, utang usaha, PPN, ekuitas saldo awal, dan lainnya). Tombol Akun sistem di Bagan akun menampilkan semuanya. Bila bagan akun disusun dengan skema kode sendiri, pilih akunnya di sana; faktur, tagihan, dan Saldo awal baru bisa diposting setelah akunnya dipilih.',
           'Akun yang salah kelompok bisa dipindah: tombol ubah → pilih Induk lain di kelas yang sama. Akun header ikut membawa akun di bawahnya, dan laporan (termasuk periode lalu) langsung memakai pengelompokan baru. Sesuaikan juga kodenya bila perlu.',
           'Akun tidak dihapus. Bila tidak dipakai lagi, klik akunnya dan matikan Akun aktif (akun yang masih bersaldo tidak bisa dinonaktifkan).',
         ],
@@ -898,6 +899,7 @@ export const topics: GuideTopic[] = [
         title: 'Piutang, utang, dan persediaan',
         points: [
           'Akun piutang usaha, utang usaha, dan persediaan tidak diketik di sini. Isi per faktur, per tagihan, dan per barang lewat Impor data → Saldo awal piutang, Saldo awal utang, dan Saldo awal stok, supaya umur piutang/utang dan kartu stok benar.',
+          'Halaman ini membutuhkan akun sistem untuk ekuitas saldo awal, piutang usaha, dan utang usaha. Bila muncul pesan akun sistem belum dipilih, buka Bagan akun → Akun sistem dan pilih akunnya.',
           'Sampai semuanya diisi, selisih sementara dicatat di akun ekuitas saldo awal (3-3001). Bila semua saldo awal sudah lengkap dan cocok dengan pembukuan lama, saldo akun itu menjadi nol.',
           'Aset tetap lama didaftarkan di menu Aset tetap dengan akumulasi penyusutan sampai tanggal saldo awal.',
         ],
@@ -1160,7 +1162,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Salah ketik nama PT, kode akun, atau salah kelompok akun, bisa diperbaiki?',
-    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Di Bagan akun, tombol ubah di baris akun bisa mengganti Induk (pindah kelompok) dan kode, selama angka kepalanya tetap sama; jurnal lama dan laporan ikut memakai pengelompokan dan kode baru. Kode akun sistem juga boleh diganti; posting otomatis tetap memakai akun yang sama.',
+    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Di Bagan akun, tombol ubah di baris akun bisa mengganti Induk (pindah kelompok) dan kode, selama angka kepalanya tetap sama; jurnal lama dan laporan ikut memakai pengelompokan dan kode baru. Kode akun sistem juga boleh diganti; posting otomatis tetap memakai akun yang sama. Untuk skema kode sendiri, pilih akun posting otomatis di Bagan akun → Akun sistem.',
     topic: 'buku-besar',
   },
   {

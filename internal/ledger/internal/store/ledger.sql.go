@@ -2043,6 +2043,31 @@ func (q *Queries) SetRevising(ctx context.Context, entryID string) error {
 	return err
 }
 
+const setRoleAccount = `-- name: SetRoleAccount :exec
+INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (company_id, role) DO UPDATE
+SET account_id = EXCLUDED.account_id, pinned_at = now(), pinned_by = EXCLUDED.pinned_by
+`
+
+type SetRoleAccountParams struct {
+	CompanyID uuid.UUID
+	Role      string
+	AccountID uuid.UUID
+	PinnedBy  *uuid.UUID
+}
+
+// Memilih akun untuk satu peran akun sistem dari halaman Akun sistem; pilihan lama diganti.
+func (q *Queries) SetRoleAccount(ctx context.Context, arg SetRoleAccountParams) error {
+	_, err := q.db.Exec(ctx, setRoleAccount,
+		arg.CompanyID,
+		arg.Role,
+		arg.AccountID,
+		arg.PinnedBy,
+	)
+	return err
+}
+
 const updateAccount = `-- name: UpdateAccount :one
 UPDATE ledger.accounts
 SET code = $1, name = $2, active = $3, parent_id = $4, level = $5, version = version + 1

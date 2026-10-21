@@ -33,8 +33,8 @@ export function OpeningBalancePage({ me }: { me: Me }) {
         <Alert>
           {err?.message}{' '}
           {err instanceof ApiError && err.code === 'ledger.role_account' && (
-            <Link to="/akun" className="font-semibold underline">
-              Buka Bagan akun
+            <Link to="/akun/sistem" className="font-semibold underline">
+              Buka Akun sistem
             </Link>
           )}
         </Alert>

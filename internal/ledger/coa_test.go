@@ -109,3 +109,22 @@ func TestRoleAccountsExistInEveryTemplate(t *testing.T) {
 		}
 	}
 }
+
+// Setiap peran akun sistem tampil tepat sekali di halaman Akun sistem, dengan kelompok dan
+// keterangan, dan kode bawaannya sah.
+func TestRoleOrderCoversAllRoles(t *testing.T) {
+	seen := map[Role]bool{}
+	for _, r := range roleOrder {
+		info, ok := roles[r]
+		if !ok || seen[r] {
+			t.Fatalf("peran %s tidak dikenal atau dobel di roleOrder", r)
+		}
+		if info.group == "" || info.purpose == "" || classOfCode(info.codes[0]) == 0 {
+			t.Fatalf("peran %s belum lengkap: %+v", r, info)
+		}
+		seen[r] = true
+	}
+	if len(seen) != len(roles) {
+		t.Fatalf("roleOrder memuat %d dari %d peran", len(seen), len(roles))
+	}
+}

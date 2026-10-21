@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { ApiError, type Account, type AccountClass, type Me } from '../lib/api'
-import { subtreeIds, treeOrder, useAccounts, useApplyTemplate, useCreateAccount, useUpdateAccount } from '../lib/ledger'
+import { essentialRoles, subtreeIds, treeOrder, useAccounts, useApplyTemplate, useCreateAccount, useSystemAccounts, useUpdateAccount } from '../lib/ledger'
 import { formatAmount } from '../lib/money'
 import { activeCompany, can } from '../lib/session'
 import { useToast } from '../components/Toast'
@@ -17,6 +17,7 @@ const templateInfo: Record<string, { title: string; body: string }> = {
 export function Accounts({ me }: { me: Me }) {
   const companyId = me.activeCompanyId
   const accounts = useAccounts(companyId)
+  const roles = useSystemAccounts(companyId)
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [creating, setCreating] = useState(false)
@@ -28,6 +29,7 @@ export function Accounts({ me }: { me: Me }) {
   const visible = q ? list.filter((a) => a.code.toLowerCase().startsWith(q) || a.name.toLowerCase().includes(q)) : list
   const canCreate = can(me, 'ledger.account.create')
   const canEdit = can(me, 'ledger.account.edit')
+  const missing = (roles.data?.items ?? []).filter((r) => r.problem && essentialRoles.includes(r.role))
 
   if (accounts.isSuccess && list.length === 0) {
     return <TemplatePicker me={me} canCreate={canCreate} />
@@ -38,8 +40,23 @@ export function Accounts({ me }: { me: Me }) {
       <PageHeader
         title="Bagan akun"
         subtitle="Angka kepala kode menentukan kelompok, saldo normal, dan letaknya di laporan. Saldo per hari ini; akun laba rugi sejak awal tahun buku."
-        actions={canCreate && <Button onClick={() => setCreating(true)}>Akun baru</Button>}
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => navigate('/akun/sistem')}>
+              Akun sistem
+            </Button>
+            {canCreate && <Button onClick={() => setCreating(true)}>Akun baru</Button>}
+          </>
+        }
       />
+      {missing.length > 0 && (
+        <Alert tone="warn">
+          Akun sistem untuk {missing.map((r) => r.label).join(', ')} belum dipilih; posting faktur, tagihan, dan Saldo awal membutuhkannya.{' '}
+          <Link to="/akun/sistem" className="font-semibold underline">
+            Pilih di Akun sistem
+          </Link>
+        </Alert>
+      )}
       <input
         type="search"
         aria-label="Cari kode atau nama akun"

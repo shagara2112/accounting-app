@@ -32,6 +32,8 @@ func Routes(svc Service) []api.Route {
 		write(http.MethodPost, "/api/v1/ledger/accounts/template", rbac.AccountCreate, h.applyTemplate),
 		write(http.MethodPatch, "/api/v1/ledger/accounts/{id}", rbac.AccountEdit, h.updateAccount),
 		read(http.MethodGet, "/api/v1/ledger/accounts/{id}/ledger", rbac.LedgerView, h.accountLedger),
+		read(http.MethodGet, "/api/v1/ledger/system-accounts", rbac.LedgerView, h.systemAccounts),
+		write(http.MethodPut, "/api/v1/ledger/system-accounts/{role}", rbac.AccountEdit, h.setSystemAccount),
 
 		read(http.MethodGet, "/api/v1/journals", rbac.LedgerView, h.entries),
 		idempotent(write(http.MethodPost, "/api/v1/journals", rbac.JournalCreate, h.postGeneral)),
@@ -156,6 +158,28 @@ func (h handlers) updateAccount(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return httpx.WriteJSON(w, http.StatusOK, a)
+}
+
+func (h handlers) systemAccounts(w http.ResponseWriter, r *http.Request) error {
+	list, err := h.svc.SystemAccounts(r.Context(), company(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h handlers) setSystemAccount(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		AccountID uuid.UUID `json:"accountId"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	list, err := h.svc.SetSystemAccount(r.Context(), company(r), Role(chi.URLParam(r, "role")), req.AccountID, actor(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
 }
 
 func (h handlers) applyTemplate(w http.ResponseWriter, r *http.Request) error {

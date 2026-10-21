@@ -332,6 +332,9 @@ type Service interface {
 	RunDueRecurring(ctx context.Context, today civil.Date) (int, error)
 	// RoleAccount mengembalikan akun sistem, mis. piutang usaha untuk faktur penjualan.
 	RoleAccount(ctx context.Context, companyID uuid.UUID, role Role) (Account, error)
+	// SystemAccounts dan SetSystemAccount: halaman Akun sistem, memilih akun untuk tiap peran.
+	SystemAccounts(ctx context.Context, companyID uuid.UUID) ([]SystemAccount, error)
+	SetSystemAccount(ctx context.Context, companyID uuid.UUID, role Role, accountID uuid.UUID, actor Actor) ([]SystemAccount, error)
 	Entry(ctx context.Context, companyID, entryID uuid.UUID) (EntryDetail, error)
 	Entries(ctx context.Context, companyID uuid.UUID, f EntryFilter) (EntryPage, error)
 	// EntriesBySource mengembalikan jurnal diposting dari satu sumber, mis. saldo awal.

@@ -15,6 +15,7 @@ import { AssetsPage } from './pages/Assets'
 import { AccountLedgerPage } from './pages/AccountLedger'
 import { Worksheet } from './pages/Worksheet'
 import { Accounts } from './pages/Accounts'
+import { SystemAccountsPage } from './pages/SystemAccounts'
 import { Periods } from './pages/Periods'
 import { TradePage } from './pages/Trade'
 import { TradeDocForm } from './pages/TradeDocForm'
@@ -82,6 +83,7 @@ export function App() {
         <Route path="buku-besar" element={<AccountLedgerPage me={me.data} />} />
         <Route path="neraca-lajur" element={<Worksheet me={me.data} />} />
         <Route path="akun" element={<Accounts me={me.data} />} />
+        <Route path="akun/sistem" element={<SystemAccountsPage me={me.data} />} />
         <Route path="saldo-awal" element={<OpeningBalancePage me={me.data} />} />
         <Route path="periode" element={<Periods me={me.data} />} />
         <Route path="penjualan" element={<TradePage key="sales" me={me.data} kind="sales" />} />
