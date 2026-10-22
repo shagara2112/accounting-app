@@ -420,7 +420,7 @@ Persona kustom (PLT-12) dibuat Admin pelanggan dengan memilih izin dari katalog 
 
 ## Desain antarmuka dan animasi
 
-Lajur harus terasa ringan dan hidup, tapi tetap serius untuk urusan uang. Caranya: animasi pendek yang menjelaskan perubahan, bukan hiasan. Animasi interaksi ≤ 250 ms, animasi dashboard ≤ 600 ms dan hanya saat halaman dibuka, dan tidak satu pun memperlambat entri data.
+Lajur harus terasa ringan dan hidup, tapi tetap serius untuk urusan uang. Caranya: animasi pendek yang menjelaskan perubahan, bukan hiasan. Animasi interaksi ≤ 250 ms, animasi dashboard ≤ 1 detik dan hanya saat halaman dibuka, dan tidak satu pun memperlambat entri data.
 
 **Arah visual**
 
@@ -430,6 +430,7 @@ Lajur harus terasa ringan dan hidup, tapi tetap serius untuk urusan uang. Carany
 - Tabel transaksi padat (baris 36–40 px) dengan opsi tampilan lega; formulir diberi ruang lebih.
 - Warna status konsisten di seluruh aplikasi: hijau untuk lunas atau seimbang, kuning untuk mendekati jatuh tempo, merah untuk lewat jatuh tempo atau selisih.
 - Ikon Lucide, ilustrasi halaman kosong yang sederhana, tanpa maskot.
+- Penyegaran tampilan (revisi 22 Oktober 2026, supaya lebih menjual): sidebar dan panel merek navy gelap (`night`), kartu sudut 16 px dengan bayangan halus (`shadow-card`, naik ke `shadow-lift` saat hover), halaman masuk terbelah dengan panel merek berisi ilustrasi produk (kartu laba rugi, faktur lunas, ekspor Coretax) yang tumbuh dan mengambang pelan, dan Beranda dengan banner sapaan, kartu KPI berikon, grafik pendapatan-beban dengan garis laba dan tooltip, serta pintasan berikon. Semua ilustrasi berupa SVG/HTML di kode, tanpa file gambar dari luar.
 - Font, ikon, dan ilustrasi dibundel di dalam binary; tidak ada yang dimuat dari CDN, karena server pelanggan bisa saja offline.
 
 **Di mana animasi dipakai**
@@ -439,8 +440,9 @@ Lajur harus terasa ringan dan hidup, tapi tetap serius untuk urusan uang. Carany
 | Pindah halaman | Fade dan geser 8 px | 200 ms |
 | Buka dialog atau drawer detail | Skala 0,98 → 1 dengan fade; drawer meluncur dari kanan | 200–250 ms |
 | Data sedang dimuat | Skeleton dengan kilau halus, bukan spinner | Sampai data tiba |
-| Angka KPI di dashboard | Hitung naik dari nilai sebelumnya | 600 ms |
-| Grafik di dashboard | Garis dan batang tumbuh dari sumbu | 400 ms |
+| Angka KPI di dashboard | Hitung naik dari nol, angka akhir selalu nilai persisnya | 800 ms |
+| Grafik di dashboard | Batang tumbuh dari sumbu, lalu garis laba tergambar | 600 ms + 800 ms |
+| Ilustrasi masuk dan banner Beranda | Muncul bertahap lalu mengambang pelan; berhenti bila gerak dikurangi | 500 ms, ayunan 6–8 detik |
 | Simpan atau posting berhasil | Toast meluncur dengan ikon centang; baris baru disorot lalu memudar | 200 ms, sorotan 1,5 detik |
 | Jurnal menjadi seimbang | Indikator selisih berubah ke hijau dengan transisi warna | 150 ms |
 | Validasi gagal | Field bergetar halus dan pesan muncul di bawahnya | 200 ms |

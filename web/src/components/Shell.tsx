@@ -8,7 +8,7 @@ import { useLicense, useLogout, useSwitchCompany } from '../lib/queries'
 import { useBackupStatus } from '../lib/system'
 import { activeCompany, can } from '../lib/session'
 import { isRestricted } from '../lib/dimensions'
-import { Badge, Button, ease } from './ui'
+import { Badge, Spinner, ease } from './ui'
 import { Logo } from './Logo'
 
 const icons = {
@@ -76,16 +76,22 @@ export function Shell({ me }: { me: Me }) {
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
-      <nav aria-label="Menu utama" className="flex flex-col border-b border-line bg-surface px-3.5 py-3 lg:w-[232px] lg:shrink-0 lg:border-r lg:border-b-0 lg:py-5 print:hidden">
-        <div className="flex items-center gap-2.5 px-2.5 lg:pb-5">
-          <Logo />
-          <span className="text-lg font-bold tracking-tight">Lajur</span>
+      <nav
+        aria-label="Menu utama"
+        className="flex flex-col bg-night px-3.5 py-3 text-night-ink lg:sticky lg:top-0 lg:h-screen lg:w-[244px] lg:shrink-0 lg:overflow-y-auto lg:py-5 print:hidden"
+      >
+        <div className="flex items-center gap-2.5 px-2.5 lg:pb-6">
+          <Logo size={32} />
+          <span className="flex flex-col leading-none">
+            <span className="text-lg font-bold tracking-tight text-white">Lajur</span>
+            <span className="mt-1 text-[11px] font-medium tracking-wide text-night-muted">Akuntansi multi-PT</span>
+          </span>
           <button
             type="button"
             aria-expanded={menuOpen}
             aria-controls="menu-utama"
             onClick={() => setMenuOpen((o) => !o)}
-            className="ml-auto flex min-h-11 cursor-pointer items-center gap-2 rounded-[10px] border border-line-2 px-3 text-sm font-medium text-ink-2 transition-colors hover:bg-hover lg:hidden"
+            className="ml-auto flex min-h-11 cursor-pointer items-center gap-2 rounded-[10px] border border-night-line px-3 text-sm font-medium text-night-ink transition-colors hover:bg-white/5 lg:hidden"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <path d={menuOpen ? 'M6 6l12 12M18 6L6 18' : 'M4 7h16M4 12h16M4 17h16'} />
@@ -146,20 +152,35 @@ export function Shell({ me }: { me: Me }) {
               {can(me, 'platform.system.manage') && <NavItem to="/sistem" label="Sistem dan lisensi" icon={icons.system} />}
             </>
           )}
-          <div className="mt-auto flex flex-col gap-2 border-t border-line px-2.5 pt-4">
-            <NavLink to="/profil" className="-mx-2 flex flex-col rounded-[10px] px-2 py-1 transition-colors duration-150 hover:bg-hover">
-              <span className="text-sm font-semibold">{me.user.name}</span>
-              <span className="text-xs text-muted">{company ? `${company.roleName} · ${company.shortName}` : 'Belum punya akses PT'}</span>
+          <div className="mt-auto flex flex-col gap-2 border-t border-night-line px-1 pt-4 lg:mt-6">
+            <NavLink to="/profil" className="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors duration-150 hover:bg-white/5">
+              <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-[13px] font-bold text-on-accent">
+                {initials(me.user.name)}
+              </span>
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-sm font-semibold text-white">{me.user.name}</span>
+                <span className="truncate text-xs text-night-muted">{company ? `${company.roleName} · ${company.shortName}` : 'Belum punya akses PT'}</span>
+              </span>
             </NavLink>
-            <Button variant="secondary" busy={logout.isPending} onClick={() => logout.mutate()}>
+            <button
+              type="button"
+              disabled={logout.isPending}
+              onClick={() => logout.mutate()}
+              className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-night-line text-sm font-semibold text-night-ink transition-colors duration-150 hover:bg-white/5 disabled:opacity-60"
+            >
+              {logout.isPending ? <Spinner /> : (
+                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+                </svg>
+              )}
               Keluar
-            </Button>
+            </button>
           </div>
         </div>
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-surface px-4 py-4 sm:px-8 print:hidden">
+        <header className="z-20 flex flex-wrap items-center justify-between gap-4 border-b border-line bg-surface/85 px-4 py-3.5 backdrop-blur-md sm:px-8 lg:sticky lg:top-0 print:hidden">
           <div className="flex min-w-0 flex-col">
             <span className="text-xs font-medium text-muted">PT aktif</span>
             <div className="relative h-7 overflow-hidden text-lg font-semibold">
@@ -217,7 +238,13 @@ function HelpLink({ me }: { me: Me }) {
 }
 
 function NavHeading({ children }: { children: string }) {
-  return <p className="mt-4 mb-0.5 px-3 text-xs font-semibold tracking-wide text-muted uppercase">{children}</p>
+  return <p className="mt-5 mb-1 px-3 text-[11px] font-semibold tracking-[0.08em] text-night-muted uppercase">{children}</p>
+}
+
+/** Inisial nama untuk avatar, mis. "Manager Keuangan" → "MK". */
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/)
+  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase()
 }
 
 function NavItem({ to, label, icon, end }: { to: string; label: string; icon: string; end?: boolean }) {
@@ -226,15 +253,35 @@ function NavItem({ to, label, icon, end }: { to: string; label: string; icon: st
       to={to}
       end={end}
       className={({ isActive }) =>
-        `flex min-h-11 items-center gap-2.5 rounded-[10px] px-3 text-sm transition-colors duration-150 ${
-          isActive ? 'bg-accent-soft font-semibold text-accent' : 'font-medium text-ink-2 hover:bg-hover'
+        `relative flex min-h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm transition-colors duration-150 ${
+          isActive ? 'font-semibold text-white' : 'font-medium text-night-ink/80 hover:bg-white/5 hover:text-white'
         }`
       }
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d={icon} />
-      </svg>
-      {label}
+      {({ isActive }) => (
+        <>
+          {isActive && (
+            <motion.span layoutId="nav-active" className="absolute inset-0 rounded-[10px] bg-white/10" transition={{ duration: 0.25, ease }}>
+              <span className="absolute top-2 bottom-2 left-0 w-[3px] rounded-full bg-sky" />
+            </motion.span>
+          )}
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`relative ${isActive ? 'text-sky' : 'text-night-muted'}`}
+          >
+            <path d={icon} />
+          </svg>
+          <span className="relative">{label}</span>
+        </>
+      )}
     </NavLink>
   )
 }

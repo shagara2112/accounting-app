@@ -19,6 +19,17 @@
         "set -a && source .env && LAJUR_LISTEN=:8081 exec ./bin/lajur serve"
       ],
       "port": 8081
+    },
+    {
+      "name": "lajur-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "web",
+        "run",
+        "dev"
+      ],
+      "port": 5173
     }
   ]
 }
