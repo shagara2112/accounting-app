@@ -901,9 +901,10 @@ export const topics: GuideTopic[] = [
       {
         title: 'Piutang, utang, dan persediaan',
         points: [
-          'Akun piutang usaha, utang usaha, dan persediaan tidak diketik di sini. Isi per faktur, per tagihan, dan per barang lewat Impor data → Saldo awal piutang, Saldo awal utang, dan Saldo awal stok, supaya umur piutang/utang dan kartu stok benar.',
+          'Piutang usaha dan utang usaha boleh diketik langsung di sini. Saldo yang diketik tidak punya rincian per faktur, jadi tidak muncul di Umur piutang/utang dan pelunasannya dicatat lewat Kas dan bank. Supaya umur piutang dan utang benar, isi per faktur dan per tagihan lewat Impor data → Saldo awal piutang dan Saldo awal utang (jangan diisi dua kali).',
+          'Persediaan tetap diisi per barang lewat Impor data → Saldo awal stok, supaya kartu stok dan HPP benar.',
           'Halaman ini membutuhkan akun sistem untuk ekuitas saldo awal, piutang usaha, dan utang usaha. Bila muncul pesan akun sistem belum dipilih, buka Bagan akun → Akun sistem dan pilih akunnya.',
-          'Sampai semuanya diisi, selisih sementara dicatat di akun ekuitas saldo awal (3-3001). Bila semua saldo awal sudah lengkap dan cocok dengan pembukuan lama, saldo akun itu menjadi nol.',
+          'Sampai semuanya diisi, selisih sementara dicatat di akun ekuitas saldo awal. Bila semua saldo awal sudah lengkap dan cocok dengan pembukuan lama, saldo akun itu menjadi nol.',
           'Aset tetap lama didaftarkan di menu Aset tetap dengan akumulasi penyusutan sampai tanggal saldo awal.',
         ],
       },
@@ -1135,7 +1136,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Bagaimana memasukkan saldo awal saat mulai memakai Lajur, misalnya di bulan Oktober?',
-    a: 'Ketik saldo setiap akun per akhir bulan sebelumnya (mis. 30 September) di Akuntansi → Saldo awal, atau impor dari Excel di Impor data. Bila mulai di tengah tahun, isi juga pendapatan dan beban sejak Januari supaya laba rugi setahun lengkap. Piutang, utang, dan stok diisi per dokumen lewat Impor data.',
+    a: 'Ketik saldo setiap akun per akhir bulan sebelumnya (mis. 30 September) di Akuntansi → Saldo awal, atau impor dari Excel di Impor data. Bila mulai di tengah tahun, isi juga pendapatan dan beban sejak Januari supaya laba rugi setahun lengkap. Piutang usaha dan utang usaha boleh diketik langsung, atau diisi per faktur/tagihan lewat Impor data supaya umurnya tercatat; stok diisi per barang lewat Impor data.',
     topic: 'saldo-awal',
   },
   {

@@ -119,20 +119,33 @@ func TestOpeningForm(t *testing.T) {
 		return e.Imports.SaveOpening(e.Ctx, e.Company, imports.OpeningInput{Date: day(date), Lines: lines, Revision: revision}, e.Actor)
 	}
 
-	_, err = save("2026-09-30", 0, line("1-1111", 250_000_000, 0), line("1-1201", 5_000_000, 0))
-	if code(err) != "opening.invalid" || fixture.Fields(err)["lines."+e.Acc["1-1201"].String()] == "" {
-		t.Fatalf("piutang usaha seharusnya ditolak: %v", err)
+	for _, c := range st.Controlled {
+		if (c.Kind == "stok-awal") == c.Manual {
+			t.Fatalf("hanya piutang dan utang usaha yang boleh diketik langsung: %+v", c)
+		}
+		if c.Kind != "stok-awal" {
+			continue
+		}
+		// Persediaan tetap per barang lewat impor (kartu stok dan HPP).
+		_, err = save("2026-09-30", 0, imports.OpeningLine{AccountID: c.AccountID, Debit: rp(1_000_000)}, line("3-1001", 0, 1_000_000))
+		if code(err) != "opening.invalid" || fixture.Fields(err)["lines."+c.AccountID.String()] == "" {
+			t.Fatalf("persediaan seharusnya ditolak: %v", err)
+		}
 	}
 
 	// Mulai Oktober: neraca per 30 September plus pendapatan dan beban Januari–September.
+	// Piutang dan utang usaha boleh diketik langsung, tanpa rincian faktur (revisi klien).
 	st, err = save("2026-09-30", 0,
-		line("1-1111", 250_000_000, 0), line("3-1001", 0, 200_000_000),
-		line("4-1001", 0, 80_000_000), line("6-2001", 30_000_000, 0))
+		line("1-1111", 250_000_000, 0), line("1-1201", 15_000_000, 0), line("2-1101", 0, 15_000_000),
+		line("3-1001", 0, 200_000_000), line("4-1001", 0, 80_000_000), line("6-2001", 30_000_000, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.EntryID == nil || st.Number != "SA/2026/09/0001" || len(st.Lines) != 4 || !st.OpeningEquity.IsZero() {
+	if st.EntryID == nil || st.Number != "SA/2026/09/0001" || len(st.Lines) != 6 || !st.OpeningEquity.IsZero() {
 		t.Fatalf("saldo awal = %+v", st)
+	}
+	if !e.Net("1-1201", day("2026-09-30")).Equal(rp(15_000_000)) || !e.Net("2-1101", day("2026-09-30")).Equal(rp(-15_000_000)) {
+		t.Fatalf("piutang/utang diketik langsung: %s, %s", e.Net("1-1201", day("2026-09-30")), e.Net("2-1101", day("2026-09-30")))
 	}
 	if !e.Net("4-1001", day("2026-12-31")).Equal(rp(-80_000_000)) {
 		t.Fatalf("pendapatan setahun = %s", e.Net("4-1001", day("2026-12-31")))

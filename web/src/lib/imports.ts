@@ -55,7 +55,9 @@ export function useRunImport(companyId: string | null) {
 
 // Halaman Saldo awal: saldo per akun diketik di layar, hasilnya satu jurnal saldo awal (seri SA).
 export type OpeningLine = { accountId: string; debit: string; credit: string }
-export type ControlledAccount = { accountId: string; kind: 'piutang-awal' | 'utang-awal' | 'stok-awal'; reason: string; balance: string }
+/** Akun yang punya rincian per dokumen. manual: saldonya boleh juga diketik langsung (piutang dan
+ *  utang usaha, tanpa rincian faktur); persediaan selalu lewat impor per barang. */
+export type ControlledAccount = { accountId: string; kind: 'piutang-awal' | 'utang-awal' | 'stok-awal'; reason: string; balance: string; manual: boolean }
 export type OpeningState = {
   entryId?: string
   number?: string

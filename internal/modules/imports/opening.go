@@ -17,9 +17,11 @@ import (
 )
 
 // Halaman Saldo awal (GL-06): saldo per akun diketik di layar, hasilnya sama dengan impor neraca
-// saldo awal (satu jurnal sumber "opening", seri SA). Piutang usaha, utang usaha, dan persediaan
-// tetap diisi per dokumen lewat impor; selisihnya masuk akun ekuitas saldo awal, yang menjadi
-// nol setelah semua saldo awal lengkap. Selama periodenya belum dikunci, angkanya bisa diubah
+// saldo awal (satu jurnal sumber "opening", seri SA). Piutang usaha dan utang usaha boleh diketik
+// langsung (tanpa rincian faktur, revisi klien) atau diisi per dokumen lewat impor supaya umur
+// piutang/utang ikut benar; persediaan tetap per barang lewat impor karena kartu stok dan HPP
+// bergantung padanya. Selisihnya masuk akun ekuitas saldo awal, yang menjadi nol setelah semua
+// saldo awal lengkap. Selama periodenya belum dikunci, angkanya bisa diubah
 // (jurnal yang sama direvisi, riwayat versinya tersimpan).
 
 type OpeningLine struct {
@@ -28,13 +30,15 @@ type OpeningLine struct {
 	Credit    money.Amount `json:"credit"`
 }
 
-// ControlledAccount adalah akun yang diisi per dokumen; Balance = saldonya per tanggal saldo awal
-// (debit − kredit) dari dokumen saldo awal yang sudah diimpor.
+// ControlledAccount adalah akun yang punya rincian per dokumen; Balance = saldonya per tanggal
+// saldo awal (debit − kredit) dari dokumen saldo awal yang sudah diimpor. Manual: saldonya boleh
+// juga diketik langsung di halaman Saldo awal (piutang dan utang usaha, tanpa rincian faktur).
 type ControlledAccount struct {
 	AccountID uuid.UUID    `json:"accountId"`
 	Kind      string       `json:"kind"` // piutang-awal, utang-awal, atau stok-awal
 	Reason    string       `json:"reason"`
 	Balance   money.Amount `json:"balance"`
+	Manual    bool         `json:"manual"`
 }
 
 type OpeningState struct {
@@ -65,14 +69,14 @@ func (s *service) controlledKinds(ctx context.Context, companyID uuid.UUID) (map
 		role         ledger.Role
 		kind, reason string
 	}{
-		{ledger.Receivable, "piutang-awal", "Diisi per faktur lewat impor Saldo awal piutang."},
-		{ledger.Payable, "utang-awal", "Diisi per tagihan lewat impor Saldo awal utang."},
+		{ledger.Receivable, "piutang-awal", "Diketik langsung tanpa rincian faktur: tidak muncul di Umur piutang, dan pelunasannya dicatat lewat Kas dan bank. Supaya umur piutang benar, isi per faktur lewat impor."},
+		{ledger.Payable, "utang-awal", "Diketik langsung tanpa rincian tagihan: tidak muncul di Umur utang, dan pembayarannya dicatat lewat Kas dan bank. Supaya umur utang benar, isi per tagihan lewat impor."},
 	} {
 		a, err := s.Ledger.RoleAccount(ctx, companyID, x.role)
 		if err != nil {
 			return nil, err
 		}
-		out[a.ID] = ControlledAccount{AccountID: a.ID, Kind: x.kind, Reason: x.reason}
+		out[a.ID] = ControlledAccount{AccountID: a.ID, Kind: x.kind, Reason: x.reason, Manual: true}
 	}
 	inv, err := s.Inventory.InventoryAccounts(ctx, companyID)
 	if err != nil {
@@ -195,7 +199,7 @@ func (s *service) SaveOpening(ctx context.Context, companyID uuid.UUID, in Openi
 				fields[key] = fmt.Sprintf("%s %s bukan akun detail yang aktif.", a.Code, a.Name)
 			case a.ID == opening.ID:
 				fields[key] = fmt.Sprintf("%s %s diisi otomatis dari selisih saldo awal.", a.Code, a.Name)
-			case controlled[a.ID].Kind != "":
+			case controlled[a.ID].Kind != "" && !controlled[a.ID].Manual:
 				fields[key] = fmt.Sprintf("%s %s: %s", a.Code, a.Name, controlled[a.ID].Reason)
 			case l.Debit.Sign() < 0 || l.Credit.Sign() < 0:
 				fields[key] = "Debit dan kredit tidak boleh negatif."
@@ -218,7 +222,7 @@ func (s *service) SaveOpening(ctx context.Context, companyID uuid.UUID, in Openi
 			return httpx.Unprocessable("opening.empty", "Isi saldo minimal satu akun.")
 		}
 		if !net.IsZero() {
-			l := ledger.LineDraft{AccountID: opening.ID, Memo: "Selisih saldo awal (diisi impor piutang, utang, dan stok)"}
+			l := ledger.LineDraft{AccountID: opening.ID, Memo: "Selisih saldo awal"}
 			if net.Sign() > 0 {
 				l.Credit = net
 			} else {

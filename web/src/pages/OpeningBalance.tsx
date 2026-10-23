@@ -76,8 +76,10 @@ function OpeningForm({ me, state, accounts, classes }: { me: Me; state: OpeningS
   let debit = 0n
   let credit = 0n
   let unreadable = false
+  // Akun yang hanya bisa diisi lewat impor (persediaan) tidak ikut dijumlah.
+  const locked = (id: string) => controlled.has(id) && !controlled.get(id)!.manual
   for (const [id, v] of Object.entries(amounts)) {
-    if (controlled.has(id)) continue
+    if (locked(id)) continue
     const d = parseInput(v.debit)
     const c = parseInput(v.credit)
     if (d === null || c === null) unreadable = true
@@ -99,7 +101,7 @@ function OpeningForm({ me, state, accounts, classes }: { me: Me; state: OpeningS
   function submit() {
     setAttempt((n) => n + 1)
     const lines = Object.entries(amounts)
-      .filter(([id]) => !controlled.has(id))
+      .filter(([id]) => !locked(id))
       .map(([accountId, v]) => ({ accountId, debit: fromUnits(parseInput(v.debit) ?? 0n), credit: fromUnits(parseInput(v.credit) ?? 0n) }))
       .filter((l) => toUnits(l.debit) !== 0n || toUnits(l.credit) !== 0n)
     save.mutate(
@@ -139,8 +141,9 @@ function OpeningForm({ me, state, accounts, classes }: { me: Me; state: OpeningS
       </div>
 
       <Alert tone="neutral">
-        Mulai di tengah tahun? Isi juga saldo akun <b>pendapatan dan beban sejak awal tahun buku</b>, supaya laba rugi setahun tetap lengkap. Piutang usaha, utang usaha, dan persediaan diisi per faktur,
-        tagihan, dan barang lewat <Link to="/impor" className="font-semibold underline">Impor data</Link>, supaya umur piutang dan kartu stok ikut benar.
+        Mulai di tengah tahun? Isi juga saldo akun <b>pendapatan dan beban sejak awal tahun buku</b>, supaya laba rugi setahun tetap lengkap. Piutang usaha dan utang usaha boleh diketik langsung, atau diisi
+        per faktur dan tagihan lewat <Link to="/impor" className="font-semibold underline">Impor data</Link> supaya umur piutang dan utang ikut benar. Persediaan diisi per barang lewat impor supaya kartu stok
+        benar.
       </Alert>
 
       <div className="overflow-hidden rounded-[14px] border border-line bg-surface">
@@ -175,16 +178,22 @@ function OpeningForm({ me, state, accounts, classes }: { me: Me; state: OpeningS
                       {a.name}
                       {!a.active && <Badge tone="neutral">Nonaktif</Badge>}
                       {ctl && (
-                        <span className="block text-xs text-muted">
+                        <span className={`block text-xs ${ctl.manual ? 'text-warn' : 'text-muted'}`}>
                           {ctl.reason}{' '}
                           <Link to={`/impor?jenis=${ctl.kind}`} className="font-semibold text-accent hover:underline">
                             {importLabel[ctl.kind]} →
                           </Link>
                         </span>
                       )}
+                      {ctl?.manual && toUnits(ctl.balance) !== 0n && state.date && (
+                        <span className="block text-xs text-muted">
+                          Sudah diimpor per dokumen: <span className="num font-semibold text-ink">{formatAmount(ctl.balance, { parens: true })}</span> per {formatDate(state.date)}. Yang
+                          diketik di sini menambah saldo itu; jangan diisi dua kali.
+                        </span>
+                      )}
                       {rowErr && <span className="block text-[13px] text-bad">{rowErr}</span>}
                     </td>
-                    {ctl ? (
+                    {ctl && !ctl.manual ? (
                       <td colSpan={2} className="num px-4 py-2.5 text-right text-ink-2">
                         {state.entryId && state.date ? `${formatAmount(ctl.balance, { parens: true })} per ${formatDate(state.date)}` : '—'}
                       </td>
@@ -228,7 +237,7 @@ function OpeningForm({ me, state, accounts, classes }: { me: Me; state: OpeningS
       )}
       {err && Object.keys(err.fields).length === 0 && <Alert shakeKey={attempt}>{err.message}</Alert>}
 
-      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur sm:px-8 lg:left-[232px] print:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur sm:px-8 lg:left-[244px] print:hidden">
         <div className="mx-auto flex max-w-[1240px] flex-wrap items-center gap-x-6 gap-y-2">
           <Total label="Total debit" value={debit} />
           <Total label="Total kredit" value={credit} />
@@ -242,7 +251,7 @@ function OpeningForm({ me, state, accounts, classes }: { me: Me; state: OpeningS
                 <span>
                   Selisih <span className="num font-semibold text-ink">Rp {formatAmount(diff < 0n ? -diff : diff)}</span> ke {equity ? `${equity.code} ${equity.name}` : 'ekuitas saldo awal'}
                 </span>
-                <span>Menjadi nol setelah piutang, utang, dan stok awal diimpor.</span>
+                <span>Menjadi nol setelah semua saldo awal terisi dan seimbang.</span>
               </>
             )}
             {state.entryId && state.date && (
