@@ -238,7 +238,7 @@ function OpeningForm({ me, state, accounts, classes }: { me: Me; state: OpeningS
       {err && Object.keys(err.fields).length === 0 && <Alert shakeKey={attempt}>{err.message}</Alert>}
 
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur sm:px-8 lg:left-[244px] print:hidden">
-        <div className="mx-auto flex max-w-[1240px] flex-wrap items-center gap-x-6 gap-y-2">
+        <div className="mx-auto flex max-w-[1920px] flex-wrap items-center gap-x-6 gap-y-2">
           <Total label="Total debit" value={debit} />
           <Total label="Total kredit" value={credit} />
           <span className="flex flex-col text-[12.5px] text-muted">

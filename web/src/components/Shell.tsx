@@ -206,7 +206,7 @@ export function Shell({ me }: { me: Me }) {
         </header>
         <LicenseBanner canManage={can(me, 'platform.system.manage')} />
         {can(me, 'platform.system.manage') && <BackupBanner />}
-        <main className="w-full max-w-[1240px] px-4 pt-7 pb-14 sm:px-8 print:max-w-none print:p-0">
+        <main className="mx-auto w-full max-w-[1920px] px-4 pt-7 pb-14 sm:px-8 print:max-w-none print:p-0">
           {/* Halaman baru langsung tampil lalu memudar masuk; tidak menunggu animasi keluar
               halaman lama, supaya perpindahan tidak pernah menahan pengguna (TDD). */}
           <motion.div key={location.pathname} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, ease }}>
