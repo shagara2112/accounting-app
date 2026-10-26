@@ -5,6 +5,8 @@ services:
     image: ${LAJUR_IMAGE}
     container_name: lajur-app
     restart: unless-stopped
+    # init (tini) memungut proses yatim, supaya proses zombie tidak menumpuk sampai batas proses habis.
+    init: true
     env_file: .env
     ports:
       - "443:8443"   # HTTPS untuk PC di jaringan kantor
@@ -50,6 +52,7 @@ services:
     image: ${LAJUR_UPDATER_IMAGE}
     container_name: lajur-updater
     restart: unless-stopped
+    init: true   # menjalankan docker compose sebagai proses anak; init memungut yang yatim
     env_file: .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

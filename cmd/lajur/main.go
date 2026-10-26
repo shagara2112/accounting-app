@@ -56,6 +56,8 @@ func main() {
 		err = migrateOnly(ctx)
 	case "version":
 		fmt.Println(buildinfo.Version)
+	case "healthcheck":
+		err = healthcheck(ctx)
 	case "audit-verify":
 		err = auditVerify(ctx)
 	case "reset-2fa":
@@ -91,6 +93,7 @@ func usage() {
 
   serve                   menjalankan migrasi lalu server aplikasi
   version                 menampilkan versi aplikasi
+  healthcheck             memeriksa server di container ini (HEALTHCHECK Docker)
   migrate                 hanya menjalankan migrasi basis data
   audit-verify            memeriksa keutuhan rantai audit trail
   reset-2fa <email>       menghapus 2FA pengguna yang kehilangan ponselnya

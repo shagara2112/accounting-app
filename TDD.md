@@ -561,6 +561,7 @@ services:
   Skrip aman dijalankan ulang. `install.sh renew-cert` menerbitkan ulang sertifikat dengan CA yang sama.
 - Aplikasi melayani HTTPS langsung (TLS ≥ 1.2) di :8443 (host 443). Listener HTTP :8080 (host 80) mengalihkan ke HTTPS dan menyajikan `/ca.crt` untuk dipasang di PC pengguna.
 - Image app (`Dockerfile`, multi-stage) berjalan non-root (uid 10001) dengan filesystem read-only, `cap_drop: ALL`, dan `no-new-privileges`. Image membawa `postgresql16-client` untuk backup. PostgreSQL hanya ada di jaringan internal (`internal: true`), tanpa port ke host.
+- Container app dan updater berjalan dengan `init: true` (tini sebagai PID 1 yang memungut proses yatim), dan `HEALTHCHECK` memanggil `lajur healthcheck` (binary itu sendiri), bukan `wget` busybox. Insiden 26 Oktober 2026: wget busybox ke HTTPS meninggalkan satu proses zombie `ssl_client` setiap 30 detik karena `lajur serve` sebagai PID 1 tidak memungutnya; sesudah ±33 jam batas 4.032 proses container habis dan `docker exec` (backup sebelum pembaruan) gagal dengan "procReady not received". `install.sh` kini memulai ulang container app lalu mengulang backup sekali bila backup sebelum pembaruan gagal.
 - Versi diisi lewat `-ldflags` (`lajur version`). Build rilis memakai tag `release`: tanpa provider lisensi local, tanpa `seed-dev`, dan hanya mempercayai kunci produksi.
 
 **Pembaruan (PLT-10)**

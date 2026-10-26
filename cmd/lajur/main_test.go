@@ -29,3 +29,22 @@ func TestRedirectHTTPSKeepsPathAndServesCA(t *testing.T) {
 		t.Fatalf("ca.crt = %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
 }
+
+func TestHealthcheckCallsLocalServer(t *testing.T) {
+	ok := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ok.Close()
+	t.Setenv("LAJUR_HEALTH_URL", ok.URL+"/healthz")
+	if err := healthcheck(t.Context()); err != nil {
+		t.Fatalf("server sehat seharusnya lolos: %v", err)
+	}
+	t.Setenv("LAJUR_HEALTH_URL", ok.URL+"/lain")
+	if err := healthcheck(t.Context()); err == nil {
+		t.Fatal("status selain 200 seharusnya gagal")
+	}
+}

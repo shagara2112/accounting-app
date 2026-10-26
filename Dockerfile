@@ -35,7 +35,8 @@ COPY --from=build /out/lajur /usr/local/bin/lajur
 USER 10001
 ENV LAJUR_DATA_DIR=/var/lib/lajur
 EXPOSE 8443 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
-  CMD wget -qO- --no-check-certificate https://127.0.0.1:8443/healthz >/dev/null || exit 1
+# Health check memakai binary lajur sendiri, bukan wget busybox: wget meninggalkan proses zombie
+# ssl_client setiap kali jalan sampai batas proses container habis.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s CMD ["lajur", "healthcheck"]
 ENTRYPOINT ["lajur"]
 CMD ["serve"]
