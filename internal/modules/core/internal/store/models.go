@@ -665,6 +665,17 @@ type PlatformMailSetting struct {
 	UpdatedAt time.Time
 }
 
+type PlatformPasswordReset struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	CodeHash  []byte
+	ExpiresAt time.Time
+	Attempts  int32
+	UsedAt    *time.Time
+	CreatedAt time.Time
+	CreatedIp string
+}
+
 type PlatformRestoreTest struct {
 	ID       uuid.UUID
 	BackupID *uuid.UUID
@@ -696,19 +707,20 @@ type PlatformSession struct {
 }
 
 type PlatformUser struct {
-	ID            uuid.UUID
-	Email         string
-	Name          string
-	PasswordHash  string
-	Active        bool
-	FailedLogins  int32
-	LockedUntil   *time.Time
-	CreatedAt     time.Time
-	Version       int32
-	TotpSecret    []byte
-	TotpEnabledAt *time.Time
-	TotpLastStep  int64
-	LastLoginAt   *time.Time
+	ID               uuid.UUID
+	Email            string
+	Name             string
+	PasswordHash     string
+	Active           bool
+	FailedLogins     int32
+	LockedUntil      *time.Time
+	CreatedAt        time.Time
+	Version          int32
+	TotpSecret       []byte
+	TotpEnabledAt    *time.Time
+	TotpLastStep     int64
+	LastLoginAt      *time.Time
+	ResetRequestedAt *time.Time
 }
 
 type ProjectBudgetLine struct {

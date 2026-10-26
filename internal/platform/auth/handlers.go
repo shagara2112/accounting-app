@@ -15,6 +15,7 @@ import (
 	"lajur/internal/platform/audit"
 	"lajur/internal/platform/db"
 	"lajur/internal/platform/httpx"
+	"lajur/internal/platform/mail"
 	"lajur/internal/platform/rbac"
 	"lajur/internal/platform/secret"
 	"lajur/internal/platform/store"
@@ -29,6 +30,8 @@ type Handlers struct {
 	// Box mengenkripsi rahasia 2FA; MFARequired mewajibkan 2FA untuk peran istimewa.
 	Box         *secret.Box
 	MFARequired bool
+	// Mail mengirim kode lupa kata sandi; nil = email tidak tersedia (permintaan hanya ke Admin).
+	Mail *mail.Service
 }
 
 // PrivilegedPerms: pemegang salah satu izin ini di PT mana pun wajib memakai 2FA

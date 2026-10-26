@@ -190,7 +190,7 @@ func (q *Queries) GetRoleForUpdate(ctx context.Context, id uuid.UUID) (PlatformR
 }
 
 const getUserForUpdate = `-- name: GetUserForUpdate :one
-SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at FROM platform.users WHERE id = $1 FOR UPDATE
+SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at, reset_requested_at FROM platform.users WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetUserForUpdate(ctx context.Context, id uuid.UUID) (PlatformUser, error) {
@@ -210,6 +210,7 @@ func (q *Queries) GetUserForUpdate(ctx context.Context, id uuid.UUID) (PlatformU
 		&i.TotpEnabledAt,
 		&i.TotpLastStep,
 		&i.LastLoginAt,
+		&i.ResetRequestedAt,
 	)
 	return i, err
 }
@@ -401,21 +402,22 @@ func (q *Queries) ListRoles(ctx context.Context) ([]ListRolesRow, error) {
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, email, name, active, locked_until, totp_enabled_at, last_login_at, created_at, version
+SELECT id, email, name, active, locked_until, totp_enabled_at, last_login_at, created_at, version, reset_requested_at
 FROM platform.users
 ORDER BY lower(name), email
 `
 
 type ListUsersRow struct {
-	ID            uuid.UUID
-	Email         string
-	Name          string
-	Active        bool
-	LockedUntil   *time.Time
-	TotpEnabledAt *time.Time
-	LastLoginAt   *time.Time
-	CreatedAt     time.Time
-	Version       int32
+	ID               uuid.UUID
+	Email            string
+	Name             string
+	Active           bool
+	LockedUntil      *time.Time
+	TotpEnabledAt    *time.Time
+	LastLoginAt      *time.Time
+	CreatedAt        time.Time
+	Version          int32
+	ResetRequestedAt *time.Time
 }
 
 func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
@@ -437,6 +439,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.LastLoginAt,
 			&i.CreatedAt,
 			&i.Version,
+			&i.ResetRequestedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -588,7 +591,7 @@ func (q *Queries) SetAccess(ctx context.Context, arg SetAccessParams) error {
 
 const setUserPassword = `-- name: SetUserPassword :exec
 UPDATE platform.users
-SET password_hash = $2, failed_logins = 0, locked_until = NULL, version = version + 1
+SET password_hash = $2, failed_logins = 0, locked_until = NULL, reset_requested_at = NULL, version = version + 1
 WHERE id = $1
 `
 
@@ -597,6 +600,7 @@ type SetUserPasswordParams struct {
 	PasswordHash string
 }
 
+// Admin membuatkan kata sandi baru; permintaan lupa kata sandi pengguna ikut selesai.
 func (q *Queries) SetUserPassword(ctx context.Context, arg SetUserPasswordParams) error {
 	_, err := q.db.Exec(ctx, setUserPassword, arg.ID, arg.PasswordHash)
 	return err

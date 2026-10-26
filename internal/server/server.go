@@ -182,7 +182,7 @@ func New(d Deps) (http.Handler, *api.API) {
 	}
 	authH := &auth.Handlers{
 		Pool: d.Pool, Sessions: d.Sessions, Access: d.Core, MaxFailures: 5, LockFor: 15 * time.Minute,
-		Box: d.Box, MFARequired: d.MFARequired,
+		Box: d.Box, MFARequired: d.MFARequired, Mail: d.Mail,
 	}
 	// Keamanan akun (2FA, kata sandi) tetap bisa diatur walau lisensi berakhir.
 	self := func(method, path string, fn httpx.Handler, duringSetup bool) api.Route {
@@ -191,6 +191,8 @@ func New(d Deps) (http.Handler, *api.API) {
 	for _, rt := range []api.Route{
 		{Method: http.MethodPost, Path: "/api/v1/auth/login", Access: api.Public, License: license.ModeStatus, Handle: authH.Login},
 		{Method: http.MethodPost, Path: "/api/v1/auth/totp", Access: api.Public, License: license.ModeStatus, Handle: authH.LoginTOTP},
+		{Method: http.MethodPost, Path: "/api/v1/auth/password-reset/request", Access: api.Public, License: license.ModeStatus, Handle: authH.ForgotPassword},
+		{Method: http.MethodPost, Path: "/api/v1/auth/password-reset/confirm", Access: api.Public, License: license.ModeStatus, Handle: authH.ResetPassword},
 		self(http.MethodPost, "/api/v1/auth/logout", authH.Logout, true),
 		self(http.MethodGet, "/api/v1/auth/mfa", authH.MFAStatus, true),
 		self(http.MethodPost, "/api/v1/auth/totp/setup", authH.TOTPSetup, true),

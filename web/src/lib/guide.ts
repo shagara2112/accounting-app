@@ -1161,7 +1161,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Saya lupa kata sandi atau ganti ponsel untuk 2FA.',
-    a: 'Hubungi admin. Admin membuka Pengguna dan akses, memilih nama Anda, lalu Atur ulang kata sandi atau Atur ulang 2FA.',
+    a: 'Di halaman masuk, klik Lupa kata sandi? lalu isi email Anda. Bila email server kantor sudah diatur (Sistem → Email), kode 6 digit dikirim ke email itu; masukkan kodenya bersama kata sandi baru (kode berlaku 15 menit). Bila belum diatur, permintaan Anda muncul di Pengguna dan akses, dan admin membuatkan kata sandi baru lewat Atur ulang kata sandi. Ganti ponsel untuk 2FA: minta admin memilih nama Anda lalu Atur ulang 2FA. Tombol mata di kolom kata sandi menampilkan isi yang diketik.',
     topic: 'profil',
   },
   {

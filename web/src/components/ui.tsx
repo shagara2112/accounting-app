@@ -1,4 +1,4 @@
-import { Children, useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type RefObject, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { Children, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type RefObject, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -51,12 +51,15 @@ function fieldBorder(error?: string) {
   return error ? 'border-bad' : 'border-line-2'
 }
 
-function FieldShell({ id, label, hint, error, children }: { id: string; label: string; hint?: ReactNode; error?: string; children: ReactNode }) {
+function FieldShell({ id, label, hint, error, aside, children }: { id: string; label: string; hint?: ReactNode; error?: string; aside?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-ink-2">
-        {label}
-      </label>
+      <div className="flex items-baseline justify-between gap-3">
+        <label htmlFor={id} className="text-sm font-medium text-ink-2">
+          {label}
+        </label>
+        {aside}
+      </div>
       {children}
       {error ? (
         <motion.p
@@ -80,18 +83,53 @@ function FieldShell({ id, label, hint, error, children }: { id: string; label: s
   )
 }
 
-type FieldProps = InputHTMLAttributes<HTMLInputElement> & { label: string; id: string; hint?: ReactNode; error?: string }
+/** aside: isi di kanan label, mis. tautan "Lupa kata sandi?". */
+type FieldProps = InputHTMLAttributes<HTMLInputElement> & { label: string; id: string; hint?: ReactNode; error?: string; aside?: ReactNode }
 
-export function Field({ label, id, hint, error, className = '', ...rest }: FieldProps) {
+/** Input berlabel. type="password" mendapat tombol mata untuk menampilkan isinya. */
+export function Field({ label, id, hint, error, aside, className = '', type, ...rest }: FieldProps) {
+  const [shown, setShown] = useState(false)
+  const secret = type === 'password'
+  const input = (
+    <input
+      id={id}
+      type={secret && shown ? 'text' : type}
+      aria-invalid={error ? true : undefined}
+      aria-describedby={error || hint ? `${id}-msg` : undefined}
+      {...rest}
+      className={`${inputClass} ${fieldBorder(error)} ${secret ? 'pr-12' : ''} ${className}`}
+    />
+  )
   return (
-    <FieldShell id={id} label={label} hint={hint} error={error}>
-      <input
-        id={id}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error || hint ? `${id}-msg` : undefined}
-        {...rest}
-        className={`${inputClass} ${fieldBorder(error)} ${className}`}
-      />
+    <FieldShell id={id} label={label} hint={hint} error={error} aside={aside}>
+      {secret ? (
+        <div className="relative">
+          {input}
+          <button
+            type="button"
+            onClick={() => setShown((v) => !v)}
+            aria-label={shown ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'}
+            aria-pressed={shown}
+            aria-controls={id}
+            title={shown ? 'Sembunyikan' : 'Tampilkan'}
+            disabled={rest.disabled}
+            className="absolute inset-y-0 right-0 flex w-11 cursor-pointer items-center justify-center rounded-r-[10px] text-muted transition-colors duration-150 hover:text-ink disabled:cursor-not-allowed"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              {shown ? (
+                <path d="M17.9 17.9A10 10 0 0 1 12 19c-6.5 0-10-7-10-7a18.5 18.5 0 0 1 5.1-5.9M9.9 4.2A9 9 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2M2 2l20 20" />
+              ) : (
+                <>
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                  <circle cx="12" cy="12" r="3" />
+                </>
+              )}
+            </svg>
+          </button>
+        </div>
+      ) : (
+        input
+      )}
     </FieldShell>
   )
 }

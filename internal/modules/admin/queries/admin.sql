@@ -9,7 +9,7 @@ SELECT pg_advisory_xact_lock(7240002);
 UPDATE platform.installation SET setup_at = now() WHERE setup_at IS NULL;
 
 -- name: ListUsers :many
-SELECT id, email, name, active, locked_until, totp_enabled_at, last_login_at, created_at, version
+SELECT id, email, name, active, locked_until, totp_enabled_at, last_login_at, created_at, version, reset_requested_at
 FROM platform.users
 ORDER BY lower(name), email;
 
@@ -38,8 +38,9 @@ SET name = $3, email = $4, active = $5, version = version + 1
 WHERE id = $1 AND version = $2;
 
 -- name: SetUserPassword :exec
+-- Admin membuatkan kata sandi baru; permintaan lupa kata sandi pengguna ikut selesai.
 UPDATE platform.users
-SET password_hash = $2, failed_logins = 0, locked_until = NULL, version = version + 1
+SET password_hash = $2, failed_logins = 0, locked_until = NULL, reset_requested_at = NULL, version = version + 1
 WHERE id = $1;
 
 -- name: UnlockUser :exec

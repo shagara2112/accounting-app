@@ -19,6 +19,20 @@ export function useLogin() {
   })
 }
 
+/** Lupa kata sandi: emailEnabled = email server sudah diatur (kode dikirim); bila belum, permintaan
+ *  hanya diteruskan ke Admin. Jawabannya sama untuk email terdaftar atau tidak. */
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (email: string) => api<{ emailEnabled: boolean }>('POST', '/auth/password-reset/request', { email }),
+  })
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (v: { email: string; code: string; password: string }) => api<{ ok: boolean }>('POST', '/auth/password-reset/confirm', v),
+  })
+}
+
 export function useLogout() {
   const qc = useQueryClient()
   return useMutation({

@@ -20,6 +20,7 @@ func TestEveryRouteDeclaresLicenseAndPermission(t *testing.T) {
 	catalog := rbac.NewPerms(rbac.All)
 	publicAllowed := map[string]bool{
 		"POST /api/v1/auth/login": true, "POST /api/v1/auth/totp": true,
+		"POST /api/v1/auth/password-reset/request": true, "POST /api/v1/auth/password-reset/confirm": true,
 		"GET /api/v1/setup": true, "POST /api/v1/setup": true,
 	}
 

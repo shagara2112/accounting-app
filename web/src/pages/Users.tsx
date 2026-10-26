@@ -52,9 +52,16 @@ function UserTab({ me }: { me: Me }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const data = list.data
   const open = data?.items.find((u) => u.id === openId) ?? null
+  const asking = (data?.items ?? []).filter((u) => u.resetRequestedAt && u.id !== me.user.id)
 
   return (
     <>
+      {asking.length > 0 && (
+        <Alert tone="warn">
+          {asking.map((u) => u.name).join(', ')} meminta reset kata sandi dari halaman masuk. Klik penggunanya, lalu <b>Atur ulang kata sandi</b> dan berikan kata sandi barunya
+          secara langsung.
+        </Alert>
+      )}
       <div className="flex justify-end">
         <Button onClick={() => setCreating(true)}>Pengguna baru</Button>
       </div>
@@ -125,6 +132,7 @@ function MfaBadge({ u }: { u: AdminUser }) {
 function StatusBadge({ u }: { u: AdminUser }) {
   if (!u.active) return <Badge tone="neutral">Nonaktif</Badge>
   if (u.locked) return <Badge tone="bad">Terkunci</Badge>
+  if (u.resetRequestedAt) return <Badge tone="warn">Minta reset kata sandi</Badge>
   return <Badge tone="good">Aktif</Badge>
 }
 
@@ -312,6 +320,11 @@ function UserDetail({ user, data, self }: { user: AdminUser; data: UserList; sel
       {!self && (
         <section className="flex flex-col gap-3">
           <h3 className="text-sm font-semibold">Keamanan</h3>
+          {user.resetRequestedAt && (
+            <Alert tone="warn">
+              {user.name} meminta reset kata sandi pada {formatDateTime(user.resetRequestedAt)}. Buat kata sandi baru lewat Atur ulang kata sandi, lalu sampaikan kepadanya.
+            </Alert>
+          )}
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" size="sm" onClick={() => setPassword(true)}>
               Atur ulang kata sandi

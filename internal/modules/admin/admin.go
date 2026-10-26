@@ -108,6 +108,8 @@ type User struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 	Version     int        `json:"version"`
 	Access      []Access   `json:"access"`
+	// ResetRequestedAt: pengguna meminta reset kata sandi dari halaman masuk dan belum selesai.
+	ResetRequestedAt *time.Time `json:"resetRequestedAt,omitempty"`
 }
 
 type CompanyChoice struct {
@@ -198,6 +200,7 @@ func (s *service) listUsers(ctx context.Context) ([]User, error) {
 			ID: u.ID, Email: u.Email, Name: u.Name, Active: u.Active,
 			Locked: u.LockedUntil != nil && now.Before(*u.LockedUntil), MFAEnabled: u.TotpEnabledAt != nil,
 			MFARequired: privileged[u.ID], LastLoginAt: u.LastLoginAt, CreatedAt: u.CreatedAt, Version: int(u.Version), Access: acc,
+			ResetRequestedAt: u.ResetRequestedAt,
 		})
 	}
 	return out, nil

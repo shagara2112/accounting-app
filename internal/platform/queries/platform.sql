@@ -52,6 +52,34 @@ UPDATE platform.users
 SET password_hash = $2, failed_logins = 0, locked_until = NULL, version = version + 1
 WHERE id = $1;
 
+-- name: CountRecentPasswordResets :one
+SELECT count(*) FROM platform.password_resets WHERE user_id = $1 AND created_at > $2;
+
+-- name: InsertPasswordReset :exec
+INSERT INTO platform.password_resets (id, user_id, code_hash, expires_at, created_ip) VALUES ($1, $2, $3, $4, $5);
+
+-- name: MarkResetRequested :exec
+UPDATE platform.users SET reset_requested_at = now() WHERE id = $1;
+
+-- name: LatestPasswordReset :one
+-- Kode terakhir yang belum dipakai; dikunci supaya dua percobaan bersamaan dihitung benar.
+SELECT * FROM platform.password_resets
+WHERE user_id = $1 AND used_at IS NULL
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE;
+
+-- name: BumpPasswordReset :exec
+UPDATE platform.password_resets SET attempts = attempts + 1 WHERE id = $1;
+
+-- name: UsePasswordResets :exec
+UPDATE platform.password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL;
+
+-- name: SetPasswordFromReset :exec
+UPDATE platform.users
+SET password_hash = $2, failed_logins = 0, locked_until = NULL, reset_requested_at = NULL, version = version + 1
+WHERE id = $1;
+
 -- name: UserPrivileged :one
 -- Pengguna yang memegang salah satu izin ini di PT mana pun wajib memakai 2FA.
 SELECT EXISTS (

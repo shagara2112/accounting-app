@@ -1,8 +1,9 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
-import { Button, Field } from '../components/ui'
+import { Alert, Button, Field } from '../components/ui'
 import { Logo } from '../components/Logo'
-import { useLogin } from '../lib/queries'
+import { ApiError } from '../lib/api'
+import { useForgotPassword, useLogin, useResetPassword } from '../lib/queries'
 import { useLoginTotp } from '../lib/admin'
 
 export function Login() {
@@ -13,6 +14,8 @@ export function Login() {
   const [code, setCode] = useState('')
   const [challenge, setChallenge] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const [forgot, setForgot] = useState(false)
+  const [notice, setNotice] = useState('')
 
   function submit(e: FormEvent) {
     e.preventDefault()
@@ -48,6 +51,24 @@ export function Login() {
     )
   }
 
+  if (forgot) {
+    return (
+      <AuthFrame>
+        <ForgotPassword
+          initialEmail={email}
+          onCancel={() => setForgot(false)}
+          onDone={(done) => {
+            setForgot(false)
+            setEmail(done)
+            setPassword('')
+            login.reset()
+            setNotice('Kata sandi baru tersimpan. Silakan masuk dengan kata sandi itu.')
+          }}
+        />
+      </AuthFrame>
+    )
+  }
+
   return (
     <AuthFrame>
       {challenge ? (
@@ -76,7 +97,28 @@ export function Login() {
         <form onSubmit={submit} className="flex flex-col gap-5">
           <FormHeading title="Selamat datang kembali" body="Masuk dengan akun yang dibuat Admin perusahaan Anda." />
           <Field id="email" label="Email" type="email" autoComplete="username" required placeholder="nama@perusahaan.co.id" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <Field id="password" label="Kata sandi" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Field
+            id="password"
+            label="Kata sandi"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            aside={
+              <button
+                type="button"
+                onClick={() => {
+                  setNotice('')
+                  setForgot(true)
+                }}
+                className="cursor-pointer text-[13px] font-semibold text-accent hover:underline"
+              >
+                Lupa kata sandi?
+              </button>
+            }
+          />
+          {notice && !login.isError && <Alert tone="good">{notice}</Alert>}
           {login.isError && <ErrorLine attempt={attempt}>{login.error.message}</ErrorLine>}
           <Button type="submit" busy={login.isPending} className="min-h-12">
             Masuk
@@ -89,6 +131,140 @@ export function Login() {
         </form>
       )}
     </AuthFrame>
+  )
+}
+
+/** Lupa kata sandi: minta kode lewat email (bila email server sudah diatur), lalu buat kata sandi
+ *  baru dengan kode itu. Tanpa email server, permintaan diteruskan ke Admin perusahaan. */
+function ForgotPassword({ initialEmail, onCancel, onDone }: { initialEmail: string; onCancel: () => void; onDone: (email: string) => void }) {
+  const request = useForgotPassword()
+  const reset = useResetPassword()
+  const [step, setStep] = useState<'email' | 'code' | 'admin'>('email')
+  const [email, setEmail] = useState(initialEmail)
+  const [code, setCode] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [resent, setResent] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  const requestErr = request.error instanceof ApiError ? request.error : null
+  const resetErr = reset.error instanceof ApiError ? reset.error : null
+  const mismatch = confirm !== '' && confirm !== password
+
+  function send(e?: FormEvent) {
+    e?.preventDefault()
+    setAttempt((n) => n + 1)
+    request.mutate(email.trim(), {
+      onSuccess: (r) => {
+        setResent(step === 'code')
+        setStep(r.emailEnabled ? 'code' : 'admin')
+      },
+    })
+  }
+
+  function save(e: FormEvent) {
+    e.preventDefault()
+    setAttempt((n) => n + 1)
+    reset.mutate({ email: email.trim(), code: code.replace(/\D/g, ''), password }, { onSuccess: () => onDone(email.trim()) })
+  }
+
+  const back = (
+    <button type="button" onClick={onCancel} className="flex cursor-pointer items-center justify-center gap-1.5 text-sm text-muted hover:text-ink">
+      <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M19 12H5M11 18l-6-6 6-6" />
+      </svg>
+      Kembali ke halaman masuk
+    </button>
+  )
+
+  if (step === 'admin') {
+    return (
+      <div className="flex flex-col gap-5">
+        <span className="flex size-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8" />
+          </svg>
+        </span>
+        <FormHeading
+          title="Permintaan diteruskan ke Admin"
+          body="Email server kantor belum diatur, jadi kode tidak bisa dikirim. Bila email itu terdaftar, permintaan Anda sudah tercatat: Admin perusahaan bisa membuatkan kata sandi baru di menu Pengguna dan akses."
+        />
+        <Button onClick={onCancel} className="min-h-12">
+          Kembali ke halaman masuk
+        </Button>
+      </div>
+    )
+  }
+
+  if (step === 'code') {
+    return (
+      <form onSubmit={save} noValidate className="flex flex-col gap-5">
+        <FormHeading title="Buat kata sandi baru" body={`Bila ${email.trim()} terdaftar, kode 6 digit sudah dikirim ke email itu. Kode berlaku 15 menit; periksa juga folder spam.`} />
+        {resent && <Alert tone="good">Kode baru sudah dikirim. Pakai kode yang paling akhir.</Alert>}
+        <Field
+          id="reset-kode"
+          label="Kode dari email"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          autoFocus
+          maxLength={7}
+          className="num tracking-[0.25em]"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          error={resetErr?.fields.code}
+        />
+        <Field
+          id="reset-sandi"
+          label="Kata sandi baru"
+          type="password"
+          autoComplete="new-password"
+          hint="Minimal 10 karakter."
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          error={resetErr?.fields.password}
+        />
+        <Field
+          id="reset-ulang"
+          label="Ulangi kata sandi baru"
+          type="password"
+          autoComplete="new-password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          error={mismatch ? 'Belum sama dengan kata sandi baru.' : undefined}
+        />
+        {resetErr && Object.keys(resetErr.fields).length === 0 && <ErrorLine attempt={attempt}>{resetErr.message}</ErrorLine>}
+        <Button type="submit" busy={reset.isPending} disabled={code.replace(/\D/g, '').length !== 6 || password.length < 10 || mismatch || !confirm} className="min-h-12">
+          Simpan kata sandi baru
+        </Button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {back}
+          <button type="button" disabled={request.isPending} onClick={() => send()} className="cursor-pointer text-sm font-semibold text-accent hover:underline disabled:opacity-60">
+            Kirim ulang kode
+          </button>
+        </div>
+      </form>
+    )
+  }
+
+  return (
+    <form onSubmit={send} noValidate className="flex flex-col gap-5">
+      <FormHeading title="Lupa kata sandi" body="Masukkan email akun Anda. Kami kirim kode 6 digit ke email itu untuk membuat kata sandi baru." />
+      <Field
+        id="lupa-email"
+        label="Email"
+        type="email"
+        autoComplete="username"
+        autoFocus
+        placeholder="nama@perusahaan.co.id"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        error={requestErr?.fields.email}
+      />
+      {requestErr && Object.keys(requestErr.fields).length === 0 && <ErrorLine attempt={attempt}>{requestErr.message}</ErrorLine>}
+      <Button type="submit" busy={request.isPending} disabled={!email.trim()} className="min-h-12">
+        Kirim kode
+      </Button>
+      {back}
+    </form>
   )
 }
 
