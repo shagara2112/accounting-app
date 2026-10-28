@@ -32,6 +32,8 @@ const icons = {
   assets: 'M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6M9 10h.01M15 10h.01',
   reports: 'M3 3v18h18M7 15l4-4 3 3 6-6M15 8h5v5',
   consol: 'M3 21h18M5 21V8l4-3v16M9 21V5l6 4v12M15 21V11l4-2v12',
+  budget: 'M21.2 15.9A10 10 0 1 1 8 2.8M22 12A10 10 0 0 0 12 2v10z',
+  panjar: 'M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1zM8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M9 14l2 2 4-4',
   imports: 'M12 3v12M7 10l5 5 5-5M5 21h14',
   branches: 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9',
   users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6',
@@ -51,6 +53,7 @@ export function Shell({ me }: { me: Me }) {
     can(me, 'sales.view') && { to: '/penjualan', label: 'Penjualan', icon: icons.sales },
     can(me, 'purchase.view') && { to: '/pembelian', label: 'Pembelian', icon: icons.purchase },
     can(me, 'cash.view') && { to: '/kas', label: 'Kas dan bank', icon: icons.cash },
+    (can(me, 'panjar.create') || can(me, 'panjar.view') || can(me, 'panjar.approve')) && { to: '/panjar', label: 'Panjar unit', icon: icons.panjar },
     can(me, 'tax.view') && !restricted && { to: '/pajak', label: 'Pajak', icon: icons.tax },
     can(me, 'core.contact.view') && { to: '/kontak', label: 'Kontak', icon: icons.contacts },
   ].filter((x) => x !== false)
@@ -122,6 +125,7 @@ export function Shell({ me }: { me: Me }) {
             <>
               <NavHeading>Laporan</NavHeading>
               {can(me, 'report.view') && <NavItem to="/laporan" label={restricted ? 'Laba rugi cabang' : 'Laporan keuangan'} icon={icons.reports} />}
+              {can(me, 'report.view') && !restricted && <NavItem to="/anggaran" label="Anggaran" icon={icons.budget} />}
               {can(me, 'consol.view') && !restricted && <NavItem to="/konsolidasi" label="Konsolidasi grup" icon={icons.consol} />}
             </>
           )}

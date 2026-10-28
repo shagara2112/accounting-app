@@ -72,7 +72,7 @@ export const topics: GuideTopic[] = [
         title: 'Menu dan izin',
         points: [
           'Menu di kiri hanya menampilkan halaman yang boleh Anda buka. Kartu "Yang bisa Anda lakukan di PT ini" di Beranda merangkum izin Anda.',
-          'Peran bawaan: Pemilik, Manager, Staf akuntansi, Staf pajak, Auditor, dan Admin pelanggan. Admin bisa membuat persona sendiri.',
+          'Peran bawaan: Pemilik, Manager, Staf akuntansi, Staf pajak, Auditor, Kepala unit, dan Admin pelanggan. Admin bisa membuat persona sendiri.',
           'Bila menu yang Anda butuhkan tidak ada, minta pengelola pengguna menambah izin Anda di menu Pengguna dan akses.',
         ],
       },
@@ -396,6 +396,52 @@ export const topics: GuideTopic[] = [
           'Kalau dicatat di Kas dan bank, piutang dan utangnya tidak berkurang.',
         ],
         note: 'Saldo rekening di halaman ini adalah saldo akun buku besarnya, jadi pelunasan dan pembayaran dari menu Penjualan dan Pembelian ikut terhitung.',
+      },
+    ],
+  },
+  {
+    id: 'panjar',
+    group: 'Transaksi',
+    title: 'Panjar unit',
+    summary: 'Kepala unit mengajukan kebutuhan unitnya sebelum membeli; finance menyetujui atau menolak.',
+    page: { to: '/panjar', label: 'Panjar unit' },
+    paths: ['/panjar'],
+    visible: (me) => can(me, 'panjar.create') || can(me, 'panjar.view') || can(me, 'panjar.approve'),
+    keywords: ['panjar', 'pengajuan', 'kasbon', 'uang muka kegiatan', 'permintaan dana', 'persetujuan', 'approval', 'kepala unit', 'unit'],
+    sections: [
+      {
+        title: 'Mengajukan panjar (kepala unit)',
+        steps: [
+          'Buka Panjar unit, lalu tekan Ajukan panjar.',
+          'Pilih unit (departemen), tanggal dibutuhkan bila ada, dan tulis keperluannya.',
+          'Isi rincian kebutuhan dan nominalnya; tambah baris bila lebih dari satu. Di bawahnya tampil sisa anggaran unit bila unit itu sudah punya anggaran.',
+          'Tekan Ajukan. Pengajuan mendapat nomor PNJ dan menunggu keputusan finance.',
+        ],
+        note: 'Selama belum diputuskan, pengajuan bisa diubah atau dibatalkan oleh pengajunya. Kepala unit hanya melihat pengajuannya sendiri.',
+      },
+      {
+        title: 'Menyetujui atau menolak (finance)',
+        steps: [
+          'Buka Panjar unit. Tab Menunggu berisi pengajuan yang belum diputuskan.',
+          'Klik pengajuan untuk melihat rincian dan posisi anggaran unitnya.',
+          'Tekan Setujui (nominal boleh lebih kecil dari pengajuan) atau Tolak dengan alasan.',
+        ],
+        note: 'Pengajuan milik sendiri harus diputuskan pengguna finance lain.',
+      },
+      {
+        title: 'Membayar panjar yang disetujui',
+        steps: [
+          'Catat pembayarannya seperti biasa di Kas dan bank (pengeluaran) atau Pembelian, dengan departemen unit tersebut supaya masuk realisasi anggaran unit.',
+          'Kembali ke Panjar unit, buka pengajuannya, lalu tekan Tandai sudah dibayar dan isi tanggal serta nomor bukti pembayarannya.',
+        ],
+        note: 'Panjar unit hanya mencatat persetujuan; tidak membuat jurnal. Panjar yang disetujui tetapi belum dibayar mengurangi sisa anggaran unit yang ditampilkan.',
+      },
+      {
+        title: 'Memberi akses kepala unit',
+        points: [
+          'Di Pengguna dan akses, beri pengguna peran Kepala unit. Peran ini hanya bisa mengajukan panjar dan melihat pengajuannya sendiri.',
+          'Pemilik, Manager, dan Staf akuntansi bisa menyetujui, menolak, dan menandai panjar dibayar. Auditor hanya melihat.',
+        ],
       },
     ],
   },
@@ -737,6 +783,44 @@ export const topics: GuideTopic[] = [
 
   // Laporan ----------------------------------------------------------------------------
   {
+    id: 'anggaran',
+    group: 'Laporan',
+    title: 'Anggaran dan realisasi',
+    summary: 'Menyusun anggaran pendapatan dan beban per tahun buku, lalu memantau realisasinya.',
+    page: { to: '/anggaran', label: 'Anggaran' },
+    paths: ['/anggaran'],
+    visible: allow('report.view'),
+    keywords: ['anggaran', 'budget', 'rkap', 'rencana', 'realisasi', 'varians', 'selisih anggaran', 'revisi anggaran'],
+    sections: [
+      {
+        title: 'Menyusun anggaran',
+        steps: [
+          'Buka Laporan → Anggaran, pilih tahun buku, lalu tab Susun anggaran.',
+          'Tekan Buat anggaran untuk membuat versi Awal (langsung dipakai laporan).',
+          'Pilih Tingkat PT, atau satu departemen atau proyek bila anggarannya dirinci.',
+          'Isi kolom Setahun untuk membaginya rata ke 12 bulan, atau isi per bulan. Bisa juga tekan Isi dari realisasi tahun lalu dengan persen kenaikan.',
+          'Tekan Simpan anggaran.',
+        ],
+        note: 'Nominal diisi menurut saldo normal akun: pendapatan dan beban sama-sama angka positif. Hanya Pemilik dan Manager yang bisa menyusun anggaran.',
+      },
+      {
+        title: 'Revisi anggaran',
+        points: [
+          'Tekan Versi baru, beri nama (mis. Revisi 1) dan pilih Salin dari versi yang ada, lalu ubah angkanya.',
+          'Setelah siap, tekan Aktifkan. Laporan anggaran vs realisasi memakai versi yang aktif; versi lama tetap tersimpan sampai dihapus.',
+        ],
+      },
+      {
+        title: 'Anggaran vs realisasi',
+        points: [
+          'Tab Anggaran vs realisasi membandingkan anggaran dengan realisasi dari buku besar untuk rentang bulan yang dipilih, bisa per departemen atau proyek.',
+          'Kolom Sisa setahun menunjukkan anggaran setahun yang belum terpakai. Akun beban ditandai Mendekati batas bila realisasinya sudah 90% anggaran setahun, Melebihi bila lewat, dan Tanpa anggaran bila ada realisasi tanpa anggaran.',
+          'Realisasi per departemen hanya menghitung transaksi yang diberi departemen itu.',
+        ],
+      },
+    ],
+  },
+  {
     id: 'laporan',
     group: 'Laporan',
     title: 'Laporan keuangan',
@@ -749,9 +833,17 @@ export const topics: GuideTopic[] = [
       {
         title: 'Membuka laporan',
         steps: [
-          'Buka Laporan keuangan, pilih tab: Neraca, Laba rugi, Arus kas, Neraca saldo, Penjualan dan pembelian, atau Kartu kontak.',
+          'Buka Laporan keuangan, pilih tab: Neraca, Laba rugi, Arus kas, Neraca saldo, Rasio keuangan, Penjualan dan pembelian, atau Kartu kontak.',
           'Pilih periode: Bulan ini, Bulan lalu, atau Pilih tanggal.',
           'Laba rugi bisa dipilah per cabang dan departemen (lihat bagian di bawah).',
+        ],
+      },
+      {
+        title: 'Rasio keuangan',
+        points: [
+          'Tab Rasio keuangan menampilkan rasio lancar, rasio kas, utang terhadap ekuitas, margin laba kotor dan bersih, lama penagihan piutang (DSO), dan lama pembayaran utang (DPO) untuk 6 akhir bulan terakhir.',
+          'Neraca dihitung per akhir bulan; laba rugi sejak awal tahun buku. Label Sehat, Waspada, dan Perlu perhatian memakai panduan umum; bandingkan juga dengan bulan sebelumnya.',
+          'Aset lancar dihitung dari akun berkode 1-1…, liabilitas jangka pendek dari akun berkode 2-1…, kas dari rekening kas dan bank yang terdaftar.',
         ],
       },
       {
@@ -1094,6 +1186,11 @@ export const topics: GuideTopic[] = [
 ]
 
 export const faqs: Faq[] = [
+  {
+    q: 'Panjar unit sudah disetujui, apakah uangnya otomatis tercatat keluar?',
+    a: 'Tidak. Panjar unit hanya mencatat pengajuan dan persetujuan. Finance tetap mencatat pembayarannya di Kas dan bank atau Pembelian (dengan departemen unitnya), lalu menandai pengajuan sudah dibayar dengan nomor buktinya.',
+    topic: 'panjar',
+  },
   {
     q: 'Inventaris barang ada di menu mana?',
     a: 'Barang dagangan atau material yang dijual dan dipakai ada di Persediaan (stok, kartu stok, stock opname) dan Produk dan jasa (master barang). Peralatan kantor, kendaraan, mesin, dan gedung ada di Aset tetap.',

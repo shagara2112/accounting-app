@@ -107,6 +107,39 @@ type AssetDisposal struct {
 	VoidReason        *string
 }
 
+type BudgetBudget struct {
+	ID         uuid.UUID
+	CompanyID  uuid.UUID
+	FiscalYear int32
+	Name       string
+	Active     bool
+	CreatedAt  time.Time
+	CreatedBy  *uuid.UUID
+	UpdatedAt  time.Time
+	Version    int32
+}
+
+type BudgetLine struct {
+	ID           uuid.UUID
+	CompanyID    uuid.UUID
+	BudgetID     uuid.UUID
+	AccountID    uuid.UUID
+	DepartmentID *uuid.UUID
+	ProjectID    *uuid.UUID
+	M01          money.Amount
+	M02          money.Amount
+	M03          money.Amount
+	M04          money.Amount
+	M05          money.Amount
+	M06          money.Amount
+	M07          money.Amount
+	M08          money.Amount
+	M09          money.Amount
+	M10          money.Amount
+	M11          money.Amount
+	M12          money.Amount
+}
+
 type CashAccount struct {
 	CompanyID     uuid.UUID
 	AccountID     uuid.UUID
@@ -527,6 +560,37 @@ type LedgerSetting struct {
 	FiscalYearStartMonth int16
 	UpdatedAt            time.Time
 	UpdatedBy            *uuid.UUID
+}
+
+type PanjarLine struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	RequestID   uuid.UUID
+	LineNo      int16
+	Description string
+	AccountID   *uuid.UUID
+	Amount      money.Amount
+}
+
+type PanjarRequest struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	DepartmentID   uuid.UUID
+	RequestDate    civil.Date
+	NeededDate     *civil.Date
+	Purpose        string
+	Total          money.Amount
+	Status         string
+	ApprovedAmount *money.Amount
+	DecidedAt      *time.Time
+	DecidedBy      *uuid.UUID
+	DecisionNote   string
+	PaidAt         *civil.Date
+	PaidRef        string
+	CreatedAt      time.Time
+	CreatedBy      uuid.UUID
+	Version        int32
 }
 
 type PlatformAttachment struct {

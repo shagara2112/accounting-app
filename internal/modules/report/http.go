@@ -25,6 +25,7 @@ func Routes(svc Service) []api.Route {
 	return []api.Route{
 		view("/api/v1/reports/dashboard", h.dashboard),
 		view("/api/v1/reports/cash-projection", h.cashProjection),
+		view("/api/v1/reports/ratios", h.ratios),
 		view("/api/v1/reports/balance-sheet", h.json(h.balanceSheet)),
 		view("/api/v1/reports/profit-loss", h.json(h.profitLoss)),
 		view("/api/v1/reports/cash-flow", h.json(h.cashFlow)),
@@ -36,6 +37,22 @@ func Routes(svc Service) []api.Route {
 }
 
 type handlers struct{ svc Service }
+
+func (h handlers) ratios(w http.ResponseWriter, r *http.Request) error {
+	month := civil.Today(civil.Jakarta).MonthStart()
+	if v := r.URL.Query().Get("month"); v != "" {
+		m, err := civil.ParseMonth(v)
+		if err != nil {
+			return httpx.BadRequest("request.query", err.Error())
+		}
+		month = m
+	}
+	out, err := h.svc.Ratios(r.Context(), api.CompanyID(r), month, 6)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
+}
 
 // built adalah laporan yang sudah dihitung beserta tabel ekspornya.
 type built struct {

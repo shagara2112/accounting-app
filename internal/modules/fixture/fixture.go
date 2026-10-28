@@ -12,11 +12,13 @@ import (
 
 	"lajur/internal/ledger"
 	"lajur/internal/modules/asset"
+	"lajur/internal/modules/budget"
 	"lajur/internal/modules/cash"
 	"lajur/internal/modules/consol"
 	"lajur/internal/modules/core"
 	"lajur/internal/modules/imports"
 	"lajur/internal/modules/inventory"
+	"lajur/internal/modules/panjar"
 	"lajur/internal/modules/project"
 	"lajur/internal/modules/purchase"
 	"lajur/internal/modules/report"
@@ -46,6 +48,8 @@ type Env struct {
 	Coretax   coretax.Service
 	Project   project.Service
 	Asset     asset.Service
+	Budget    budget.Service
+	Panjar    panjar.Service
 	Report    report.Service
 	Consol    consol.Service
 	Imports   imports.Service
@@ -72,6 +76,8 @@ func NewWith(t testing.TB, industry string) *Env {
 	m := server.Modules(pool)
 	e.Core, e.Ledger, e.Tax, e.Cash, e.Sales, e.Purchase, e.Coretax = m.Core, m.Ledger, m.Tax, m.Cash, m.Sales, m.Purchase, m.Coretax
 	e.Inventory, e.Project, e.Report, e.Consol, e.Imports, e.Asset = m.Inventory, m.Project, m.Report, m.Consol, m.Imports, m.Asset
+	e.Budget = m.Budget
+	e.Panjar = m.Panjar
 	e.Actor = audit.Actor{UserID: e.user("akuntansi@uji.test"), IP: "127.0.0.1"}
 	e.Other = audit.Actor{UserID: e.user("akuntansi2@uji.test"), IP: "127.0.0.1"}
 	e.setup("PT Uji "+industry, industry)

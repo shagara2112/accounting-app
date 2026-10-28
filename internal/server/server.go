@@ -18,12 +18,14 @@ import (
 	"lajur/internal/ledger"
 	"lajur/internal/modules/admin"
 	"lajur/internal/modules/asset"
+	"lajur/internal/modules/budget"
 	"lajur/internal/modules/cash"
 	"lajur/internal/modules/consol"
 	"lajur/internal/modules/core"
 	"lajur/internal/modules/docs"
 	"lajur/internal/modules/imports"
 	"lajur/internal/modules/inventory"
+	"lajur/internal/modules/panjar"
 	"lajur/internal/modules/project"
 	"lajur/internal/modules/purchase"
 	"lajur/internal/modules/report"
@@ -77,6 +79,8 @@ type Services struct {
 	Coretax   coretax.Service
 	Project   project.Service
 	Asset     asset.Service
+	Budget    budget.Service
+	Panjar    panjar.Service
 	Report    report.Service
 	Consol    consol.Service
 	Imports   imports.Service
@@ -149,6 +153,8 @@ func Modules(pool *pgxpool.Pool) Services {
 	m.Coretax = coretax.New(coretax.Deps{Pool: pool, Core: m.Core, Tax: m.Tax, Sales: m.Sales, Purchase: m.Purchase, Ledger: m.Ledger})
 	m.Project = project.New(project.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Tax: m.Tax, Sales: m.Sales})
 	m.Asset = asset.New(asset.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core})
+	m.Budget = budget.New(budget.Deps{Pool: pool, Ledger: m.Ledger})
+	m.Panjar = panjar.New(panjar.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Budget: m.Budget})
 	m.Report = report.New(report.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Cash: m.Cash, Sales: m.Sales, Purchase: m.Purchase})
 	m.Consol = consol.New(consol.Deps{Pool: pool, Core: m.Core, Ledger: m.Ledger, Sales: m.Sales, Purchase: m.Purchase, Report: m.Report})
 	m.Imports = imports.New(imports.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Inventory: m.Inventory, Sales: m.Sales, Purchase: m.Purchase})
@@ -212,7 +218,8 @@ func New(d Deps) (http.Handler, *api.API) {
 	for _, group := range [][]api.Route{
 		ledger.Routes(d.Ledger), tax.Routes(d.Tax), cash.Routes(d.Cash), sales.Routes(d.Sales), purchase.Routes(d.Purchase),
 		coretax.Routes(d.Coretax), inventory.Routes(d.Inventory), project.Routes(d.Project), report.Routes(d.Report),
-		consol.Routes(d.Consol), imports.Routes(d.Imports), asset.Routes(d.Asset),
+		consol.Routes(d.Consol), imports.Routes(d.Imports), asset.Routes(d.Asset), budget.Routes(d.Budget),
+		panjar.Routes(d.Panjar),
 	} {
 		for _, rt := range group {
 			a.Add(markWholeCompany(rt))
@@ -319,7 +326,7 @@ var wholeCompanyPrefixes = []string{
 	"/api/v1/ledger/recurring", "/api/v1/ledger/number-formats",
 	"/api/v1/tax/", "/api/v1/consol/", "/api/v1/imports", "/api/v1/cash/reconciliations",
 	"/api/v1/inventory/stock", "/api/v1/inventory/card", "/api/v1/inventory/adjustments",
-	"/api/v1/reports/", "/api/v1/assets",
+	"/api/v1/reports/", "/api/v1/assets", "/api/v1/budgets",
 }
 
 func markWholeCompany(rt api.Route) api.Route {

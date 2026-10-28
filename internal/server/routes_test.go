@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -35,8 +36,10 @@ func TestEveryRouteDeclaresLicenseAndPermission(t *testing.T) {
 		if rt.Access == api.Public && !publicAllowed[key] {
 			t.Errorf("%s bisa diakses tanpa sesi", key)
 		}
-		if rt.Access == api.Permission && !catalog.Has(rt.Perm) {
-			t.Errorf("%s memakai izin di luar katalog: %q", key, rt.Perm)
+		for _, perm := range strings.Split(rt.Perm, "|") {
+			if rt.Access == api.Permission && !catalog.Has(perm) {
+				t.Errorf("%s memakai izin di luar katalog: %q", key, perm)
+			}
 		}
 		// Ekspor boleh memakai mode Export walau menulis riwayat ekspor: ekspor tidak pernah dikunci.
 		if rt.Method != "GET" && rt.Access == api.Permission &&

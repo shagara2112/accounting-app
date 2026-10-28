@@ -83,6 +83,8 @@ type Service interface {
 	Dashboard(ctx context.Context, companyID uuid.UUID, today civil.Date) (Dashboard, error)
 	// CashProjection memproyeksikan saldo kas per minggu dari piutang dan utang jatuh tempo (AP-06).
 	CashProjection(ctx context.Context, companyID uuid.UUID, asOf civil.Date, weeks int) (CashProjection, error)
+	// Ratios menghitung rasio keuangan per akhir bulan untuk `months` bulan s.d. month (RPT-09).
+	Ratios(ctx context.Context, companyID uuid.UUID, month civil.Date, months int) (Ratios, error)
 
 	// Net mengembalikan debit − kredit per akun untuk rentang [from, to]; dipakai konsolidasi.
 	Net(ctx context.Context, companyID uuid.UUID, from, to civil.Date, skipClosing bool) (map[uuid.UUID]money.Amount, error)
