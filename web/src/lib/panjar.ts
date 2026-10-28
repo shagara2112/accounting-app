@@ -50,6 +50,12 @@ export type UnitBudget = {
   remaining: string
 }
 
+/** Pengguna yang dibatasi ke unit tertentu (mis. Kepala unit) dan unit yang dikelolanya. */
+export type UnitHead = { userId: string; name: string; email: string; active: boolean; roleName: string; departmentIds: string[] }
+
+/** restricted: pembaca hanya mengelola units (ditetapkan Manager atau Pemilik). */
+export type PanjarList = { items: Panjar[]; pending: number; restricted: boolean; units?: string[] }
+
 export const statusLabel: Record<PanjarStatus, string> = {
   diajukan: 'Menunggu keputusan',
   disetujui: 'Disetujui',
@@ -63,7 +69,7 @@ const key = (companyId: string | null, ...rest: unknown[]) => ['panjar', company
 export function usePanjarList(companyId: string | null) {
   return useQuery({
     queryKey: key(companyId, 'list'),
-    queryFn: () => api<{ items: Panjar[]; pending: number }>('GET', '/panjar'),
+    queryFn: () => api<PanjarList>('GET', '/panjar'),
     enabled: companyId !== null,
   })
 }
@@ -115,6 +121,22 @@ export function usePaidPanjar(companyId: string | null) {
   const invalidate = useInvalidateCompany(companyId)
   return useMutation({
     mutationFn: ({ id, ...v }: { id: string; date: string; ref: string; version: number }) => api<PanjarDetail>('POST', `/panjar/${id}/paid`, v),
+    onSuccess: invalidate,
+  })
+}
+
+export function useUnitHeads(companyId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: key(companyId, 'unit-heads'),
+    queryFn: async () => (await api<{ items: UnitHead[] }>('GET', '/panjar/unit-heads')).items,
+    enabled: companyId !== null && enabled,
+  })
+}
+
+export function useSetUnits(companyId: string | null) {
+  const invalidate = useInvalidateCompany(companyId)
+  return useMutation({
+    mutationFn: ({ userId, departmentIds }: { userId: string; departmentIds: string[] }) => api<UnitHead>('PUT', `/panjar/unit-heads/${userId}`, { departmentIds }),
     onSuccess: invalidate,
   })
 }

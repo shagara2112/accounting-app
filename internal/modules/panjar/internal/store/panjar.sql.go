@@ -14,6 +14,28 @@ import (
 	"lajur/internal/platform/money"
 )
 
+const addUnits = `-- name: AddUnits :exec
+INSERT INTO panjar.unit_heads (company_id, user_id, department_id, created_by)
+SELECT $1, $2, unnest($3::uuid[]), $4::uuid
+`
+
+type AddUnitsParams struct {
+	CompanyID     uuid.UUID
+	UserID        uuid.UUID
+	DepartmentIds []uuid.UUID
+	CreatedBy     *uuid.UUID
+}
+
+func (q *Queries) AddUnits(ctx context.Context, arg AddUnitsParams) error {
+	_, err := q.db.Exec(ctx, addUnits,
+		arg.CompanyID,
+		arg.UserID,
+		arg.DepartmentIds,
+		arg.CreatedBy,
+	)
+	return err
+}
+
 const cancelRequest = `-- name: CancelRequest :execrows
 UPDATE panjar.requests SET status = 'dibatalkan', version = version + 1
 WHERE company_id = $1 AND id = $2 AND status = 'diajukan' AND version = $3
@@ -31,6 +53,20 @@ func (q *Queries) CancelRequest(ctx context.Context, arg CancelRequestParams) (i
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const clearUnits = `-- name: ClearUnits :exec
+DELETE FROM panjar.unit_heads WHERE company_id = $1 AND user_id = $2
+`
+
+type ClearUnitsParams struct {
+	CompanyID uuid.UUID
+	UserID    uuid.UUID
+}
+
+func (q *Queries) ClearUnits(ctx context.Context, arg ClearUnitsParams) error {
+	_, err := q.db.Exec(ctx, clearUnits, arg.CompanyID, arg.UserID)
+	return err
 }
 
 const committed = `-- name: Committed :one
@@ -284,9 +320,10 @@ JOIN core.departments d ON d.id = r.department_id
 JOIN platform.users cu ON cu.id = r.created_by
 WHERE r.company_id = $1
   AND r.request_date >= $2 AND r.request_date <= $3
-  AND ($4::uuid IS NULL OR r.created_by = $4::uuid)
-  AND ($5::text IS NULL OR r.status = $5::text)
-  AND ($6::uuid IS NULL OR r.department_id = $6::uuid)
+  -- Pembaca terbatas (kepala unit): pengajuannya sendiri dan pengajuan unit yang dikelolanya.
+  AND ($4::uuid IS NULL OR r.created_by = $4::uuid OR r.department_id = ANY($5::uuid[]))
+  AND ($6::text IS NULL OR r.status = $6::text)
+  AND ($7::uuid IS NULL OR r.department_id = $7::uuid)
 ORDER BY r.request_date DESC, r.id DESC
 LIMIT 500
 `
@@ -295,7 +332,8 @@ type ListRequestsParams struct {
 	CompanyID    uuid.UUID
 	FromDate     civil.Date
 	ToDate       civil.Date
-	CreatedBy    *uuid.UUID
+	Viewer       *uuid.UUID
+	Units        []uuid.UUID
 	Status       *string
 	DepartmentID *uuid.UUID
 }
@@ -329,7 +367,8 @@ func (q *Queries) ListRequests(ctx context.Context, arg ListRequestsParams) ([]L
 		arg.CompanyID,
 		arg.FromDate,
 		arg.ToDate,
-		arg.CreatedBy,
+		arg.Viewer,
+		arg.Units,
 		arg.Status,
 		arg.DepartmentID,
 	)
@@ -400,6 +439,26 @@ func (q *Queries) MarkPaid(ctx context.Context, arg MarkPaidParams) (int64, erro
 	return result.RowsAffected(), nil
 }
 
+const memberPerms = `-- name: MemberPerms :one
+SELECT r.permissions FROM core.user_company_roles ucr
+JOIN platform.roles r ON r.id = ucr.role_id
+WHERE ucr.company_id = $1 AND ucr.user_id = $2
+FOR UPDATE OF ucr
+`
+
+type MemberPermsParams struct {
+	CompanyID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// Izin peran pengguna di PT ini; tidak ada baris bila pengguna tidak punya akses ke PT itu.
+func (q *Queries) MemberPerms(ctx context.Context, arg MemberPermsParams) ([]string, error) {
+	row := q.db.QueryRow(ctx, memberPerms, arg.CompanyID, arg.UserID)
+	var permissions []string
+	err := row.Scan(&permissions)
+	return permissions, err
+}
+
 const requestLines = `-- name: RequestLines :many
 SELECT l.id, l.company_id, l.request_id, l.line_no, l.description, l.account_id, l.amount, a.code AS account_code, a.name AS account_name
 FROM panjar.lines l
@@ -455,6 +514,70 @@ func (q *Queries) RequestLines(ctx context.Context, arg RequestLinesParams) ([]R
 	return items, nil
 }
 
+const unitHeads = `-- name: UnitHeads :many
+SELECT u.id, u.name, u.email, u.active, r.name AS role_name,
+       coalesce(array_agg(h.department_id ORDER BY d.code) FILTER (WHERE h.department_id IS NOT NULL), '{}')::uuid[] AS department_ids
+FROM core.user_company_roles ucr
+JOIN platform.users u ON u.id = ucr.user_id
+JOIN platform.roles r ON r.id = ucr.role_id
+LEFT JOIN panjar.unit_heads h ON h.company_id = ucr.company_id AND h.user_id = ucr.user_id
+LEFT JOIN core.departments d ON d.company_id = h.company_id AND d.id = h.department_id
+WHERE ucr.company_id = $1 AND $2::text = ANY(r.permissions)
+  AND NOT ($3::text = ANY(r.permissions)) AND NOT ($4::text = ANY(r.permissions))
+GROUP BY u.id, u.name, u.email, u.active, r.name
+ORDER BY lower(u.name), u.email
+`
+
+type UnitHeadsParams struct {
+	CompanyID   uuid.UUID
+	CreatePerm  string
+	ViewPerm    string
+	ApprovePerm string
+}
+
+type UnitHeadsRow struct {
+	ID            uuid.UUID
+	Name          string
+	Email         string
+	Active        bool
+	RoleName      string
+	DepartmentIds []uuid.UUID
+}
+
+// Pengguna PT ini yang bisa mengajukan panjar tetapi tidak melihat semua dan tidak memutuskan,
+// beserta unit yang dikelolanya.
+func (q *Queries) UnitHeads(ctx context.Context, arg UnitHeadsParams) ([]UnitHeadsRow, error) {
+	rows, err := q.db.Query(ctx, unitHeads,
+		arg.CompanyID,
+		arg.CreatePerm,
+		arg.ViewPerm,
+		arg.ApprovePerm,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UnitHeadsRow
+	for rows.Next() {
+		var i UnitHeadsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.Active,
+			&i.RoleName,
+			&i.DepartmentIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateRequest = `-- name: UpdateRequest :execrows
 UPDATE panjar.requests
 SET department_id = $1, needed_date = $2, purpose = $3, total = $4, version = version + 1
@@ -485,4 +608,34 @@ func (q *Queries) UpdateRequest(ctx context.Context, arg UpdateRequestParams) (i
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const userUnits = `-- name: UserUnits :many
+SELECT department_id FROM panjar.unit_heads WHERE company_id = $1 AND user_id = $2
+`
+
+type UserUnitsParams struct {
+	CompanyID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// Unit yang dikelola seorang kepala unit.
+func (q *Queries) UserUnits(ctx context.Context, arg UserUnitsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, userUnits, arg.CompanyID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var department_id uuid.UUID
+		if err := rows.Scan(&department_id); err != nil {
+			return nil, err
+		}
+		items = append(items, department_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

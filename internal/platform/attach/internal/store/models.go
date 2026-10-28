@@ -593,6 +593,14 @@ type PanjarRequest struct {
 	Version        int32
 }
 
+type PanjarUnitHead struct {
+	CompanyID    uuid.UUID
+	UserID       uuid.UUID
+	DepartmentID uuid.UUID
+	CreatedAt    time.Time
+	CreatedBy    *uuid.UUID
+}
+
 type PlatformAttachment struct {
 	ID          uuid.UUID
 	CompanyID   uuid.UUID

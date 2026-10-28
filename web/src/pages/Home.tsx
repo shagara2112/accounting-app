@@ -18,6 +18,7 @@ const abilities: [string, string][] = [
   ['approval.manage', 'Menyetujui transaksi'],
   ['panjar.create', 'Mengajukan panjar unit'],
   ['panjar.approve', 'Menyetujui panjar unit'],
+  ['panjar.unit.manage', 'Menetapkan unit kepala unit'],
   ['tax.export', 'Mengekspor XML Coretax'],
   ['platform.audit.view', 'Melihat audit trail'],
   ['data.export', 'Mengekspor data'],

@@ -14,8 +14,9 @@ import (
 	"lajur/internal/platform/rbac"
 )
 
-// Routes: daftar dan rincian pengajuan untuk pengaju (hanya miliknya) dan peninjau (semua),
-// pengajuan dan perubahannya oleh kepala unit, serta keputusan dan tanda bayar oleh finance.
+// Routes: daftar dan rincian pengajuan untuk kepala unit (unitnya dan miliknya) dan peninjau
+// (semua), pengajuan dan perubahannya oleh kepala unit, keputusan dan tanda bayar oleh finance,
+// serta penetapan unit kepala unit oleh Manager atau Pemilik.
 func Routes(svc Service) []api.Route {
 	h := handlers{svc: svc}
 	read := rbac.PanjarView + "|" + rbac.PanjarCreate
@@ -32,6 +33,8 @@ func Routes(svc Service) []api.Route {
 		route(http.MethodGet, "/api/v1/panjar", read, h.list),
 		create,
 		route(http.MethodGet, "/api/v1/panjar/unit-budget", read, h.unitBudget),
+		route(http.MethodGet, "/api/v1/panjar/unit-heads", rbac.PanjarUnits, h.unitHeads),
+		route(http.MethodPut, "/api/v1/panjar/unit-heads/{userId}", rbac.PanjarUnits, h.setUnits),
 		route(http.MethodGet, "/api/v1/panjar/{id}", read, h.get),
 		route(http.MethodPut, "/api/v1/panjar/{id}", rbac.PanjarCreate, h.update),
 		route(http.MethodPost, "/api/v1/panjar/{id}/cancel", rbac.PanjarCreate, h.cancel),
@@ -42,7 +45,8 @@ func Routes(svc Service) []api.Route {
 
 type handlers struct{ svc Service }
 
-// viewer: peninjau (izin lihat atau memutuskan) melihat semua pengajuan; pengaju hanya miliknya.
+// viewer: peninjau (izin lihat atau memutuskan) tidak dibatasi; pengaju lain dibatasi ke unit yang
+// ditetapkan untuknya.
 func viewer(r *http.Request) Viewer {
 	v := Viewer{UserID: auth.ActorFrom(r).UserID}
 	if s, ok := rbac.ScopeFrom(r.Context()); ok {
@@ -112,7 +116,7 @@ func (h handlers) create(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		return err
 	}
-	d, err := h.svc.Create(r.Context(), api.CompanyID(r), in, auth.ActorFrom(r))
+	d, err := h.svc.Create(r.Context(), api.CompanyID(r), in, viewer(r), auth.ActorFrom(r))
 	if err != nil {
 		return err
 	}
@@ -128,7 +132,7 @@ func (h handlers) update(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		return err
 	}
-	d, err := h.svc.Update(r.Context(), api.CompanyID(r), id, in, auth.ActorFrom(r))
+	d, err := h.svc.Update(r.Context(), api.CompanyID(r), id, in, viewer(r), auth.ActorFrom(r))
 	if err != nil {
 		return err
 	}
@@ -190,9 +194,35 @@ func (h handlers) unitBudget(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.BadRequest("request.query", "Pilih unit (departemen).")
 	}
-	b, err := h.svc.UnitBudget(r.Context(), api.CompanyID(r), id, civil.Today(civil.Jakarta))
+	b, err := h.svc.UnitBudget(r.Context(), api.CompanyID(r), id, viewer(r), civil.Today(civil.Jakarta))
 	if err != nil {
 		return err
 	}
 	return httpx.WriteJSON(w, http.StatusOK, b)
+}
+
+func (h handlers) unitHeads(w http.ResponseWriter, r *http.Request) error {
+	list, err := h.svc.UnitHeads(r.Context(), api.CompanyID(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h handlers) setUnits(w http.ResponseWriter, r *http.Request) error {
+	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
+	if err != nil {
+		return httpx.NotFound("panjar.not_unit_head", "Pengguna tidak ditemukan.")
+	}
+	var in struct {
+		DepartmentIDs []uuid.UUID `json:"departmentIds"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	u, err := h.svc.SetUnits(r.Context(), api.CompanyID(r), userID, in.DepartmentIDs, auth.ActorFrom(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, u)
 }

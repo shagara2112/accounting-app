@@ -14,15 +14,18 @@ import {
   usePanjar,
   usePanjarList,
   useSavePanjar,
+  useSetUnits,
   useUnitBudget,
+  useUnitHeads,
   type Panjar,
   type PanjarDetail,
   type PanjarStatus,
+  type UnitHead,
 } from '../lib/panjar'
 import { can } from '../lib/session'
 import { AccountPicker } from '../components/AccountPicker'
 import { useToast } from '../components/Toast'
-import { Alert, Badge, Button, Dialog, Drawer, EmptyState, Field, PageHeader, SelectField, Skeleton, TableShell, Tabs, TextAreaField, ease, td, th, type Tone } from '../components/ui'
+import { Alert, Badge, Button, Checkbox, Dialog, Drawer, EmptyState, Field, PageHeader, SelectField, Skeleton, TableShell, Tabs, TextAreaField, ease, td, th, type Tone } from '../components/ui'
 
 type Filter = PanjarStatus | 'semua'
 
@@ -45,6 +48,10 @@ export function PanjarPage({ me }: { me: Me }) {
   const filter = (params.get('status') as Filter | null) ?? (canApprove ? 'diajukan' : 'semua')
   const openId = params.get('id')
   const [form, setForm] = useState<{ edit?: PanjarDetail } | null>(null)
+  const [heads, setHeads] = useState(false)
+  const departments = useDimensions(me.activeCompanyId, 'departemen').data ?? []
+  // Kepala unit hanya mengelola unit yang ditetapkan Manager atau Pemilik; null = tidak dibatasi.
+  const units = list.data?.restricted ? (list.data.units ?? []) : null
   const set = (patch: Record<string, string>) => {
     const next = new URLSearchParams(params)
     for (const [k, v] of Object.entries(patch)) {
@@ -79,16 +86,37 @@ export function PanjarPage({ me }: { me: Me }) {
             : 'Ajukan kebutuhan unit Anda sebelum membeli. Finance akan menyetujui atau menolak; uangnya dibayarkan dan dicatat oleh finance.'
         }
         actions={
-          canCreate && (
-            <Button onClick={() => setForm({})}>
-              <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              Ajukan panjar
-            </Button>
-          )
+          <>
+            {can(me, 'panjar.unit.manage') && (
+              <Button variant="secondary" onClick={() => setHeads(true)}>
+                Atur kepala unit
+              </Button>
+            )}
+            {canCreate && (
+              <Button onClick={() => setForm({})}>
+                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                Ajukan panjar
+              </Button>
+            )}
+          </>
         }
       />
+      {units &&
+        (units.length === 0 ? (
+          <Alert tone="warn">Anda belum ditetapkan sebagai kepala unit mana pun. Minta Manager atau Pemilik menetapkan unit Anda lewat Panjar unit → Atur kepala unit.</Alert>
+        ) : (
+          <p className="-mt-2 text-sm text-muted">
+            Unit Anda:{' '}
+            <span className="font-medium text-ink">
+              {departments
+                .filter((d) => units.includes(d.id))
+                .map((d) => `${d.code} · ${d.name}`)
+                .join(', ')}
+            </span>
+          </p>
+        ))}
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Stat label="Menunggu keputusan" count={by('diajukan').length} amount={sum(by('diajukan'), (p) => p.total)} tone="warn" loading={list.isPending} onClick={() => set({ status: 'diajukan' })} />
@@ -137,7 +165,7 @@ export function PanjarPage({ me }: { me: Me }) {
                 </td>
                 <td className={`${td} max-w-[320px]`}>
                   <span className="line-clamp-2">{p.purpose}</span>
-                  {reviewer && <span className="block text-[12.5px] text-muted">oleh {p.mine ? 'Anda' : p.createdByName}</span>}
+                  {(reviewer || !p.mine) && <span className="block text-[12.5px] text-muted">oleh {p.mine ? 'Anda' : p.createdByName}</span>}
                 </td>
                 <td className={`${td} num text-right`}>{formatAmount(p.total)}</td>
                 <td className={`${td} num text-right font-semibold`}>{p.approvedAmount ? formatAmount(p.approvedAmount) : <span className="text-muted">—</span>}</td>
@@ -152,7 +180,8 @@ export function PanjarPage({ me }: { me: Me }) {
       )}
 
       <PanjarDrawer me={me} id={openId} onClose={() => set({ id: '' })} onEdit={(d) => setForm({ edit: d })} />
-      {form && <PanjarForm me={me} edit={form.edit} onClose={() => setForm(null)} onSaved={(id) => (setForm(null), set({ id }))} />}
+      {form && <PanjarForm me={me} edit={form.edit} units={units} onClose={() => setForm(null)} onSaved={(id) => (setForm(null), set({ id }))} />}
+      {heads && <UnitHeadsDrawer me={me} onClose={() => setHeads(false)} />}
     </div>
   )
 }
@@ -500,10 +529,13 @@ type Row = { key: number; description: string; accountId: string; amount: string
 let rowKey = 0
 const blankRow = (): Row => ({ key: ++rowKey, description: '', accountId: '', amount: '' })
 
-function PanjarForm({ me, edit, onClose, onSaved }: { me: Me; edit?: PanjarDetail; onClose: () => void; onSaved: (id: string) => void }) {
+/** units: unit yang boleh dipakai kepala unit; null = semua unit aktif. */
+function PanjarForm({ me, edit, units, onClose, onSaved }: { me: Me; edit?: PanjarDetail; units: string[] | null; onClose: () => void; onSaved: (id: string) => void }) {
   const toast = useToast()
   const save = useSavePanjar(me.activeCompanyId)
-  const departments = (useDimensions(me.activeCompanyId, 'departemen').data ?? []).filter((d) => d.active || d.id === edit?.departmentId)
+  const departments = (useDimensions(me.activeCompanyId, 'departemen').data ?? []).filter(
+    (d) => (d.active || d.id === edit?.departmentId) && (units === null || units.includes(d.id)),
+  )
   const withAccounts = can(me, 'ledger.view')
   const [departmentId, setDepartmentId] = useState(edit?.departmentId ?? '')
   const [neededDate, setNeededDate] = useState(edit?.neededDate ?? '')
@@ -558,14 +590,16 @@ function PanjarForm({ me, edit, onClose, onSaved }: { me: Me; edit?: PanjarDetai
           <Button variant="ghost" onClick={onClose}>
             Batal
           </Button>
-          <Button type="submit" form="panjar-form" busy={save.isPending}>
+          <Button type="submit" form="panjar-form" busy={save.isPending} disabled={departments.length === 0}>
             {edit ? 'Simpan perubahan' : 'Ajukan'}
           </Button>
         </>
       }
     >
       <form id="panjar-form" onSubmit={submit} className="flex flex-col gap-4">
-        {departments.length === 0 ? (
+        {departments.length === 0 && units !== null ? (
+          <Alert tone="warn">Anda belum ditetapkan sebagai kepala unit mana pun. Minta Manager atau Pemilik menetapkan unit Anda lewat Panjar unit → Atur kepala unit.</Alert>
+        ) : departments.length === 0 ? (
           <Alert tone="warn">
             Belum ada departemen aktif di PT ini. {can(me, 'core.company.edit') ? <Link to="/cabang" className="font-semibold underline">Tambahkan departemen</Link> : 'Minta admin menambahkan departemen'} untuk setiap unit dulu.
           </Alert>
@@ -647,5 +681,98 @@ function AccountCell({ me, id, value, onChange, error }: { me: Me; id: string; v
       <AccountPicker id={id} accounts={accounts} value={value} onChange={onChange} invalid={!!error} placeholder="Kode atau nama" />
       {error && <p className="text-[12.5px] text-bad">{error}</p>}
     </div>
+  )
+}
+
+// Kepala unit -------------------------------------------------------------------------------------
+
+/** Manager atau Pemilik menetapkan unit (departemen) yang dikelola setiap kepala unit. */
+function UnitHeadsDrawer({ me, onClose }: { me: Me; onClose: () => void }) {
+  const heads = useUnitHeads(me.activeCompanyId, true)
+  const departments = useDimensions(me.activeCompanyId, 'departemen').data ?? []
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      title="Atur kepala unit"
+      description="Kepala unit hanya bisa mengajukan panjar, melihat pengajuan, dan melihat anggaran untuk unit yang dicentang di sini."
+    >
+      {heads.isPending && <Skeleton className="h-32" />}
+      {heads.error && <Alert>{heads.error.message}</Alert>}
+      {heads.data?.length === 0 && (
+        <EmptyState
+          title="Belum ada kepala unit di PT ini"
+          body={
+            <>
+              Beri pengguna peran Kepala unit di {can(me, 'platform.user.manage') ? <Link to="/pengguna" className="font-medium text-accent hover:underline">Pengguna dan akses</Link> : 'Pengguna dan akses'}, lalu
+              tetapkan unitnya di sini.
+            </>
+          }
+        />
+      )}
+      {departments.length === 0 && heads.data && heads.data.length > 0 && (
+        <Alert tone="warn">Belum ada departemen di PT ini. Tambahkan departemen untuk setiap unit dulu.</Alert>
+      )}
+      {heads.data?.map((h) => <UnitHeadCard key={h.userId} me={me} head={h} />)}
+    </Drawer>
+  )
+}
+
+function UnitHeadCard({ me, head }: { me: Me; head: UnitHead }) {
+  const toast = useToast()
+  const save = useSetUnits(me.activeCompanyId)
+  const departments = (useDimensions(me.activeCompanyId, 'departemen').data ?? []).filter((d) => d.active || head.departmentIds.includes(d.id))
+  const [picked, setPicked] = useState(head.departmentIds)
+  const dirty = picked.length !== head.departmentIds.length || picked.some((id) => !head.departmentIds.includes(id))
+  const toggle = (id: string, on: boolean) => setPicked((p) => (on ? [...p, id] : p.filter((x) => x !== id)))
+  return (
+    <section className="flex shrink-0 flex-col gap-3 rounded-[12px] border border-line p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold">
+            {head.name}
+            {!head.active && (
+              <Badge tone="neutral" className="ml-2">
+                Nonaktif
+              </Badge>
+            )}
+          </p>
+          <p className="truncate text-[13px] text-muted">
+            {head.email} · {head.roleName}
+          </p>
+        </div>
+        <Badge tone={head.departmentIds.length === 0 ? 'warn' : 'accent'}>{head.departmentIds.length === 0 ? 'Belum ada unit' : `${head.departmentIds.length} unit`}</Badge>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {departments.map((d) => (
+          <Checkbox
+            key={d.id}
+            label={
+              <>
+                <span className="num text-muted">{d.code}</span> {d.name}
+                {!d.active && <span className="text-muted"> (nonaktif)</span>}
+              </>
+            }
+            checked={picked.includes(d.id)}
+            onChange={(on) => toggle(d.id, on)}
+          />
+        ))}
+      </div>
+      {save.error && <Alert>{save.error.message}</Alert>}
+      {dirty && (
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setPicked(head.departmentIds)}>
+            Batal
+          </Button>
+          <Button
+            size="sm"
+            busy={save.isPending}
+            onClick={() => save.mutate({ userId: head.userId, departmentIds: picked }, { onSuccess: (h) => (toast(`Unit ${h.name} disimpan`), setPicked(h.departmentIds)) })}
+          >
+            Simpan
+          </Button>
+        </div>
+      )}
+    </section>
   )
 }

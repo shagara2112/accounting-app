@@ -2,13 +2,15 @@
 // unitnya (departemen) sebelum membeli, lalu finance menyetujui (boleh dengan nominal lebih kecil)
 // atau menolak. Lajur hanya mencatat pengajuan dan keputusannya; uangnya tetap dibayar dan
 // dicatat finance seperti biasa di Kas dan bank atau Pembelian, lalu pengajuannya ditandai
-// sudah dibayar dengan nomor bukti pembayaran itu.
+// sudah dibayar dengan nomor bukti pembayaran itu. Unit yang dikelola setiap kepala unit
+// ditetapkan Manager atau Pemilik.
 package panjar
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -26,6 +28,7 @@ import (
 	"lajur/internal/platform/db"
 	"lajur/internal/platform/httpx"
 	"lajur/internal/platform/money"
+	"lajur/internal/platform/rbac"
 )
 
 const (
@@ -106,8 +109,10 @@ type Payment struct {
 	Version int        `json:"version"`
 }
 
-// Viewer adalah pembaca. All = boleh melihat semua pengajuan di PT ini (panjar.view); selain itu
-// hanya pengajuannya sendiri.
+// Viewer adalah pengguna request. All = peninjau (izin lihat semua atau memutuskan): melihat semua
+// pengajuan dan boleh mengajukan untuk unit mana pun. Selain itu (kepala unit) hanya unit yang
+// ditetapkan untuknya: mengajukan untuk unit itu, melihat pengajuan unit itu dan pengajuannya
+// sendiri, serta membaca anggaran unit itu.
 type Viewer struct {
 	UserID uuid.UUID
 	All    bool
@@ -122,6 +127,20 @@ type Filter struct {
 type List struct {
 	Items   []Request `json:"items"`
 	Pending int       `json:"pending"` // menunggu keputusan di seluruh PT (hanya untuk peninjau)
+	// Restricted: pembaca dibatasi ke Units, unit yang ditetapkan untuknya.
+	Restricted bool        `json:"restricted"`
+	Units      []uuid.UUID `json:"units,omitempty"`
+}
+
+// UnitHead adalah pengguna yang dibatasi ke unit tertentu (peran tanpa izin lihat semua dan tanpa
+// izin memutuskan, mis. Kepala unit) beserta unit yang dikelolanya.
+type UnitHead struct {
+	UserID        uuid.UUID   `json:"userId"`
+	Name          string      `json:"name"`
+	Email         string      `json:"email"`
+	Active        bool        `json:"active"`
+	RoleName      string      `json:"roleName"`
+	DepartmentIDs []uuid.UUID `json:"departmentIds"`
 }
 
 // UnitBudget adalah posisi anggaran beban satu departemen di tahun buku berjalan, sebagai bahan
@@ -140,12 +159,15 @@ type UnitBudget struct {
 type Service interface {
 	Requests(ctx context.Context, companyID uuid.UUID, v Viewer, f Filter) (List, error)
 	Request(ctx context.Context, companyID, id uuid.UUID, v Viewer) (Detail, error)
-	Create(ctx context.Context, companyID uuid.UUID, in Input, actor audit.Actor) (Detail, error)
-	Update(ctx context.Context, companyID, id uuid.UUID, in Input, actor audit.Actor) (Detail, error)
+	Create(ctx context.Context, companyID uuid.UUID, in Input, v Viewer, actor audit.Actor) (Detail, error)
+	Update(ctx context.Context, companyID, id uuid.UUID, in Input, v Viewer, actor audit.Actor) (Detail, error)
 	Cancel(ctx context.Context, companyID, id uuid.UUID, version int, actor audit.Actor) (Detail, error)
 	Decide(ctx context.Context, companyID, id uuid.UUID, in Decision, actor audit.Actor) (Detail, error)
 	MarkPaid(ctx context.Context, companyID, id uuid.UUID, in Payment, actor audit.Actor) (Detail, error)
-	UnitBudget(ctx context.Context, companyID, departmentID uuid.UUID, today civil.Date) (UnitBudget, error)
+	UnitBudget(ctx context.Context, companyID, departmentID uuid.UUID, v Viewer, today civil.Date) (UnitBudget, error)
+	UnitHeads(ctx context.Context, companyID uuid.UUID) ([]UnitHead, error)
+	// SetUnits mengganti unit yang dikelola seorang kepala unit (Manager atau Pemilik).
+	SetUnits(ctx context.Context, companyID, userID uuid.UUID, departmentIDs []uuid.UUID, actor audit.Actor) (UnitHead, error)
 }
 
 type Deps struct {
@@ -189,6 +211,23 @@ func wrongStatus(status, action string) error {
 	return httpx.Conflict("panjar.status", fmt.Sprintf("Pengajuan ini %s, sehingga tidak bisa %s.", label, action))
 }
 
+// units mengembalikan unit yang dikelola pembaca terbatas; nil untuk peninjau (tidak dibatasi).
+func (s *service) units(ctx context.Context, companyID uuid.UUID, v Viewer) ([]uuid.UUID, error) {
+	if v.All {
+		return nil, nil
+	}
+	ids, err := s.q(ctx).UserUnits(ctx, store.UserUnitsParams{CompanyID: companyID, UserID: v.UserID})
+	if ids == nil {
+		ids = []uuid.UUID{}
+	}
+	return ids, err
+}
+
+func notAssigned(field string) error {
+	msg := "Anda belum ditetapkan sebagai kepala unit ini. Minta Manager atau Pemilik menetapkannya di Panjar unit → Atur kepala unit."
+	return httpx.Forbidden("panjar.unit_not_assigned", msg).WithFields(map[string]string{field: msg})
+}
+
 func toRequest(r store.GetRequestRow, v Viewer) Request {
 	out := Request{
 		ID: r.ID, Number: r.Number, DepartmentID: r.DepartmentID, DepartmentCode: r.DepartmentCode, DepartmentName: r.DepartmentName,
@@ -207,18 +246,22 @@ func (s *service) Requests(ctx context.Context, companyID uuid.UUID, v Viewer, f
 		return List{}, httpx.BadRequest("request.query", "Parameter status tidak valid.")
 	}
 	q := s.q(ctx)
-	p := store.ListRequestsParams{CompanyID: companyID, FromDate: f.From, ToDate: f.To, DepartmentID: f.DepartmentID}
+	units, err := s.units(ctx, companyID, v)
+	if err != nil {
+		return List{}, err
+	}
+	p := store.ListRequestsParams{CompanyID: companyID, FromDate: f.From, ToDate: f.To, DepartmentID: f.DepartmentID, Units: units}
 	if f.Status != "" {
 		p.Status = &f.Status
 	}
 	if !v.All {
-		p.CreatedBy = &v.UserID
+		p.Viewer = &v.UserID
 	}
 	rows, err := q.ListRequests(ctx, p)
 	if err != nil {
 		return List{}, err
 	}
-	out := List{Items: make([]Request, len(rows))}
+	out := List{Items: make([]Request, len(rows)), Restricted: !v.All, Units: units}
 	for i, r := range rows {
 		out.Items[i] = toRequest(store.GetRequestRow{
 			ID: r.ID, CompanyID: r.CompanyID, Number: r.Number, DepartmentID: r.DepartmentID, RequestDate: r.RequestDate,
@@ -248,7 +291,13 @@ func (s *service) Request(ctx context.Context, companyID, id uuid.UUID, v Viewer
 		return Detail{}, err
 	}
 	if !v.All && r.CreatedBy != v.UserID {
-		return Detail{}, notFound() // pengajuan orang lain tidak terlihat
+		units, err := s.units(ctx, companyID, v)
+		if err != nil {
+			return Detail{}, err
+		}
+		if !slices.Contains(units, r.DepartmentID) {
+			return Detail{}, notFound() // pengajuan unit lain tidak terlihat
+		}
 	}
 	rows, err := q.RequestLines(ctx, store.RequestLinesParams{CompanyID: companyID, RequestID: id})
 	if err != nil {
@@ -264,8 +313,9 @@ func (s *service) Request(ctx context.Context, companyID, id uuid.UUID, v Viewer
 	return out, nil
 }
 
-// check memeriksa isian pengajuan dan mengembalikan totalnya.
-func (s *service) check(ctx context.Context, companyID uuid.UUID, in *Input, today civil.Date) (money.Amount, error) {
+// check memeriksa isian pengajuan dan mengembalikan totalnya. Kepala unit hanya boleh memakai unit
+// yang ditetapkan untuknya.
+func (s *service) check(ctx context.Context, companyID uuid.UUID, in *Input, v Viewer, today civil.Date) (money.Amount, error) {
 	in.Purpose = strings.TrimSpace(in.Purpose)
 	if n := utf8.RuneCountInString(in.Purpose); n < 1 || n > 300 {
 		return money.Amount{}, invalid("purpose", "Keperluan wajib diisi (maksimal 300 karakter).")
@@ -275,6 +325,13 @@ func (s *service) check(ctx context.Context, companyID uuid.UUID, in *Input, tod
 	}
 	if err := s.Core.CheckDimensions(ctx, companyID, nil, &in.DepartmentID); err != nil {
 		return money.Amount{}, err
+	}
+	units, err := s.units(ctx, companyID, v)
+	if err != nil {
+		return money.Amount{}, err
+	}
+	if units != nil && !slices.Contains(units, in.DepartmentID) {
+		return money.Amount{}, notAssigned("departmentId")
 	}
 	if in.NeededDate != nil && in.NeededDate.Before(today) {
 		return money.Amount{}, invalid("neededDate", "Tanggal dibutuhkan tidak boleh sebelum hari ini.")
@@ -332,9 +389,9 @@ func (s *service) detail(ctx context.Context, companyID, id uuid.UUID, actor aud
 }
 
 // Create mencatat pengajuan baru bertanggal hari ini dengan nomor seri PNJ.
-func (s *service) Create(ctx context.Context, companyID uuid.UUID, in Input, actor audit.Actor) (Detail, error) {
+func (s *service) Create(ctx context.Context, companyID uuid.UUID, in Input, v Viewer, actor audit.Actor) (Detail, error) {
 	today := s.Today()
-	total, err := s.check(ctx, companyID, &in, today)
+	total, err := s.check(ctx, companyID, &in, v, today)
 	if err != nil {
 		return Detail{}, err
 	}
@@ -383,8 +440,8 @@ func (s *service) lock(ctx context.Context, q *store.Queries, companyID, id uuid
 }
 
 // Update mengubah pengajuan yang masih menunggu keputusan; hanya oleh pengajunya.
-func (s *service) Update(ctx context.Context, companyID, id uuid.UUID, in Input, actor audit.Actor) (Detail, error) {
-	total, err := s.check(ctx, companyID, &in, s.Today())
+func (s *service) Update(ctx context.Context, companyID, id uuid.UUID, in Input, v Viewer, actor audit.Actor) (Detail, error) {
+	total, err := s.check(ctx, companyID, &in, v, s.Today())
 	if err != nil {
 		return Detail{}, err
 	}
@@ -562,7 +619,14 @@ func (s *service) MarkPaid(ctx context.Context, companyID, id uuid.UUID, in Paym
 
 // UnitBudget membaca anggaran beban departemen di tahun buku berjalan (versi aktif), realisasinya
 // sejak awal tahun buku s.d. bulan ini, dan panjar yang sudah disetujui tetapi belum dibayar.
-func (s *service) UnitBudget(ctx context.Context, companyID, departmentID uuid.UUID, today civil.Date) (UnitBudget, error) {
+func (s *service) UnitBudget(ctx context.Context, companyID, departmentID uuid.UUID, v Viewer, today civil.Date) (UnitBudget, error) {
+	units, err := s.units(ctx, companyID, v)
+	if err != nil {
+		return UnitBudget{}, err
+	}
+	if units != nil && !slices.Contains(units, departmentID) {
+		return UnitBudget{}, notAssigned("department")
+	}
 	if err := s.Core.CheckDimensions(ctx, companyID, nil, &departmentID); err != nil {
 		var p *httpx.Problem
 		if errors.As(err, &p) && p.Code == "dimension.inactive" {
@@ -602,4 +666,79 @@ func (s *service) UnitBudget(ctx context.Context, companyID, departmentID uuid.U
 	out.HasBudget = c.Budget != nil && out.YearBudget.Sign() > 0
 	out.Remaining = out.YearBudget.Sub(out.Actual).Sub(committed)
 	return out, nil
+}
+
+func (s *service) UnitHeads(ctx context.Context, companyID uuid.UUID) ([]UnitHead, error) {
+	rows, err := s.q(ctx).UnitHeads(ctx, store.UnitHeadsParams{
+		CompanyID: companyID, CreatePerm: rbac.PanjarCreate, ViewPerm: rbac.PanjarView, ApprovePerm: rbac.PanjarApprove,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]UnitHead, len(rows))
+	for i, r := range rows {
+		out[i] = UnitHead{UserID: r.ID, Name: r.Name, Email: r.Email, Active: r.Active, RoleName: r.RoleName, DepartmentIDs: r.DepartmentIds}
+	}
+	return out, nil
+}
+
+// SetUnits mengganti unit yang dikelola seorang kepala unit. Hanya untuk pengguna yang memang
+// dibatasi ke unit (peninjau dan finance tidak perlu ditetapkan); unit harus departemen PT ini.
+func (s *service) SetUnits(ctx context.Context, companyID, userID uuid.UUID, departmentIDs []uuid.UUID, actor audit.Actor) (UnitHead, error) {
+	ids := make([]uuid.UUID, 0, len(departmentIDs))
+	for _, id := range departmentIDs {
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	depts, err := s.Core.Dimensions(ctx, companyID, core.DimDepartment)
+	if err != nil {
+		return UnitHead{}, err
+	}
+	for _, id := range ids {
+		if !slices.ContainsFunc(depts, func(d core.Dimension) bool { return d.ID == id }) {
+			return UnitHead{}, invalid("departmentIds", "Unit (departemen) tidak ditemukan di PT ini.")
+		}
+	}
+	var out UnitHead
+	err = db.Run(ctx, s.Pool, func(ctx context.Context) error {
+		q := s.q(ctx)
+		perms, err := q.MemberPerms(ctx, store.MemberPermsParams{CompanyID: companyID, UserID: userID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NotFound("panjar.not_unit_head", "Pengguna ini tidak punya akses ke PT ini.")
+		}
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(perms, rbac.PanjarCreate) || slices.Contains(perms, rbac.PanjarView) || slices.Contains(perms, rbac.PanjarApprove) {
+			return httpx.Unprocessable("panjar.not_unit_head", "Unit hanya ditetapkan untuk pengguna berperan Kepala unit. Peran pengguna ini sudah bisa mengajukan untuk semua unit.")
+		}
+		before, err := q.UserUnits(ctx, store.UserUnitsParams{CompanyID: companyID, UserID: userID})
+		if err != nil {
+			return err
+		}
+		if err := q.ClearUnits(ctx, store.ClearUnitsParams{CompanyID: companyID, UserID: userID}); err != nil {
+			return err
+		}
+		if len(ids) > 0 {
+			if err := q.AddUnits(ctx, store.AddUnitsParams{CompanyID: companyID, UserID: userID, DepartmentIds: ids, CreatedBy: actor.UserRef()}); err != nil {
+				return err
+			}
+		}
+		heads, err := s.UnitHeads(ctx, companyID)
+		if err != nil {
+			return err
+		}
+		for _, h := range heads {
+			if h.UserID == userID {
+				out = h
+			}
+		}
+		_, err = audit.Write(ctx, db.Conn(ctx, s.Pool), audit.Entry{
+			UserID: actor.UserRef(), CompanyID: &companyID, Action: "panjar.units", ObjectType: "user", ObjectID: userID.String(), IP: actor.IP,
+			Before: map[string]any{"departmentIds": before}, After: map[string]any{"departmentIds": out.DepartmentIDs},
+		})
+		return err
+	})
+	return out, err
 }

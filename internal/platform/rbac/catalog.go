@@ -56,9 +56,10 @@ const (
 	ConsolRun  = "consol.run"
 
 	// Panjar unit: kepala unit mengajukan kebutuhan unitnya, finance menyetujui atau menolak.
-	PanjarView    = "panjar.view"    // lihat semua pengajuan, bukan hanya milik sendiri
-	PanjarCreate  = "panjar.create"  // ajukan panjar untuk departemen (unit)
-	PanjarApprove = "panjar.approve" // setujui, tolak, dan tandai sudah dibayar
+	PanjarView    = "panjar.view"        // lihat semua pengajuan, bukan hanya milik sendiri
+	PanjarCreate  = "panjar.create"      // ajukan panjar untuk departemen (unit)
+	PanjarApprove = "panjar.approve"     // setujui, tolak, dan tandai sudah dibayar
+	PanjarUnits   = "panjar.unit.manage" // tetapkan unit yang dikelola setiap kepala unit
 
 	ApprovalManage = "approval.manage"
 	AuditView      = "platform.audit.view"
@@ -78,7 +79,7 @@ var All = []string{
 	AssetView, AssetCreate, AssetVoid,
 	TaxView, TaxCreate, TaxExport,
 	ConsolView, ConsolRun,
-	PanjarView, PanjarCreate, PanjarApprove,
+	PanjarView, PanjarCreate, PanjarApprove, PanjarUnits,
 	ApprovalManage, AuditView, UserManage, SystemManage,
 }
 
@@ -95,7 +96,7 @@ var (
 	finance = []string{PanjarApprove}
 	// changeAll = "ubah, hapus, atau void transaksi" di matriks: hanya Pemilik dan Manager.
 	changeAll = []string{CompanyEdit, ContactEdit, AccountEdit, JournalVoid, SalesVoid, PurchaseVoid, CashVoid, InventoryVoid, ProjectVoid, AssetVoid}
-	control   = []string{ApprovalManage, PeriodManage, AuditView, BudgetManage}
+	control   = []string{ApprovalManage, PeriodManage, AuditView, BudgetManage, PanjarUnits}
 	admin     = []string{UserManage, SystemManage}
 )
 
@@ -114,7 +115,8 @@ var Builtin = []BuiltinRole{
 	{Key: "staf_pajak", Name: "Staf pajak", Permissions: []string{CompanyView, ContactView, TaxView, TaxCreate, TaxExport, DataExport, AssetView}},
 	{Key: "auditor", Name: "Auditor", Permissions: join(viewAll, []string{AuditView, DataExport})},
 	{Key: "admin", Name: "Admin pelanggan", Permissions: join([]string{CompanyView}, admin)},
-	// Kepala unit hanya mengajukan panjar untuk unitnya dan melihat pengajuannya sendiri.
+	// Kepala unit hanya mengajukan panjar untuk unit yang ditetapkan Manager atau Pemilik dan melihat
+	// pengajuan unit itu.
 	{Key: "kepala_unit", Name: "Kepala unit", Permissions: []string{CompanyView, PanjarCreate}},
 }
 
@@ -170,7 +172,7 @@ var Catalog = []CatalogGroup{
 	}},
 	{"Panjar unit", []CatalogPerm{
 		{PanjarView, "Lihat semua pengajuan panjar"}, {PanjarCreate, "Ajukan panjar unit"},
-		{PanjarApprove, "Setujui, tolak, dan tandai pembayaran panjar"},
+		{PanjarApprove, "Setujui, tolak, dan tandai pembayaran panjar"}, {PanjarUnits, "Tetapkan unit yang dikelola kepala unit"},
 	}},
 	{"Kontrol dan admin", []CatalogPerm{
 		{ApprovalManage, "Approval dan aturan approval"}, {AuditView, "Lihat audit trail"},

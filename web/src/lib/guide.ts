@@ -407,17 +407,17 @@ export const topics: GuideTopic[] = [
     page: { to: '/panjar', label: 'Panjar unit' },
     paths: ['/panjar'],
     visible: (me) => can(me, 'panjar.create') || can(me, 'panjar.view') || can(me, 'panjar.approve'),
-    keywords: ['panjar', 'pengajuan', 'kasbon', 'uang muka kegiatan', 'permintaan dana', 'persetujuan', 'approval', 'kepala unit', 'unit'],
+    keywords: ['panjar', 'pengajuan', 'kasbon', 'uang muka kegiatan', 'permintaan dana', 'persetujuan', 'approval', 'kepala unit', 'unit', 'atur kepala unit'],
     sections: [
       {
         title: 'Mengajukan panjar (kepala unit)',
         steps: [
           'Buka Panjar unit, lalu tekan Ajukan panjar.',
-          'Pilih unit (departemen), tanggal dibutuhkan bila ada, dan tulis keperluannya.',
+          'Pilih unit (departemen) Anda, tanggal dibutuhkan bila ada, dan tulis keperluannya. Hanya unit yang ditetapkan Manager atau Pemilik untuk Anda yang bisa dipilih.',
           'Isi rincian kebutuhan dan nominalnya; tambah baris bila lebih dari satu. Di bawahnya tampil sisa anggaran unit bila unit itu sudah punya anggaran.',
           'Tekan Ajukan. Pengajuan mendapat nomor PNJ dan menunggu keputusan finance.',
         ],
-        note: 'Selama belum diputuskan, pengajuan bisa diubah atau dibatalkan oleh pengajunya. Kepala unit hanya melihat pengajuannya sendiri.',
+        note: 'Selama belum diputuskan, pengajuan bisa diubah atau dibatalkan oleh pengajunya. Kepala unit melihat pengajuan unitnya saja (termasuk yang dibuat orang lain untuk unit itu) dan pengajuannya sendiri.',
       },
       {
         title: 'Menyetujui atau menolak (finance)',
@@ -437,11 +437,13 @@ export const topics: GuideTopic[] = [
         note: 'Panjar unit hanya mencatat persetujuan; tidak membuat jurnal. Panjar yang disetujui tetapi belum dibayar mengurangi sisa anggaran unit yang ditampilkan.',
       },
       {
-        title: 'Memberi akses kepala unit',
-        points: [
-          'Di Pengguna dan akses, beri pengguna peran Kepala unit. Peran ini hanya bisa mengajukan panjar dan melihat pengajuannya sendiri.',
-          'Pemilik, Manager, dan Staf akuntansi bisa menyetujui, menolak, dan menandai panjar dibayar. Auditor hanya melihat.',
+        title: 'Menetapkan kepala unit (Manager atau Pemilik)',
+        steps: [
+          'Di Pengguna dan akses, beri pengguna peran Kepala unit di PT tersebut.',
+          'Buka Panjar unit, lalu tekan Atur kepala unit.',
+          'Centang unit (departemen) yang dikelola setiap kepala unit, lalu tekan Simpan. Satu kepala unit boleh mengelola beberapa unit, dan satu unit boleh punya beberapa kepala unit.',
         ],
+        note: 'Kepala unit yang belum ditetapkan unitnya belum bisa mengajukan panjar. Pemilik, Manager, dan Staf akuntansi bisa mengajukan untuk unit mana pun serta menyetujui, menolak, dan menandai panjar dibayar. Auditor hanya melihat.',
       },
     ],
   },
