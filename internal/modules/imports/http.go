@@ -25,6 +25,8 @@ func Routes(svc Service) []api.Route {
 	routes := []api.Route{
 		{Method: http.MethodGet, Path: "/api/v1/imports", Access: api.Permission, Perm: rbac.CompanyView, License: license.ModeRead, Handle: h.kinds},
 		{Method: http.MethodGet, Path: "/api/v1/imports/status", Access: api.Permission, Perm: rbac.LedgerView, License: license.ModeRead, Handle: h.status},
+		{Method: http.MethodGet, Path: "/api/v1/imports/opening", Access: api.Permission, Perm: rbac.LedgerView, License: license.ModeRead, Handle: h.opening},
+		{Method: http.MethodPut, Path: "/api/v1/imports/opening", Access: api.Permission, Perm: rbac.JournalCreate, License: license.ModeWrite, Handle: h.saveOpening},
 	}
 	for _, k := range svc.Kinds() {
 		kind := k.Kind
@@ -110,4 +112,24 @@ func (h handlers) run(w http.ResponseWriter, r *http.Request, kind string) error
 		return err
 	}
 	return httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h handlers) opening(w http.ResponseWriter, r *http.Request) error {
+	out, err := h.svc.Opening(r.Context(), api.CompanyID(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h handlers) saveOpening(w http.ResponseWriter, r *http.Request) error {
+	var in OpeningInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	out, err := h.svc.SaveOpening(r.Context(), api.CompanyID(r), in, auth.ActorFrom(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
 }

@@ -12,7 +12,8 @@ import { SearchSelect } from '../components/SearchSelect'
 import { useToast } from '../components/Toast'
 import { Alert, Badge, Button, Card, Dialog, EmptyState, Field, SelectField, Skeleton, inputClass } from '../components/ui'
 
-type Alloc = { checked: boolean; amount: string; whCode: string; wh: string }
+/** vat: PPN dipungut pelanggan pemungut (WAPU), hanya penjualan. */
+type Alloc = { checked: boolean; amount: string; whCode: string; wh: string; vat: string }
 
 /** Pelunasan piutang atau pembayaran utang: satu transaksi untuk satu atau banyak dokumen. */
 export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
@@ -42,9 +43,14 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
   const pph = (useTaxCodes(companyId, date || todayISO()).data ?? []).filter((c) => c.kind === 'pph')
   const docs = open.data ?? []
   const activeCash = (cashAccounts.data ?? []).filter((a) => a.active)
+  // Kolom PPN dipungut untuk pelanggan pemungut PPN (WAPU) atau faktur yang diposting saat pelanggannya pemungut.
+  const collector = kind === 'sales' && (Boolean(contacts.data?.find((c) => c.id === contactId)?.vatCollector) || docs.some((d) => d.vatCollector))
 
+  // PPN faktur pemungut yang belum dipungut; diisi otomatis saat faktur dicentang.
+  const vatLeft = (d: Doc) => (d.vatCollector ? toUnits(d.vat ?? '0') - toUnits(d.vatCollected ?? '0') : 0n)
   // Dokumen yang dipilih dari drawer langsung tercentang penuh.
-  const alloc = (d: Doc): Alloc => allocs[d.id] ?? { checked: d.id === preselect, amount: formatAmount(d.outstanding), whCode: '', wh: '' }
+  const alloc = (d: Doc): Alloc =>
+    allocs[d.id] ?? { checked: d.id === preselect, amount: formatAmount(d.outstanding), whCode: '', wh: '', vat: vatLeft(d) > 0n ? formatAmount(vatLeft(d)) : '' }
 
   function set(d: Doc, patch: Partial<Alloc>) {
     setAllocs((m) => ({ ...m, [d.id]: { ...alloc(d), ...patch } }))
@@ -53,19 +59,22 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
   const chosen = docs.filter((d) => alloc(d).checked)
   let allocated = 0n
   let withheld = 0n
+  let collected = 0n
   let unreadable = false
   for (const d of chosen) {
     const a = alloc(d)
     const amt = parseInput(a.amount)
     const wh = a.whCode ? parseInput(a.wh) : 0n
-    if (amt === null || wh === null) unreadable = true
+    const vat = collector && a.vat.trim() ? parseInput(a.vat) : 0n
+    if (amt === null || wh === null || vat === null) unreadable = true
     allocated += amt ?? 0n
     withheld += wh ?? 0n
+    collected += vat ?? 0n
   }
   const advanceU = advance.trim() ? parseInput(advance) : 0n
   const fromAdvanceU = fromAdvance.trim() ? parseInput(fromAdvance) : 0n
   if (advanceU === null || fromAdvanceU === null) unreadable = true
-  const cash = allocated - withheld + (advanceU ?? 0n) - (fromAdvanceU ?? 0n)
+  const cash = allocated - withheld - collected + (advanceU ?? 0n) - (fromAdvanceU ?? 0n)
   const err = create.error instanceof ApiError ? create.error : null
 
   function submit() {
@@ -87,6 +96,7 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
               amount: fromUnits(parseInput(a.amount) ?? 0n),
               withholdingCode: a.whCode,
               withholding: fromUnits(a.whCode ? (parseInput(a.wh) ?? 0n) : 0n),
+              vatCollected: fromUnits(collector && a.vat.trim() ? (parseInput(a.vat) ?? 0n) : 0n),
             }
           }),
         },
@@ -111,7 +121,7 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
         <h1 className="mt-1 text-[26px] font-bold tracking-tight">{t.settleAction}</h1>
         <p className="mt-1.5 max-w-2xl text-sm text-muted">
           {kind === 'sales'
-            ? 'Pilih faktur yang dilunasi; boleh sebagian. Bila pelanggan memotong PPh 23 atau PPh final 4(2), isi potongannya: piutang tetap tertutup penuh, potongannya dicatat sebagai PPh dibayar di muka atau beban PPh final.'
+            ? 'Pilih faktur yang dilunasi; boleh sebagian. Bila pelanggan memotong PPh 23 atau PPh final 4(2), isi potongannya: piutang tetap tertutup penuh, potongannya dicatat sebagai PPh dibayar di muka atau beban PPh final. Pelanggan pemungut PPN (WAPU) menyetor sendiri PPN fakturnya: isi PPN dipungut, piutangnya ikut tertutup tanpa uang masuk.'
             : 'Pilih tagihan yang dibayar; boleh sebagian. PPh yang dipotong sudah dicatat saat tagihan diposting, jadi yang dibayar adalah sisa utang ke pemasok.'}
         </p>
       </div>
@@ -201,7 +211,7 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
       {docs.length > 0 && (
         <div className="overflow-hidden rounded-[14px] border border-line bg-surface">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[880px] text-left text-sm">
+            <table className={`w-full ${collector ? 'min-w-[1040px]' : 'min-w-[880px]'} text-left text-sm`}>
               <thead className="bg-hover/60 text-[12.5px] text-muted">
                 <tr>
                   <th className="w-12 px-4 py-3">
@@ -212,6 +222,7 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
                   <th className="px-2 py-3 text-right font-semibold">Sisa</th>
                   <th className="w-[170px] px-2 py-3 text-right font-semibold">{kind === 'sales' ? 'Dilunasi' : 'Dibayar'}</th>
                   {kind === 'sales' && <th className="w-[300px] px-2 py-3 font-semibold">PPh dipotong pelanggan</th>}
+                  {collector && <th className="w-[150px] px-2 py-3 text-right font-semibold">PPN dipungut</th>}
                 </tr>
               </thead>
               <tbody>
@@ -221,6 +232,7 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
                   const n = chosen.indexOf(d)
                   const amtErr = err?.fields[`allocations.${n}.amount`] ?? err?.fields[`allocations.${n}.invoiceId`] ?? err?.fields[`allocations.${n}.billId`]
                   const whErr = err?.fields[`allocations.${n}.withholding`] ?? err?.fields[`allocations.${n}.withholdingCode`]
+                  const vatErr = err?.fields[`allocations.${n}.vatCollected`]
                   return (
                     <tr key={d.id} className={`border-t border-line align-top transition-colors duration-150 ${a.checked ? 'bg-accent-soft/40' : ''}`}>
                       <td className="px-4 pt-4">
@@ -300,6 +312,28 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
                           {whErr && <p className="mt-1 text-[13px] text-bad">{whErr}</p>}
                         </td>
                       )}
+                      {collector && (
+                        <td className="px-2 py-2">
+                          <input
+                            aria-label={`PPN dipungut ${d.number}`}
+                            inputMode="decimal"
+                            disabled={!a.checked}
+                            placeholder="0"
+                            value={a.vat}
+                            onChange={(e) => set(d, { vat: e.target.value })}
+                            onBlur={(e) => {
+                              const u = e.target.value.trim() ? parseInput(e.target.value) : null
+                              if (u !== null) set(d, { vat: formatAmount(u) })
+                            }}
+                            className={`${inputClass} num text-right ${vatErr || (a.vat.trim() && parseInput(a.vat) === null) ? 'border-bad' : 'border-line-2'}`}
+                          />
+                          {vatErr ? (
+                            <p className="mt-1 text-[13px] text-bad">{vatErr}</p>
+                          ) : (
+                            toUnits(d.vat ?? '0') > 0n && <p className="mt-1 text-right text-[12px] text-muted">PPN faktur {formatAmount(d.vat ?? '0')}</p>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   )
                 })}
@@ -314,6 +348,7 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
       <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap items-center gap-x-8 gap-y-3 border-t border-line bg-surface/95 px-4 py-4 backdrop-blur sm:-mx-8 sm:px-8">
         <Sum label={kind === 'sales' ? 'Piutang dilunasi' : 'Utang dibayar'} value={allocated} />
         {kind === 'sales' && <Sum label="PPh dipotong" value={withheld} />}
+        {collector && <Sum label="PPN dipungut" value={collected} />}
         <Sum label={kind === 'sales' ? 'Uang diterima' : 'Uang keluar'} value={cash} strong />
         <div className="ml-auto flex gap-2.5">
           <Button variant="secondary" onClick={() => navigate(t.base)}>
@@ -321,7 +356,7 @@ export function SettlementForm({ me, kind }: { me: Me; kind: TradeKind }) {
           </Button>
           <Button
             busy={create.isPending}
-            disabled={(chosen.length === 0 && (advanceU ?? 0n) <= 0n) || (cash > 0n && !cashAccountId) || unreadable || cash < 0n || (cash === 0n && (fromAdvanceU ?? 0n) === 0n)}
+            disabled={(chosen.length === 0 && (advanceU ?? 0n) <= 0n) || (cash > 0n && !cashAccountId) || unreadable || cash < 0n || (cash === 0n && (fromAdvanceU ?? 0n) === 0n && collected === 0n)}
             onClick={submit}
           >
             Posting {t.settle_}

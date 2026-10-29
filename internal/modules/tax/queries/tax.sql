@@ -15,6 +15,10 @@ RETURNING *;
 -- name: OutputInvoiceStates :many
 SELECT * FROM tax.output_invoices WHERE company_id = @company_id AND invoice_id = ANY(@ids::uuid[]);
 
+-- name: OutputTrxCodes :many
+-- Kode transaksi yang ditetapkan staf pajak per faktur, untuk rekap PPN dipungut pemungut.
+SELECT invoice_id, trx_code FROM tax.output_invoices WHERE company_id = @company_id;
+
 -- name: GetOutputInvoiceForUpdate :one
 SELECT * FROM tax.output_invoices WHERE company_id = $1 AND invoice_id = $2 FOR UPDATE;
 

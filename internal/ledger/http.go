@@ -31,7 +31,10 @@ func Routes(svc Service) []api.Route {
 		write(http.MethodPost, "/api/v1/ledger/accounts", rbac.AccountCreate, h.createAccount),
 		write(http.MethodPost, "/api/v1/ledger/accounts/template", rbac.AccountCreate, h.applyTemplate),
 		write(http.MethodPatch, "/api/v1/ledger/accounts/{id}", rbac.AccountEdit, h.updateAccount),
+		write(http.MethodDelete, "/api/v1/ledger/accounts/{id}", rbac.AccountEdit, h.deleteAccount),
 		read(http.MethodGet, "/api/v1/ledger/accounts/{id}/ledger", rbac.LedgerView, h.accountLedger),
+		read(http.MethodGet, "/api/v1/ledger/system-accounts", rbac.LedgerView, h.systemAccounts),
+		write(http.MethodPut, "/api/v1/ledger/system-accounts/{role}", rbac.AccountEdit, h.setSystemAccount),
 
 		read(http.MethodGet, "/api/v1/journals", rbac.LedgerView, h.entries),
 		idempotent(write(http.MethodPost, "/api/v1/journals", rbac.JournalCreate, h.postGeneral)),
@@ -43,6 +46,9 @@ func Routes(svc Service) []api.Route {
 		read(http.MethodGet, "/api/v1/ledger/worksheet", rbac.LedgerView, h.worksheet),
 		read(http.MethodGet, "/api/v1/ledger/periods", rbac.LedgerView, h.periods),
 		write(http.MethodPost, "/api/v1/ledger/periods/{month}/status", rbac.PeriodManage, h.setPeriodStatus),
+		read(http.MethodGet, "/api/v1/ledger/year-end", rbac.LedgerView, h.yearEnd),
+		write(http.MethodPost, "/api/v1/ledger/year-end/{year}/close", rbac.PeriodManage, h.closeYear),
+		write(http.MethodPost, "/api/v1/ledger/year-end/{year}/reopen", rbac.PeriodManage, h.reopenYear),
 		read(http.MethodGet, "/api/v1/ledger/settings", rbac.LedgerView, h.settings),
 		write(http.MethodPut, "/api/v1/ledger/settings", rbac.PeriodManage, h.updateSettings),
 
@@ -156,6 +162,44 @@ func (h handlers) updateAccount(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return httpx.WriteJSON(w, http.StatusOK, a)
+}
+
+func (h handlers) systemAccounts(w http.ResponseWriter, r *http.Request) error {
+	list, err := h.svc.SystemAccounts(r.Context(), company(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h handlers) setSystemAccount(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		AccountID uuid.UUID `json:"accountId"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	list, err := h.svc.SetSystemAccount(r.Context(), company(r), Role(chi.URLParam(r, "role")), req.AccountID, actor(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h handlers) deleteAccount(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	version, err := strconv.Atoi(r.URL.Query().Get("version"))
+	if err != nil {
+		return httpx.BadRequest("request.query", "Parameter version wajib diisi.")
+	}
+	if err := h.svc.DeleteAccount(r.Context(), company(r), id, version, actor(r)); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (h handlers) applyTemplate(w http.ResponseWriter, r *http.Request) error {
@@ -339,6 +383,56 @@ func (h handlers) periods(w http.ResponseWriter, r *http.Request) error {
 		year = y
 	}
 	out, err := h.svc.Periods(r.Context(), company(r), year)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func yearParam(v string) (int, error) {
+	y, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, httpx.BadRequest("request.query", "Tahun tidak valid.")
+	}
+	return y, nil
+}
+
+func (h handlers) yearEnd(w http.ResponseWriter, r *http.Request) error {
+	year, err := yearParam(r.URL.Query().Get("year"))
+	if err != nil {
+		return err
+	}
+	out, err := h.svc.YearEnd(r.Context(), company(r), year)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h handlers) closeYear(w http.ResponseWriter, r *http.Request) error {
+	year, err := yearParam(chi.URLParam(r, "year"))
+	if err != nil {
+		return err
+	}
+	out, err := h.svc.CloseYear(r.Context(), company(r), year, actor(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h handlers) reopenYear(w http.ResponseWriter, r *http.Request) error {
+	year, err := yearParam(chi.URLParam(r, "year"))
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	out, err := h.svc.ReopenYear(r.Context(), company(r), year, req.Reason, actor(r))
 	if err != nil {
 		return err
 	}

@@ -258,6 +258,12 @@ backup_before_upgrade() {
 	current=$(docker inspect -f '{{.Config.Image}}' lajur-app)
 	[ "$current" != "$LAJUR_IMAGE" ] || return 0
 	bold "Backup sebelum pembaruan ${current} → ${LAJUR_IMAGE}…"
+	(cd "$LAJUR_DIR" && docker compose exec -T app lajur backup) && return 0
+	# Versi lama (≤ 1.0.10) bisa kehabisan slot proses karena proses zombie dari health check,
+	# sehingga docker exec gagal. Memulai ulang container aplikasi membersihkannya; coba sekali lagi.
+	warn "Backup gagal; memulai ulang container aplikasi lalu mengulang backup…"
+	(cd "$LAJUR_DIR" && docker compose restart app >/dev/null) || die "container aplikasi gagal dimulai ulang; pembaruan dibatalkan."
+	sleep 5
 	(cd "$LAJUR_DIR" && docker compose exec -T app lajur backup) || die "backup gagal; pembaruan dibatalkan dan versi lama tetap berjalan."
 }
 

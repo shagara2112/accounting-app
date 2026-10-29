@@ -14,6 +14,22 @@ import (
 	"lajur/internal/platform/money"
 )
 
+const accountHasLines = `-- name: AccountHasLines :one
+SELECT EXISTS (SELECT 1 FROM ledger.journal_lines WHERE company_id = $1 AND account_id = $2)
+`
+
+type AccountHasLinesParams struct {
+	CompanyID uuid.UUID
+	AccountID uuid.UUID
+}
+
+func (q *Queries) AccountHasLines(ctx context.Context, arg AccountHasLinesParams) (bool, error) {
+	row := q.db.QueryRow(ctx, accountHasLines, arg.CompanyID, arg.AccountID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const accountLines = `-- name: AccountLines :many
 SELECT l.entry_id, e.number, e.kind, e.status, e.source_type, l.entry_date, l.line_no,
        e.memo AS entry_memo, l.memo, l.debit, l.credit, l.project_id, l.branch_id, l.department_id
@@ -244,6 +260,45 @@ func (q *Queries) AccountsByIDs(ctx context.Context, arg AccountsByIDsParams) ([
 	return items, nil
 }
 
+const activeClosing = `-- name: ActiveClosing :one
+SELECT e.id, e.number, e.posted_at, u.name AS posted_by_name,
+  (SELECT coalesce(sum(l.debit - l.credit), 0) FROM ledger.journal_lines l
+   JOIN ledger.accounts a ON a.company_id = l.company_id AND a.id = l.account_id
+   WHERE l.company_id = e.company_id AND l.entry_id = e.id AND a.class >= 4)::numeric AS profit
+FROM ledger.journal_entries e
+LEFT JOIN platform.users u ON u.id = e.posted_by
+WHERE e.company_id = $1 AND e.source_type = 'closing' AND e.status = 'posted' AND e.entry_date = $2
+ORDER BY e.posted_at DESC
+LIMIT 1
+`
+
+type ActiveClosingParams struct {
+	CompanyID uuid.UUID
+	EntryDate civil.Date
+}
+
+type ActiveClosingRow struct {
+	ID           uuid.UUID
+	Number       string
+	PostedAt     time.Time
+	PostedByName *string
+	Profit       money.Amount
+}
+
+// Jurnal reklas akhir tahun buku yang berlaku (belum di-void) bertanggal entry_date.
+func (q *Queries) ActiveClosing(ctx context.Context, arg ActiveClosingParams) (ActiveClosingRow, error) {
+	row := q.db.QueryRow(ctx, activeClosing, arg.CompanyID, arg.EntryDate)
+	var i ActiveClosingRow
+	err := row.Scan(
+		&i.ID,
+		&i.Number,
+		&i.PostedAt,
+		&i.PostedByName,
+		&i.Profit,
+	)
+	return i, err
+}
+
 const advanceRecurring = `-- name: AdvanceRecurring :exec
 UPDATE ledger.recurring_journals
 SET next_date = $1, last_error = NULL, last_run_at = now(), version = version + 1
@@ -299,6 +354,40 @@ func (q *Queries) BranchCode(ctx context.Context, arg BranchCodeParams) (string,
 	return code, err
 }
 
+const childAccounts = `-- name: ChildAccounts :many
+SELECT id, level FROM ledger.accounts WHERE company_id = $1 AND parent_id = $2 ORDER BY code
+`
+
+type ChildAccountsParams struct {
+	CompanyID uuid.UUID
+	ParentID  *uuid.UUID
+}
+
+type ChildAccountsRow struct {
+	ID    uuid.UUID
+	Level int16
+}
+
+func (q *Queries) ChildAccounts(ctx context.Context, arg ChildAccountsParams) ([]ChildAccountsRow, error) {
+	rows, err := q.db.Query(ctx, childAccounts, arg.CompanyID, arg.ParentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChildAccountsRow
+	for rows.Next() {
+		var i ChildAccountsRow
+		if err := rows.Scan(&i.ID, &i.Level); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countAccounts = `-- name: CountAccounts :one
 SELECT count(*) FROM ledger.accounts WHERE company_id = $1
 `
@@ -326,6 +415,22 @@ func (q *Queries) CountActiveChildren(ctx context.Context, arg CountActiveChildr
 	return count, err
 }
 
+const countChildren = `-- name: CountChildren :one
+SELECT count(*) FROM ledger.accounts WHERE company_id = $1 AND parent_id = $2
+`
+
+type CountChildrenParams struct {
+	CompanyID uuid.UUID
+	ParentID  *uuid.UUID
+}
+
+func (q *Queries) CountChildren(ctx context.Context, arg CountChildrenParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countChildren, arg.CompanyID, arg.ParentID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countEntries = `-- name: CountEntries :one
 SELECT count(*) FROM ledger.journal_entries WHERE company_id = $1
 `
@@ -335,6 +440,25 @@ func (q *Queries) CountEntries(ctx context.Context, companyID uuid.UUID) (int64,
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteAccount = `-- name: DeleteAccount :execrows
+DELETE FROM ledger.accounts WHERE company_id = $1 AND id = $2 AND version = $3
+`
+
+type DeleteAccountParams struct {
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+	Version   int32
+}
+
+// Hanya akun yang belum dipakai; foreign key dari tabel pemakai menolak sisanya (migrasi 00027).
+func (q *Queries) DeleteAccount(ctx context.Context, arg DeleteAccountParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAccount, arg.CompanyID, arg.ID, arg.Version)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteEntryLines = `-- name: DeleteEntryLines :exec
@@ -1527,6 +1651,30 @@ func (q *Queries) PeriodStatus(ctx context.Context, arg PeriodStatusParams) (str
 	return status, err
 }
 
+const pinRoleAccount = `-- name: PinRoleAccount :exec
+INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (company_id, role) DO NOTHING
+`
+
+type PinRoleAccountParams struct {
+	CompanyID uuid.UUID
+	Role      string
+	AccountID uuid.UUID
+	PinnedBy  *uuid.UUID
+}
+
+// Mengunci peran akun sistem ke akunnya sebelum kodenya diganti; pemetaan yang sudah ada tetap.
+func (q *Queries) PinRoleAccount(ctx context.Context, arg PinRoleAccountParams) error {
+	_, err := q.db.Exec(ctx, pinRoleAccount,
+		arg.CompanyID,
+		arg.Role,
+		arg.AccountID,
+		arg.PinnedBy,
+	)
+	return err
+}
+
 const priorYearsResult = `-- name: PriorYearsResult :one
 SELECT coalesce(sum(b.debit - b.credit), 0)::numeric AS net
 FROM ledger.balances b
@@ -1889,6 +2037,67 @@ func (q *Queries) ReviseEntry(ctx context.Context, arg ReviseEntryParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const roleAccountMapping = `-- name: RoleAccountMapping :one
+SELECT account_id FROM ledger.role_accounts WHERE company_id = $1 AND role = $2
+`
+
+type RoleAccountMappingParams struct {
+	CompanyID uuid.UUID
+	Role      string
+}
+
+func (q *Queries) RoleAccountMapping(ctx context.Context, arg RoleAccountMappingParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, roleAccountMapping, arg.CompanyID, arg.Role)
+	var account_id uuid.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
+const roleAccountMappings = `-- name: RoleAccountMappings :many
+SELECT role, account_id FROM ledger.role_accounts WHERE company_id = $1
+`
+
+type RoleAccountMappingsRow struct {
+	Role      string
+	AccountID uuid.UUID
+}
+
+func (q *Queries) RoleAccountMappings(ctx context.Context, companyID uuid.UUID) ([]RoleAccountMappingsRow, error) {
+	rows, err := q.db.Query(ctx, roleAccountMappings, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RoleAccountMappingsRow
+	for rows.Next() {
+		var i RoleAccountMappingsRow
+		if err := rows.Scan(&i.Role, &i.AccountID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setAccountLevel = `-- name: SetAccountLevel :exec
+UPDATE ledger.accounts SET level = $1 WHERE company_id = $2 AND id = $3
+`
+
+type SetAccountLevelParams struct {
+	Level     int16
+	CompanyID uuid.UUID
+	ID        uuid.UUID
+}
+
+// Turunan akun header yang dipindah ke induk lain ikut bergeser levelnya (dari atas ke bawah).
+func (q *Queries) SetAccountLevel(ctx context.Context, arg SetAccountLevelParams) error {
+	_, err := q.db.Exec(ctx, setAccountLevel, arg.Level, arg.CompanyID, arg.ID)
+	return err
+}
+
 const setPeriodStatus = `-- name: SetPeriodStatus :exec
 UPDATE ledger.periods
 SET status = $3, changed_at = now(), changed_by = $4, reason = $5
@@ -1924,10 +2133,35 @@ func (q *Queries) SetRevising(ctx context.Context, entryID string) error {
 	return err
 }
 
+const setRoleAccount = `-- name: SetRoleAccount :exec
+INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (company_id, role) DO UPDATE
+SET account_id = EXCLUDED.account_id, pinned_at = now(), pinned_by = EXCLUDED.pinned_by
+`
+
+type SetRoleAccountParams struct {
+	CompanyID uuid.UUID
+	Role      string
+	AccountID uuid.UUID
+	PinnedBy  *uuid.UUID
+}
+
+// Memilih akun untuk satu peran akun sistem dari halaman Akun sistem; pilihan lama diganti.
+func (q *Queries) SetRoleAccount(ctx context.Context, arg SetRoleAccountParams) error {
+	_, err := q.db.Exec(ctx, setRoleAccount,
+		arg.CompanyID,
+		arg.Role,
+		arg.AccountID,
+		arg.PinnedBy,
+	)
+	return err
+}
+
 const updateAccount = `-- name: UpdateAccount :one
 UPDATE ledger.accounts
-SET code = $1, name = $2, active = $3, version = version + 1
-WHERE company_id = $4 AND id = $5 AND version = $6
+SET code = $1, name = $2, active = $3, parent_id = $4, level = $5, version = version + 1
+WHERE company_id = $6 AND id = $7 AND version = $8
 RETURNING id, company_id, code, name, class, parent_id, level, postable, active, created_at, created_by, version
 `
 
@@ -1935,6 +2169,8 @@ type UpdateAccountParams struct {
 	Code      string
 	Name      string
 	Active    bool
+	ParentID  *uuid.UUID
+	Level     int16
 	CompanyID uuid.UUID
 	ID        uuid.UUID
 	Version   int32
@@ -1945,6 +2181,8 @@ func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (L
 		arg.Code,
 		arg.Name,
 		arg.Active,
+		arg.ParentID,
+		arg.Level,
 		arg.CompanyID,
 		arg.ID,
 		arg.Version,
@@ -2088,6 +2326,8 @@ FROM ledger.balances b
 JOIN ledger.accounts a ON a.id = b.account_id
 WHERE b.company_id = $2 AND b.month <= $1
   AND (a.class <= 3 OR b.month >= $3)
+  -- Reklas tahun buku ini belum dipakai di neraca lajurnya; reklas tahun-tahun lalu sudah.
+  AND NOT (b.kind = 'penutup' AND b.month >= $3)
 GROUP BY a.id, a.code, a.name, a.class
 ORDER BY a.code
 `
@@ -2128,6 +2368,57 @@ func (q *Queries) WorksheetRows(ctx context.Context, arg WorksheetRowsParams) ([
 			&i.AdjDebit,
 			&i.AdjCredit,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const yearResultByAccount = `-- name: YearResultByAccount :many
+SELECT b.account_id, a.code, sum(b.debit - b.credit)::numeric AS net
+FROM ledger.balances b
+JOIN ledger.accounts a ON a.company_id = b.company_id AND a.id = b.account_id
+WHERE b.company_id = $1 AND a.class >= 4 AND b.month >= $2 AND b.month <= $3
+  AND ($4::boolean OR b.kind <> 'penutup')
+GROUP BY b.account_id, a.code
+HAVING sum(b.debit - b.credit) <> 0
+ORDER BY a.code
+`
+
+type YearResultByAccountParams struct {
+	CompanyID   uuid.UUID
+	FromMonth   civil.Date
+	ToMonth     civil.Date
+	WithClosing bool
+}
+
+type YearResultByAccountRow struct {
+	AccountID uuid.UUID
+	Code      string
+	Net       money.Amount
+}
+
+// Saldo akun laba rugi selama tahun buku (bulan from_month s.d. to_month), dengan atau tanpa
+// jurnal penutup. Dengan jurnal penutup, sisa yang tidak nol berarti belum (sepenuhnya) direklas.
+func (q *Queries) YearResultByAccount(ctx context.Context, arg YearResultByAccountParams) ([]YearResultByAccountRow, error) {
+	rows, err := q.db.Query(ctx, yearResultByAccount,
+		arg.CompanyID,
+		arg.FromMonth,
+		arg.ToMonth,
+		arg.WithClosing,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []YearResultByAccountRow
+	for rows.Next() {
+		var i YearResultByAccountRow
+		if err := rows.Scan(&i.AccountID, &i.Code, &i.Net); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

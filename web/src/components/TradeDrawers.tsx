@@ -312,6 +312,7 @@ export function DocDrawer({
                       <span className="num text-[13px] text-muted">
                         {formatDate(p.date)} · {formatAmount(p.amount)}
                         {toUnits(p.withholding) > 0n && ` (PPh ${formatAmount(p.withholding)})`}
+                        {toUnits(p.vatCollected ?? '0') > 0n && ` (PPN dipungut ${formatAmount(p.vatCollected ?? '0')})`}
                       </span>
                     </button>
                   </li>
@@ -480,6 +481,11 @@ export function SettlementDrawer({ me, kind, id, onClose, onOpenDoc }: { me: Me;
                 <span className="num">Rp {formatAmount(s.fromAdvance)}</span>
               </Meta>
             )}
+            {toUnits(s.vatCollected) > 0n && (
+              <Meta label="PPN dipungut pelanggan">
+                <span className="num">Rp {formatAmount(s.vatCollected)}</span>
+              </Meta>
+            )}
             <Meta label="Dicatat oleh">{s.createdBy ?? '—'}</Meta>
           </dl>
           {s.memo && <p className="text-sm text-ink-2">{s.memo}</p>}
@@ -492,6 +498,7 @@ export function SettlementDrawer({ me, kind, id, onClose, onOpenDoc }: { me: Me;
                   <th className="px-3 py-2.5 font-semibold">{t.doc}</th>
                   <th className="px-3 py-2.5 text-right font-semibold">Dilunasi</th>
                   {kind === 'sales' && <th className="px-3 py-2.5 text-right font-semibold">PPh dipotong</th>}
+                  {toUnits(s.vatCollected) > 0n && <th className="px-3 py-2.5 text-right font-semibold">PPN dipungut</th>}
                 </tr>
               </thead>
               <tbody>
@@ -515,6 +522,7 @@ export function SettlementDrawer({ me, kind, id, onClose, onOpenDoc }: { me: Me;
                         )}
                       </td>
                     )}
+                    {toUnits(s.vatCollected) > 0n && <td className="num px-3 py-2.5 text-right">{toUnits(a.vatCollected) > 0n ? formatAmount(a.vatCollected) : '—'}</td>}
                   </tr>
                 ))}
               </tbody>

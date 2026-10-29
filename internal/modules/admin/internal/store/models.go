@@ -107,6 +107,39 @@ type AssetDisposal struct {
 	VoidReason        *string
 }
 
+type BudgetBudget struct {
+	ID         uuid.UUID
+	CompanyID  uuid.UUID
+	FiscalYear int32
+	Name       string
+	Active     bool
+	CreatedAt  time.Time
+	CreatedBy  *uuid.UUID
+	UpdatedAt  time.Time
+	Version    int32
+}
+
+type BudgetLine struct {
+	ID           uuid.UUID
+	CompanyID    uuid.UUID
+	BudgetID     uuid.UUID
+	AccountID    uuid.UUID
+	DepartmentID *uuid.UUID
+	ProjectID    *uuid.UUID
+	M01          money.Amount
+	M02          money.Amount
+	M03          money.Amount
+	M04          money.Amount
+	M05          money.Amount
+	M06          money.Amount
+	M07          money.Amount
+	M08          money.Amount
+	M09          money.Amount
+	M10          money.Amount
+	M11          money.Amount
+	M12          money.Amount
+}
+
 type CashAccount struct {
 	CompanyID     uuid.UUID
 	AccountID     uuid.UUID
@@ -259,6 +292,7 @@ type CoreContact struct {
 	IcCashAccountID    *uuid.UUID
 	CountryCode        string
 	ForeignTin         string
+	VatCollector       string
 }
 
 type CoreDepartment struct {
@@ -506,6 +540,14 @@ type LedgerRecurringRun struct {
 	CreatedAt   time.Time
 }
 
+type LedgerRoleAccount struct {
+	CompanyID uuid.UUID
+	Role      string
+	AccountID uuid.UUID
+	PinnedAt  time.Time
+	PinnedBy  *uuid.UUID
+}
+
 type LedgerSequence struct {
 	CompanyID uuid.UUID
 	Series    string
@@ -518,6 +560,45 @@ type LedgerSetting struct {
 	FiscalYearStartMonth int16
 	UpdatedAt            time.Time
 	UpdatedBy            *uuid.UUID
+}
+
+type PanjarLine struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	RequestID   uuid.UUID
+	LineNo      int16
+	Description string
+	AccountID   *uuid.UUID
+	Amount      money.Amount
+}
+
+type PanjarRequest struct {
+	ID             uuid.UUID
+	CompanyID      uuid.UUID
+	Number         string
+	DepartmentID   uuid.UUID
+	RequestDate    civil.Date
+	NeededDate     *civil.Date
+	Purpose        string
+	Total          money.Amount
+	Status         string
+	ApprovedAmount *money.Amount
+	DecidedAt      *time.Time
+	DecidedBy      *uuid.UUID
+	DecisionNote   string
+	PaidAt         *civil.Date
+	PaidRef        string
+	CreatedAt      time.Time
+	CreatedBy      uuid.UUID
+	Version        int32
+}
+
+type PanjarUnitHead struct {
+	CompanyID    uuid.UUID
+	UserID       uuid.UUID
+	DepartmentID uuid.UUID
+	CreatedAt    time.Time
+	CreatedBy    *uuid.UUID
 }
 
 type PlatformAttachment struct {
@@ -656,6 +737,17 @@ type PlatformMailSetting struct {
 	UpdatedAt time.Time
 }
 
+type PlatformPasswordReset struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	CodeHash  []byte
+	ExpiresAt time.Time
+	Attempts  int32
+	UsedAt    *time.Time
+	CreatedAt time.Time
+	CreatedIp string
+}
+
 type PlatformRestoreTest struct {
 	ID       uuid.UUID
 	BackupID *uuid.UUID
@@ -687,19 +779,20 @@ type PlatformSession struct {
 }
 
 type PlatformUser struct {
-	ID            uuid.UUID
-	Email         string
-	Name          string
-	PasswordHash  string
-	Active        bool
-	FailedLogins  int32
-	LockedUntil   *time.Time
-	CreatedAt     time.Time
-	Version       int32
-	TotpSecret    []byte
-	TotpEnabledAt *time.Time
-	TotpLastStep  int64
-	LastLoginAt   *time.Time
+	ID               uuid.UUID
+	Email            string
+	Name             string
+	PasswordHash     string
+	Active           bool
+	FailedLogins     int32
+	LockedUntil      *time.Time
+	CreatedAt        time.Time
+	Version          int32
+	TotpSecret       []byte
+	TotpEnabledAt    *time.Time
+	TotpLastStep     int64
+	LastLoginAt      *time.Time
+	ResetRequestedAt *time.Time
 }
 
 type ProjectBudgetLine struct {
@@ -979,6 +1072,8 @@ type SalesInvoice struct {
 	Receivable     *money.Amount
 	BranchID       *uuid.UUID
 	DepartmentID   *uuid.UUID
+	VatCollector   string
+	VatAccountID   *uuid.UUID
 }
 
 type SalesInvoiceLine struct {
@@ -1019,6 +1114,7 @@ type SalesReceipt struct {
 	Kind           string
 	Advance        money.Amount
 	FromAdvance    money.Amount
+	VatCollected   money.Amount
 }
 
 type SalesReceiptAllocation struct {
@@ -1029,6 +1125,7 @@ type SalesReceiptAllocation struct {
 	Amount          money.Amount
 	WithholdingCode *string
 	Withholding     money.Amount
+	VatCollected    money.Amount
 }
 
 type TaxExportBatch struct {

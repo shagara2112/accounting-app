@@ -48,10 +48,18 @@ type Revision struct {
 	RevisedBy *string      `json:"revisedBy,omitempty"`
 }
 
-// revisable menolak jurnal yang memang tidak boleh diubah, apa pun periodenya.
-func revisable(ctx context.Context, q *store.Queries, e store.LedgerJournalEntry) error {
+// revisable menolak jurnal yang memang tidak boleh diubah, apa pun periodenya. Jurnal saldo awal
+// hanya diubah lewat halaman Saldo awal (opening true), yang menjaga akun piutang, utang, dan
+// persediaan tetap diisi per dokumen.
+func revisable(ctx context.Context, q *store.Queries, e store.LedgerJournalEntry, opening bool) error {
 	if e.Status != "posted" {
 		return httpx.Conflict("journal.edit_void", fmt.Sprintf("Jurnal %s sudah di-void dan tidak bisa diubah.", e.Number))
+	}
+	if opening {
+		if e.SourceType != SourceOpening {
+			return httpx.Unprocessable("journal.edit_not_opening", fmt.Sprintf("%s bukan jurnal saldo awal.", e.Number))
+		}
+		return nil
 	}
 	switch e.SourceType {
 	case SourceManual:
@@ -68,7 +76,7 @@ func revisable(ctx context.Context, q *store.Queries, e store.LedgerJournalEntry
 	case SourceVoid:
 		return httpx.Unprocessable("journal.edit_reversal", fmt.Sprintf("%s adalah jurnal pembatalan dan tidak bisa diubah.", e.Number))
 	case SourceOpening:
-		return httpx.Unprocessable("journal.edit_opening", fmt.Sprintf("%s adalah jurnal saldo awal dari impor; void lalu impor ulang bila perlu koreksi.", e.Number))
+		return httpx.Unprocessable("journal.edit_opening", fmt.Sprintf("%s adalah jurnal saldo awal; ubah angkanya di menu Saldo awal.", e.Number))
 	default:
 		return httpx.Unprocessable("journal.edit_via_source", fmt.Sprintf(
 			"%s berasal dari dokumen %s; koreksi lewat dokumen itu.", e.Number, e.SourceType))
@@ -95,6 +103,16 @@ func autoReversalOf(ctx context.Context, q *store.Queries, e store.LedgerJournal
 
 // Revise mengganti isi jurnal manual yang sudah diposting.
 func (l *ledger) Revise(ctx context.Context, companyID, entryID uuid.UUID, in ReviseInput, actor Actor) (Ref, error) {
+	return l.revise(ctx, companyID, entryID, in, actor, false)
+}
+
+// ReviseOpening mengganti isi jurnal saldo awal (halaman Saldo awal), dengan aturan periode,
+// riwayat versi, dan audit trail yang sama dengan revisi jurnal manual.
+func (l *ledger) ReviseOpening(ctx context.Context, companyID, entryID uuid.UUID, in ReviseInput, actor Actor) (Ref, error) {
+	return l.revise(ctx, companyID, entryID, in, actor, true)
+}
+
+func (l *ledger) revise(ctx context.Context, companyID, entryID uuid.UUID, in ReviseInput, actor Actor, opening bool) (Ref, error) {
 	in.Reason = strings.TrimSpace(in.Reason)
 	if utf8.RuneCountInString(in.Reason) > maxVoidReason {
 		msg := fmt.Sprintf("Alasan perubahan maksimal %d karakter.", maxVoidReason)
@@ -110,7 +128,7 @@ func (l *ledger) Revise(ctx context.Context, companyID, entryID uuid.UUID, in Re
 		if err != nil {
 			return err
 		}
-		if err := revisable(ctx, q, e); err != nil {
+		if err := revisable(ctx, q, e, opening); err != nil {
 			return err
 		}
 		if int(e.Revision) != in.Revision {

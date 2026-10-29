@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { ApiError, type Account, type AccountClass, type Me } from '../lib/api'
-import { useAccounts, useApplyTemplate, useCreateAccount, useUpdateAccount } from '../lib/ledger'
+import { essentialRoles, subtreeIds, treeOrder, useAccounts, useApplyTemplate, useCreateAccount, useDeleteAccount, useSystemAccounts, useUpdateAccount } from '../lib/ledger'
 import { formatAmount } from '../lib/money'
 import { activeCompany, can } from '../lib/session'
 import { useToast } from '../components/Toast'
@@ -17,17 +17,19 @@ const templateInfo: Record<string, { title: string; body: string }> = {
 export function Accounts({ me }: { me: Me }) {
   const companyId = me.activeCompanyId
   const accounts = useAccounts(companyId)
+  const roles = useSystemAccounts(companyId)
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Account | null>(null)
 
-  const list = accounts.data?.items ?? []
+  const list = useMemo(() => treeOrder(accounts.data?.items ?? []), [accounts.data])
   const classes = accounts.data?.classes ?? []
   const q = search.trim().toLowerCase()
   const visible = q ? list.filter((a) => a.code.toLowerCase().startsWith(q) || a.name.toLowerCase().includes(q)) : list
   const canCreate = can(me, 'ledger.account.create')
   const canEdit = can(me, 'ledger.account.edit')
+  const missing = (roles.data?.items ?? []).filter((r) => r.problem && essentialRoles.includes(r.role))
 
   if (accounts.isSuccess && list.length === 0) {
     return <TemplatePicker me={me} canCreate={canCreate} />
@@ -38,8 +40,23 @@ export function Accounts({ me }: { me: Me }) {
       <PageHeader
         title="Bagan akun"
         subtitle="Angka kepala kode menentukan kelompok, saldo normal, dan letaknya di laporan. Saldo per hari ini; akun laba rugi sejak awal tahun buku."
-        actions={canCreate && <Button onClick={() => setCreating(true)}>Akun baru</Button>}
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => navigate('/akun/sistem')}>
+              Akun sistem
+            </Button>
+            {canCreate && <Button onClick={() => setCreating(true)}>Akun baru</Button>}
+          </>
+        }
       />
+      {missing.length > 0 && (
+        <Alert tone="warn">
+          Akun sistem untuk {missing.map((r) => r.label).join(', ')} belum dipilih; posting faktur, tagihan, dan Saldo awal membutuhkannya.{' '}
+          <Link to="/akun/sistem" className="font-semibold underline">
+            Pilih di Akun sistem
+          </Link>
+        </Alert>
+      )}
       <input
         type="search"
         aria-label="Cari kode atau nama akun"
@@ -86,6 +103,11 @@ export function Accounts({ me }: { me: Me }) {
                   <span className="flex items-center gap-2" style={{ paddingLeft: q ? 0 : (a.level - 1) * 18 }}>
                     <span className={a.postable ? '' : 'font-semibold'}>{a.name}</span>
                     {!a.active && <Badge tone="neutral">Nonaktif</Badge>}
+                    {a.system && (
+                      <span title={`Dipakai posting otomatis: ${a.systemRoles?.join(', ')}`}>
+                        <Badge tone="accent">Akun sistem</Badge>
+                      </span>
+                    )}
                   </span>
                 </td>
                 <td className={`${td} text-[13px] text-muted`}>{group && cls ? `${cls.normal === 'debit' ? 'Debit' : 'Kredit'} · ${cls.statement === 'neraca' ? 'Neraca' : 'Laba rugi'}` : ''}</td>
@@ -179,7 +201,7 @@ function NewAccountDialog({ me, open, onClose, accounts, classes }: { me: Me; op
   const [postable, setPostable] = useState(true)
   const [attempt, setAttempt] = useState(0)
 
-  const parents = useMemo(() => accounts.filter((a) => !a.postable && a.active && a.level < 5), [accounts])
+  const parents = useMemo(() => treeOrder(accounts).filter((a) => !a.postable && a.active && a.level < 5), [accounts])
   const parent = accounts.find((a) => a.id === parentId)
   const head = /^[1-9]/.test(code) ? Number(code[0]) : 0
   const cls = head ? classes[head - 1] : undefined
@@ -270,7 +292,11 @@ function NewAccountDialog({ me, open, onClose, accounts, classes }: { me: Me; op
 
 function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account | null; onClose: () => void }) {
   const update = useUpdateAccount(me.activeCompanyId)
+  const remove = useDeleteAccount(me.activeCompanyId)
+  const all = useAccounts(me.activeCompanyId).data?.items
   const toast = useToast()
+  const [confirming, setConfirming] = useState(false)
+  const [parentId, setParentId] = useState('')
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [active, setActive] = useState(true)
@@ -279,10 +305,13 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
 
   if (account && shownFor !== account.id) {
     setShownFor(account.id)
+    setParentId(account.parentId ?? '')
     setCode(account.code)
     setName(account.name)
     setActive(account.active)
+    setConfirming(false)
     update.reset()
+    remove.reset()
   }
 
   function close() {
@@ -291,54 +320,126 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
   }
 
   const err = update.error instanceof ApiError ? update.error : null
+  // Induk yang boleh dipilih: akun header aktif di kelas yang sama, bukan akun ini atau turunannya.
+  const parents = useMemo(() => {
+    if (!account || !all) return []
+    const own = subtreeIds(all, account.id)
+    return treeOrder(all).filter((a) => !a.postable && a.class === account.class && !own.has(a.id) && (a.active || a.id === account.parentId) && a.level < 5)
+  }, [account, all])
   return (
     <Dialog
       open={account !== null}
       onClose={close}
       title={account ? `Ubah ${account.code}` : 'Ubah akun'}
-      description="Induk dan jenis akun tidak bisa diubah. Kode bisa dikoreksi selama angka kepalanya sama, dan riwayat jurnal ikut memakai kode baru."
+      description="Jenis akun (header atau detail) tidak bisa diubah. Induk dan kode bisa dikoreksi selama angka kepalanya sama; laporan dan riwayat jurnal ikut memakai pengelompokan dan kode baru."
       footer={
-        <>
-          <Button variant="secondary" onClick={close}>
-            Batal
-          </Button>
-          <Button
-            busy={update.isPending}
-            disabled={!name.trim() || !code.trim()}
-            onClick={() => {
-              if (!account) return
-              setAttempt((n) => n + 1)
-              update.mutate(
-                { id: account.id, code: code.trim(), name: name.trim(), active, version: account.version },
-                {
-                  onSuccess: (a) => {
-                    toast(`Akun ${a.code} disimpan`)
-                    close()
+        confirming && account ? (
+          <>
+            <Button variant="secondary" onClick={() => setConfirming(false)}>
+              Jangan hapus
+            </Button>
+            <Button
+              variant="danger"
+              busy={remove.isPending}
+              onClick={() =>
+                remove.mutate(
+                  { id: account.id, version: account.version },
+                  {
+                    onSuccess: () => {
+                      toast(`Akun ${account.code} ${account.name} dihapus`)
+                      close()
+                    },
+                    onError: () => setConfirming(false),
                   },
-                },
-              )
-            }}
-          >
-            Simpan
-          </Button>
-        </>
+                )
+              }
+            >
+              Ya, hapus {account.code}
+            </Button>
+          </>
+        ) : (
+          <>
+            {account && account.level > 1 && (
+              <Button
+                variant="ghost"
+                className="mr-auto text-bad"
+                onClick={() => {
+                  remove.reset()
+                  setConfirming(true)
+                }}
+              >
+                Hapus akun…
+              </Button>
+            )}
+            <Button variant="secondary" onClick={close}>
+              Batal
+            </Button>
+            <Button
+              busy={update.isPending}
+              disabled={!name.trim() || !code.trim()}
+              onClick={() => {
+                if (!account) return
+                setAttempt((n) => n + 1)
+                update.mutate(
+                  { id: account.id, code: code.trim(), name: name.trim(), active, version: account.version, parentId: parentId && parentId !== account.parentId ? parentId : undefined },
+                  {
+                    onSuccess: (a) => {
+                      toast(`Akun ${a.code} disimpan`)
+                      close()
+                    },
+                  },
+                )
+              }}
+            >
+              Simpan
+            </Button>
+          </>
+        )
       }
     >
+      {confirming && account && (
+        <Alert tone="warn">
+          Hapus {account.code} {account.name}? Hanya akun yang belum pernah dipakai (belum ada jurnal, draf dokumen, rekening kas, produk, atau aset yang memakainya) yang bisa dihapus.
+          Penghapusan tercatat di audit trail.
+        </Alert>
+      )}
+      {remove.error && <Alert>{remove.error.message}</Alert>}
+      <SelectField
+        id="ubah-induk"
+        label="Induk"
+        value={parentId}
+        disabled={!account || account.level === 1}
+        onChange={(e) => setParentId(e.target.value)}
+        error={err?.fields.parentId}
+        hint={
+          account?.level === 1
+            ? 'Akun kelompok tidak punya induk.'
+            : 'Pindahkan ke kelompok lain di kelas yang sama untuk memperbaiki pengelompokan. Akun header ikut membawa akun-akun di bawahnya.'
+        }
+      >
+        {account?.level === 1 && <option value="">— Tanpa induk —</option>}
+        {parents.map((a) => (
+          <option key={a.id} value={a.id}>
+            {'\u00a0\u00a0'.repeat(a.level - 1)}
+            {a.code} · {a.name}
+          </option>
+        ))}
+      </SelectField>
       <Field
         id="ubah-kode"
         label="Kode akun"
         className="num"
         value={code}
         maxLength={20}
-        disabled={!account || account.system || account.level === 1}
+        disabled={!account || account.level === 1}
         onChange={(e) => setCode(e.target.value)}
         error={err?.fields.code}
         hint={
-          account?.system
-            ? 'Akun sistem dipakai posting otomatis (faktur, tagihan, pajak); kodenya tidak bisa diubah.'
-            : account?.level === 1
-              ? 'Kode akun kelompok tidak bisa diubah.'
-              : `Untuk koreksi salah ketik. Angka kepala ${account?.class ?? ''} harus tetap supaya letaknya di laporan tidak berubah.`
+          account?.level === 1
+            ? 'Kode akun kelompok tidak bisa diubah.'
+            : account?.system
+              ? `Akun sistem untuk ${account.systemRoles?.join(', ') ?? 'posting otomatis'}. Kodenya boleh diganti sesuai skema kode PT (angka kepala ${account.class} tetap); posting otomatis tetap memakai akun ini.`
+              : `Untuk koreksi salah ketik atau skema kode PT. Angka kepala ${account?.class ?? ''} harus tetap supaya letaknya di laporan tidak berubah.`
         }
       />
       <Field id="ubah-nama" label="Nama akun" data-autofocus value={name} maxLength={120} onChange={(e) => setName(e.target.value)} error={err?.fields.name} />
@@ -348,7 +449,7 @@ function EditAccountDialog({ me, account, onClose }: { me: Me; account: Account 
         label="Akun aktif"
         hint="Akun nonaktif tidak bisa dipakai di jurnal baru. Akun yang masih bersaldo tidak bisa dinonaktifkan."
       />
-      {err && !err.fields.name && !err.fields.code && <Alert shakeKey={attempt}>{err.message}</Alert>}
+      {err && !err.fields.name && !err.fields.code && !err.fields.parentId && <Alert shakeKey={attempt}>{err.message}</Alert>}
     </Dialog>
   )
 }

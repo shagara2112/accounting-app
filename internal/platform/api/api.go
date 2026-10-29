@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -36,7 +37,8 @@ const (
 )
 
 // Route mendeskripsikan satu endpoint. Access dan License wajib diisi;
-// Perm wajib bila Access = Permission.
+// Perm wajib bila Access = Permission. Beberapa izin dipisah "|" berarti cukup salah satunya,
+// mis. daftar pengajuan panjar untuk pengaju (panjar.create) dan peninjau (panjar.view).
 type Route struct {
 	Method  string
 	Path    string
@@ -139,7 +141,7 @@ func (a *API) serve(w http.ResponseWriter, r *http.Request, rt Route) error {
 			if err != nil {
 				return err
 			}
-			if !scope.Role.Perms.Has(rt.Perm) {
+			if !hasAny(scope.Role.Perms, rt.Perm) {
 				return httpx.Forbidden("rbac.denied", "Peran Anda di PT ini tidak mengizinkan aksi ini.")
 			}
 			if rt.WholeCompany && scope.Role.Restricted() {
@@ -320,4 +322,14 @@ func UUIDQuery(r *http.Request, name string) (*uuid.UUID, error) {
 		return nil, httpx.BadRequest("request.query", "Parameter "+name+" tidak valid.")
 	}
 	return &id, nil
+}
+
+// hasAny: perm berisi satu izin atau beberapa izin dipisah "|".
+func hasAny(p rbac.Perms, perm string) bool {
+	for _, x := range strings.Split(perm, "|") {
+		if p.Has(x) {
+			return true
+		}
+	}
+	return false
 }

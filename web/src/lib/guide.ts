@@ -72,7 +72,7 @@ export const topics: GuideTopic[] = [
         title: 'Menu dan izin',
         points: [
           'Menu di kiri hanya menampilkan halaman yang boleh Anda buka. Kartu "Yang bisa Anda lakukan di PT ini" di Beranda merangkum izin Anda.',
-          'Peran bawaan: Pemilik, Manager, Staf akuntansi, Staf pajak, Auditor, dan Admin pelanggan. Admin bisa membuat persona sendiri.',
+          'Peran bawaan: Pemilik, Manager, Staf akuntansi, Staf pajak, Auditor, Kepala unit, dan Admin pelanggan. Admin bisa membuat persona sendiri.',
           'Bila menu yang Anda butuhkan tidak ada, minta pengelola pengguna menambah izin Anda di menu Pengguna dan akses.',
         ],
       },
@@ -187,7 +187,7 @@ export const topics: GuideTopic[] = [
     page: { to: '/penjualan?tab=pelunasan', label: 'Penjualan → Pelunasan' },
     paths: ['/penjualan?tab=pelunasan', '/penjualan/pelunasan', '/penjualan?tab=umur'],
     visible: allow('sales.view'),
-    keywords: ['pembayaran pelanggan', 'terima uang', 'piutang', 'cicilan', 'dp', 'uang muka', 'pph 23'],
+    keywords: ['pembayaran pelanggan', 'terima uang', 'piutang', 'cicilan', 'dp', 'uang muka', 'pph 23', 'wapu', 'ppn dipungut', 'bumn', 'instansi pemerintah'],
     sections: [
       {
         title: 'Mencatat pelunasan',
@@ -197,6 +197,7 @@ export const topics: GuideTopic[] = [
           'Isi tanggal dan rekening tujuan (Masuk ke rekening).',
           'Isi jumlah yang dilunasi di setiap faktur. Boleh sebagian, dan satu pembayaran boleh untuk banyak faktur.',
           'Bila pelanggan memotong PPh 23 atau PPh final 4(2), pilih kode PPh dan isi nominalnya di faktur itu.',
+          'Bila pelanggan pemungut PPN (WAPU, mis. instansi pemerintah atau BUMN), kolom PPN dipungut terisi otomatis dengan PPN faktur yang belum dipungut. Sesuaikan bila perlu.',
           'Periksa ringkasan Piutang dilunasi dan Uang diterima, lalu tekan Posting pelunasan.',
         ],
         note: 'Faktur dengan PPh dipotong tetap lunas penuh. Potongan PPh 23 dicatat sebagai PPh dibayar di muka, PPh final 4(2) sebagai beban PPh final; minta bukti potongnya dari pelanggan.',
@@ -399,6 +400,54 @@ export const topics: GuideTopic[] = [
     ],
   },
   {
+    id: 'panjar',
+    group: 'Transaksi',
+    title: 'Panjar unit',
+    summary: 'Kepala unit mengajukan kebutuhan unitnya sebelum membeli; finance menyetujui atau menolak.',
+    page: { to: '/panjar', label: 'Panjar unit' },
+    paths: ['/panjar'],
+    visible: (me) => can(me, 'panjar.create') || can(me, 'panjar.view') || can(me, 'panjar.approve'),
+    keywords: ['panjar', 'pengajuan', 'kasbon', 'uang muka kegiatan', 'permintaan dana', 'persetujuan', 'approval', 'kepala unit', 'unit', 'atur kepala unit'],
+    sections: [
+      {
+        title: 'Mengajukan panjar (kepala unit)',
+        steps: [
+          'Buka Panjar unit, lalu tekan Ajukan panjar.',
+          'Pilih unit (departemen) Anda, tanggal dibutuhkan bila ada, dan tulis keperluannya. Hanya unit yang ditetapkan Manager atau Pemilik untuk Anda yang bisa dipilih.',
+          'Isi rincian kebutuhan dan nominalnya; tambah baris bila lebih dari satu. Di bawahnya tampil sisa anggaran unit bila unit itu sudah punya anggaran.',
+          'Tekan Ajukan. Pengajuan mendapat nomor PNJ dan menunggu keputusan finance.',
+        ],
+        note: 'Selama belum diputuskan, pengajuan bisa diubah atau dibatalkan oleh pengajunya. Kepala unit melihat pengajuan unitnya saja (termasuk yang dibuat orang lain untuk unit itu) dan pengajuannya sendiri.',
+      },
+      {
+        title: 'Menyetujui atau menolak (finance)',
+        steps: [
+          'Buka Panjar unit. Tab Menunggu berisi pengajuan yang belum diputuskan.',
+          'Klik pengajuan untuk melihat rincian dan posisi anggaran unitnya.',
+          'Tekan Setujui (nominal boleh lebih kecil dari pengajuan) atau Tolak dengan alasan.',
+        ],
+        note: 'Pengajuan milik sendiri harus diputuskan pengguna finance lain.',
+      },
+      {
+        title: 'Membayar panjar yang disetujui',
+        steps: [
+          'Catat pembayarannya seperti biasa di Kas dan bank (pengeluaran) atau Pembelian, dengan departemen unit tersebut supaya masuk realisasi anggaran unit.',
+          'Kembali ke Panjar unit, buka pengajuannya, lalu tekan Tandai sudah dibayar dan isi tanggal serta nomor bukti pembayarannya.',
+        ],
+        note: 'Panjar unit hanya mencatat persetujuan; tidak membuat jurnal. Panjar yang disetujui tetapi belum dibayar mengurangi sisa anggaran unit yang ditampilkan.',
+      },
+      {
+        title: 'Menetapkan kepala unit (Manager atau Pemilik)',
+        steps: [
+          'Di Pengguna dan akses, beri pengguna peran Kepala unit di PT tersebut.',
+          'Buka Panjar unit, lalu tekan Atur kepala unit.',
+          'Centang unit (departemen) yang dikelola setiap kepala unit, lalu tekan Simpan. Satu kepala unit boleh mengelola beberapa unit, dan satu unit boleh punya beberapa kepala unit.',
+        ],
+        note: 'Kepala unit yang belum ditetapkan unitnya belum bisa mengajukan panjar. Pemilik, Manager, dan Staf akuntansi bisa mengajukan untuk unit mana pun serta menyetujui, menolak, dan menandai panjar dibayar. Auditor hanya melihat.',
+      },
+    ],
+  },
+  {
     id: 'rekonsiliasi',
     group: 'Transaksi',
     title: 'Rekonsiliasi bank',
@@ -429,7 +478,7 @@ export const topics: GuideTopic[] = [
     page: { to: '/kontak', label: 'Kontak' },
     paths: ['/kontak'],
     visible: allow('core.contact.view'),
-    keywords: ['pelanggan', 'pemasok', 'supplier', 'customer', 'npwp', 'nik', 'luar negeri'],
+    keywords: ['pelanggan', 'pemasok', 'supplier', 'customer', 'npwp', 'nik', 'luar negeri', 'wapu', 'pemungut ppn'],
     sections: [
       {
         title: 'Menambah kontak',
@@ -438,6 +487,7 @@ export const topics: GuideTopic[] = [
           'Isi nama, centang Pelanggan dan/atau Pemasok, dan Pengusaha Kena Pajak (PKP) bila berlaku.',
           'Untuk kontak dalam negeri, isi NPWP 16 digit (atau NIK bila tidak punya NPWP) dan NITKU. Data ini dipakai faktur pajak dan bukti potong.',
           'Untuk pemasok luar negeri, pilih Negara lalu isi TIN di negara asal dan alamatnya. Pemasok ini dipotong PPh 26.',
+          'Untuk pelanggan pemungut PPN (WAPU), pilih Pemungut PPN: 02 untuk instansi pemerintah, 03 untuk pemungut lain seperti BUMN. Fakturnya otomatis memakai kode transaksi 02/03.',
           'Isi termin pembayaran, email penagihan, telepon, alamat, rekening bank, dan limit kredit bila perlu, lalu simpan.',
         ],
       },
@@ -474,7 +524,7 @@ export const topics: GuideTopic[] = [
         steps: [
           'Buka Pajak → Faktur keluaran, pilih masa pajak.',
           'Periksa faktur bertanda merah (mis. NPWP pembeli kosong) dan perbaiki dulu.',
-          'Bila perlu, centang faktur lalu ubah kode transaksi. Kode 04 dipakai untuk DPP nilai lain.',
+          'Bila perlu, centang faktur lalu ubah kode transaksi. Kode 04 dipakai untuk DPP nilai lain; kode 02/03 otomatis untuk pelanggan pemungut PPN.',
           'Centang faktur yang siap, tekan Ekspor XML.',
           'Unggah berkas XML itu di Coretax lalu terbitkan faktur pajaknya di Coretax.',
         ],
@@ -596,6 +646,7 @@ export const topics: GuideTopic[] = [
         points: [
           'Menampilkan PPN keluaran, PPN masukan per masa pengkreditan, kompensasi, kurang bayar, dan lebih bayar per bulan.',
           'Lebih bayar otomatis dikompensasikan ke masa berikutnya. Kurang bayar disetor paling lambat akhir bulan berikutnya.',
+          'PPN faktur ke pemungut PPN (kode 02/03) tampil di kolom Dipungut pemungut dan tidak ikut kurang bayar, karena disetor oleh pembeli.',
         ],
       },
       {
@@ -734,21 +785,76 @@ export const topics: GuideTopic[] = [
 
   // Laporan ----------------------------------------------------------------------------
   {
+    id: 'anggaran',
+    group: 'Laporan',
+    title: 'Anggaran dan realisasi',
+    summary: 'Menyusun anggaran pendapatan dan beban per tahun buku, lalu memantau realisasinya.',
+    page: { to: '/anggaran', label: 'Anggaran' },
+    paths: ['/anggaran'],
+    visible: allow('report.view'),
+    keywords: ['anggaran', 'budget', 'rkap', 'rencana', 'realisasi', 'varians', 'selisih anggaran', 'revisi anggaran'],
+    sections: [
+      {
+        title: 'Menyusun anggaran',
+        steps: [
+          'Buka Laporan → Anggaran, pilih tahun buku, lalu tab Susun anggaran.',
+          'Tekan Buat anggaran untuk membuat versi Awal (langsung dipakai laporan).',
+          'Pilih Tingkat PT, atau satu departemen atau proyek bila anggarannya dirinci.',
+          'Isi kolom Setahun untuk membaginya rata ke 12 bulan, atau isi per bulan. Bisa juga tekan Isi dari realisasi tahun lalu dengan persen kenaikan.',
+          'Tekan Simpan anggaran.',
+        ],
+        note: 'Nominal diisi menurut saldo normal akun: pendapatan dan beban sama-sama angka positif. Hanya Pemilik dan Manager yang bisa menyusun anggaran.',
+      },
+      {
+        title: 'Revisi anggaran',
+        points: [
+          'Tekan Versi baru, beri nama (mis. Revisi 1) dan pilih Salin dari versi yang ada, lalu ubah angkanya.',
+          'Setelah siap, tekan Aktifkan. Laporan anggaran vs realisasi memakai versi yang aktif; versi lama tetap tersimpan sampai dihapus.',
+        ],
+      },
+      {
+        title: 'Anggaran vs realisasi',
+        points: [
+          'Tab Anggaran vs realisasi membandingkan anggaran dengan realisasi dari buku besar untuk rentang bulan yang dipilih, bisa per departemen atau proyek.',
+          'Kolom Sisa setahun menunjukkan anggaran setahun yang belum terpakai. Akun beban ditandai Mendekati batas bila realisasinya sudah 90% anggaran setahun, Melebihi bila lewat, dan Tanpa anggaran bila ada realisasi tanpa anggaran.',
+          'Realisasi per departemen hanya menghitung transaksi yang diberi departemen itu.',
+        ],
+      },
+    ],
+  },
+  {
     id: 'laporan',
     group: 'Laporan',
     title: 'Laporan keuangan',
-    summary: 'Neraca, laba rugi, arus kas, neraca saldo, ringkasan penjualan/pembelian, dan kartu kontak.',
+    summary: 'Neraca, laba rugi, arus kas (metode langsung dan tidak langsung), perubahan ekuitas, neraca saldo, ringkasan penjualan/pembelian, dan kartu kontak.',
     page: { to: '/laporan', label: 'Laporan keuangan' },
     paths: ['/laporan'],
     visible: allow('report.view'),
-    keywords: ['neraca', 'laba rugi', 'arus kas', 'excel', 'pdf', 'cetak', 'departemen', 'divisi', 'cabang', 'per departemen'],
+    keywords: ['neraca', 'laba rugi', 'arus kas', 'excel', 'pdf', 'cetak', 'departemen', 'divisi', 'cabang', 'per departemen', 'perubahan ekuitas', 'perubahan modal', 'metode langsung', 'rat', 'laporan tahunan'],
     sections: [
       {
         title: 'Membuka laporan',
         steps: [
-          'Buka Laporan keuangan, pilih tab: Neraca, Laba rugi, Arus kas, Neraca saldo, Penjualan dan pembelian, atau Kartu kontak.',
+          'Buka Laporan keuangan, pilih tab: Neraca, Laba rugi, Arus kas, Perubahan ekuitas, Neraca saldo, Rasio keuangan, Penjualan dan pembelian, atau Kartu kontak.',
           'Pilih periode: Bulan ini, Bulan lalu, atau Pilih tanggal.',
           'Laba rugi bisa dipilah per cabang dan departemen (lihat bagian di bawah).',
+        ],
+      },
+      {
+        title: 'Arus kas dan perubahan ekuitas',
+        points: [
+          'Tab Arus kas punya dua metode. Tidak langsung dimulai dari laba bersih lalu menyesuaikan perubahan piutang, utang, dan akun lain. Langsung menampilkan uang masuk dan keluar apa adanya: penerimaan dari pelanggan, pembayaran kepada pemasok dan karyawan, pajak, investasi, dan pendanaan, dengan rincian per akun lawan.',
+          'Metode langsung memilah setiap transaksi kas dan bank menurut akun lawannya; transfer antarrekening tidak dihitung. Total per aktivitas sama dengan metode tidak langsung.',
+          'Tab Perubahan ekuitas menampilkan satu kolom untuk setiap akun ekuitas di bagan akun (mis. modal, simpanan pokok dan wajib, cadangan, laba ditahan) dan baris saldo awal, reklas laba tahun lalu, penambahan, pengurangan, laba periode ini, dan saldo akhir. Saldo akhirnya sama dengan ekuitas di neraca.',
+          'Untuk laporan tahunan atau RAT, pilih Tahun buku berjalan atau Pilih tanggal (mis. 1 Januari s.d. 31 Desember), lalu ekspor ke Excel atau cetak ke PDF.',
+        ],
+      },
+      {
+        title: 'Rasio keuangan',
+        points: [
+          'Tab Rasio keuangan menampilkan rasio lancar, rasio kas, utang terhadap ekuitas, margin laba kotor dan bersih, lama penagihan piutang (DSO), dan lama pembayaran utang (DPO) untuk 6 akhir bulan terakhir.',
+          'Neraca dihitung per akhir bulan; laba rugi sejak awal tahun buku. Label Sehat, Waspada, dan Perlu perhatian memakai panduan umum; bandingkan juga dengan bulan sebelumnya.',
+          'Aset lancar dihitung dari akun berkode 1-1…, liabilitas jangka pendek dari akun berkode 2-1…, kas dari rekening kas dan bank yang terdaftar.',
         ],
       },
       {
@@ -866,8 +972,51 @@ export const topics: GuideTopic[] = [
         points: [
           'Angka kepala kode menentukan kelompok: 1 aset, 2 liabilitas, 3 ekuitas, 4 pendapatan usaha, 5 beban pokok, 6 beban usaha, 7 pendapatan lain-lain, 8 beban lain-lain, 9 pajak penghasilan.',
           'Tekan Akun baru untuk menambah akun di bawah akun induknya. Akun header hanya mengelompokkan; jurnal memakai akun detail.',
-          'Kode akun yang salah ketik bisa dikoreksi lewat tombol ubah di baris akun, selama angka kepalanya sama (mis. 6-1105 menjadi 6-1150). Kode akun sistem (mis. 1-1401 PPN masukan) dan akun kelompok terkunci karena dipakai posting otomatis.',
-          'Akun tidak dihapus. Bila tidak dipakai lagi, klik akunnya dan matikan Akun aktif (akun yang masih bersaldo tidak bisa dinonaktifkan).',
+          'Kode akun bisa dikoreksi atau disesuaikan dengan skema kode PT lewat tombol ubah di baris akun, selama angka kepalanya sama (mis. 1-1101 menjadi 1-11101). Akun berlabel Akun sistem (mis. piutang usaha, PPN masukan) juga boleh diganti kodenya; posting otomatis tetap memakai akun itu. Hanya kode akun kelompok (1–9) yang terkunci.',
+          'Akun sistem adalah akun yang dipakai posting otomatis (piutang usaha, utang usaha, PPN, ekuitas saldo awal, dan lainnya). Tombol Akun sistem di Bagan akun menampilkan semuanya. Bila bagan akun disusun dengan skema kode sendiri, pilih akunnya di sana; faktur, tagihan, dan Saldo awal baru bisa diposting setelah akunnya dipilih.',
+          'Akun yang salah kelompok bisa dipindah: tombol ubah → pilih Induk lain di kelas yang sama. Akun header ikut membawa akun di bawahnya, dan laporan (termasuk periode lalu) langsung memakai pengelompokan baru. Sesuaikan juga kodenya bila perlu.',
+          'Akun yang salah dibuat dan belum pernah dipakai bisa dihapus: tombol ubah → Hapus akun. Akun yang sudah dipakai (ada jurnal, draf dokumen, rekening kas, produk, aset, atau dipilih di Akun sistem) tidak bisa dihapus; matikan Akun aktif saja supaya tidak muncul di pilihan akun (akun yang masih bersaldo tidak bisa dinonaktifkan).',
+        ],
+      },
+    ],
+  },
+  {
+    id: 'saldo-awal',
+    group: 'Akuntansi',
+    title: 'Saldo awal',
+    summary: 'Mengetik saldo setiap akun saat mulai memakai Lajur, termasuk bila mulai di tengah tahun.',
+    page: { to: '/saldo-awal', label: 'Saldo awal' },
+    paths: ['/saldo-awal'],
+    visible: allow('ledger.view', true),
+    keywords: ['saldo awal', 'opening balance', 'migrasi', 'mulai pakai', 'tengah tahun', 'buku besar awal'],
+    sections: [
+      {
+        title: 'Mengisi saldo awal',
+        steps: [
+          'Buka Akuntansi → Saldo awal.',
+          'Isi Tanggal saldo awal, biasanya akhir bulan sebelum mulai memakai Lajur (mis. 30/09/2026 bila mulai Oktober).',
+          'Ketik saldo setiap akun di kolom Debit atau Kredit sesuai neraca saldo dari pembukuan lama. Pakai kotak cari untuk menemukan akun.',
+          'Bila mulai di tengah tahun, isi juga akun pendapatan dan beban dengan jumlah sejak awal tahun buku, supaya laba rugi setahun tetap lengkap.',
+          'Tekan Simpan saldo awal. Lajur membuat satu jurnal saldo awal (seri SA).',
+        ],
+        note: 'Sesudah disimpan, Buku besar dan laporan untuk tanggal sesudahnya langsung memakai saldo ini sebagai saldo awal.',
+      },
+      {
+        title: 'Piutang, utang, dan persediaan',
+        points: [
+          'Piutang usaha dan utang usaha boleh diketik langsung di sini. Saldo yang diketik tidak punya rincian per faktur, jadi tidak muncul di Umur piutang/utang dan pelunasannya dicatat lewat Kas dan bank. Supaya umur piutang dan utang benar, isi per faktur dan per tagihan lewat Impor data → Saldo awal piutang dan Saldo awal utang (jangan diisi dua kali).',
+          'Persediaan tetap diisi per barang lewat Impor data → Saldo awal stok, supaya kartu stok dan HPP benar.',
+          'Halaman ini membutuhkan akun sistem untuk ekuitas saldo awal, piutang usaha, dan utang usaha. Bila muncul pesan akun sistem belum dipilih, buka Bagan akun → Akun sistem dan pilih akunnya.',
+          'Sampai semuanya diisi, selisih sementara dicatat di akun ekuitas saldo awal. Bila semua saldo awal sudah lengkap dan cocok dengan pembukuan lama, saldo akun itu menjadi nol.',
+          'Aset tetap lama didaftarkan di menu Aset tetap dengan akumulasi penyusutan sampai tanggal saldo awal.',
+        ],
+      },
+      {
+        title: 'Mengoreksi',
+        points: [
+          'Selama periodenya belum dikunci, ubah angka di halaman ini lalu tekan Simpan perubahan. Nomor jurnal tetap dan versi lamanya tersimpan di riwayat.',
+          'Mengganti tanggal ke bulan lain membatalkan (void) jurnal saldo awal lama dan membuat yang baru.',
+          'Setelah semuanya cocok, kunci periode sampai tanggal saldo awal di menu Periode.',
         ],
       },
     ],
@@ -875,12 +1024,12 @@ export const topics: GuideTopic[] = [
   {
     id: 'periode',
     group: 'Akuntansi',
-    title: 'Tutup buku bulanan',
-    summary: 'Urutan tutup buku dan status periode: Terbuka, Penyesuaian, Terkunci.',
+    title: 'Tutup buku bulanan dan akhir tahun',
+    summary: 'Urutan tutup buku, status periode (Terbuka, Penyesuaian, Terkunci), dan reklas laba akhir tahun ke laba ditahan.',
     page: { to: '/periode', label: 'Periode dan tutup buku' },
     paths: ['/periode'],
     visible: allow('ledger.view', true),
-    keywords: ['tutup buku', 'closing', 'kunci periode', 'akhir bulan'],
+    keywords: ['tutup buku', 'closing', 'kunci periode', 'akhir bulan', 'akhir tahun', 'tutup tahun', 'reklas', 'reklasifikasi', 'laba ditahan', 'jurnal penutup', 'saldo laba'],
     sections: [
       {
         title: 'Status periode',
@@ -902,6 +1051,21 @@ export const topics: GuideTopic[] = [
           'Tekan Kunci final.',
         ],
         note: 'Buka kembali hanya bila benar-benar perlu koreksi; tindakan ini tercatat di audit trail.',
+      },
+      {
+        title: 'Reklas laba akhir tahun ke laba ditahan',
+        steps: [
+          'Setelah tahun buku berakhir, tutup bulan terakhirnya untuk transaksi (status Penyesuaian) dan masukkan jurnal penyesuaian akhir tahun.',
+          'Di Periode dan tutup buku, pilih tahun bukunya, lalu tekan Reklas ke laba ditahan. Lajur membuat jurnal penutup bertanggal akhir tahun buku (seri TB) ke akun laba ditahan.',
+          'Bila sesudah itu masih ada revisi (mis. koreksi auditor), masukkan saja jurnalnya. Status reklas menjadi Perlu diperbarui; tekan Perbarui reklas.',
+          'Setelah laporan tahun itu final, kunci final bulan terakhirnya. Reklas ikut final.',
+        ],
+        points: [
+          'Laporan tahun itu tidak berubah: laba rugi tetap utuh dan neraca per akhir tahun tetap menampilkan laba tahun berjalan. Mulai tahun buku berikutnya laba itu tampil sebagai laba ditahan.',
+          'Reklas bisa dibatalkan (dengan alasan) selama bulan terakhir tahun buku belum dikunci final.',
+          'Akun tujuan adalah akun sistem laba ditahan (bawaan 3-2001); bisa diganti di Bagan akun → Akun sistem.',
+        ],
+        note: 'Hanya Pemilik dan Manager yang bisa mereklas, memperbarui, dan membatalkan reklas.',
       },
     ],
   },
@@ -1049,6 +1213,16 @@ export const topics: GuideTopic[] = [
 
 export const faqs: Faq[] = [
   {
+    q: 'Sesudah tutup buku akhir tahun, apakah masih bisa revisi?',
+    a: 'Bisa. Reklas laba akhir tahun ke laba ditahan tidak mengunci apa pun. Selama bulan terakhir tahun buku belum dikunci final, jurnal revisi tetap bisa masuk; Lajur lalu menandai reklas Perlu diperbarui dan cukup tekan Perbarui reklas. Reklas juga bisa dibatalkan.',
+    topic: 'periode',
+  },
+  {
+    q: 'Panjar unit sudah disetujui, apakah uangnya otomatis tercatat keluar?',
+    a: 'Tidak. Panjar unit hanya mencatat pengajuan dan persetujuan. Finance tetap mencatat pembayarannya di Kas dan bank atau Pembelian (dengan departemen unitnya), lalu menandai pengajuan sudah dibayar dengan nomor buktinya.',
+    topic: 'panjar',
+  },
+  {
     q: 'Inventaris barang ada di menu mana?',
     a: 'Barang dagangan atau material yang dijual dan dipakai ada di Persediaan (stok, kartu stok, stock opname) dan Produk dan jasa (master barang). Peralatan kantor, kendaraan, mesin, dan gedung ada di Aset tetap.',
     topic: 'persediaan',
@@ -1089,14 +1263,19 @@ export const faqs: Faq[] = [
     topic: 'aset',
   },
   {
-    q: 'Bagaimana memasukkan saldo awal saat mulai memakai Lajur?',
-    a: 'Lewat Impor data: neraca saldo awal, saldo awal piutang, saldo awal utang, dan saldo awal stok. Ikuti urutan di panduan Impor data.',
-    topic: 'impor',
+    q: 'Bagaimana memasukkan saldo awal saat mulai memakai Lajur, misalnya di bulan Oktober?',
+    a: 'Ketik saldo setiap akun per akhir bulan sebelumnya (mis. 30 September) di Akuntansi → Saldo awal, atau impor dari Excel di Impor data. Bila mulai di tengah tahun, isi juga pendapatan dan beban sejak Januari supaya laba rugi setahun lengkap. Piutang usaha dan utang usaha boleh diketik langsung, atau diisi per faktur/tagihan lewat Impor data supaya umurnya tercatat; stok diisi per barang lewat Impor data.',
+    topic: 'saldo-awal',
   },
   {
     q: 'Faktur pajak masukan baru diterima bulan depan, bagaimana?',
     a: 'Buka Pajak → Faktur masukan, klik tagihannya, catat nomor faktur pajak, dan pilih masa pengkreditan yang lebih akhir (paling lama tiga masa sesudah masa faktur).',
     topic: 'faktur-masukan',
+  },
+  {
+    q: 'PPN keluaran kami dipisah per jenis (disetor sendiri, WAPU, DPP nilai lain, digunggung), bagaimana?',
+    a: 'Buka Bagan akun → Akun sistem. Pilih akun PPN keluaran utama, lalu akun PPN keluaran dipungut pemungut (02/03), DPP nilai lain (04), dan digunggung. Jenis yang tidak dipilih memakai akun PPN keluaran utama. Tandai pelanggan WAPU di Kontak → Pemungut PPN; saat pelunasan, isi PPN dipungut supaya fakturnya lunas tanpa uang masuk dan saldo akun WAPU kembali nol.',
+    topic: 'buku-besar',
   },
   {
     q: 'Bagaimana melihat pendapatan dan pengeluaran per departemen?',
@@ -1110,7 +1289,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Saya lupa kata sandi atau ganti ponsel untuk 2FA.',
-    a: 'Hubungi admin. Admin membuka Pengguna dan akses, memilih nama Anda, lalu Atur ulang kata sandi atau Atur ulang 2FA.',
+    a: 'Di halaman masuk, klik Lupa kata sandi? lalu isi email Anda. Bila email server kantor sudah diatur (Sistem → Email), kode 6 digit dikirim ke email itu; masukkan kodenya bersama kata sandi baru (kode berlaku 15 menit). Bila belum diatur, permintaan Anda muncul di Pengguna dan akses, dan admin membuatkan kata sandi baru lewat Atur ulang kata sandi. Ganti ponsel untuk 2FA: minta admin memilih nama Anda lalu Atur ulang 2FA. Tombol mata di kolom kata sandi menampilkan isi yang diketik.',
     topic: 'profil',
   },
   {
@@ -1119,8 +1298,8 @@ export const faqs: Faq[] = [
     topic: 'sistem',
   },
   {
-    q: 'Salah ketik nama PT atau kode akun, bisa diperbaiki?',
-    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Kode akun diubah di Bagan akun lewat tombol ubah di baris akunnya, selama angka kepalanya tetap sama; jurnal lama ikut memakai kode baru. Kode akun sistem untuk posting otomatis tidak bisa diubah.',
+    q: 'Salah ketik nama PT, kode akun, salah kelompok akun, atau salah membuat akun, bisa diperbaiki atau dihapus?',
+    a: 'Bisa. Nama PT diubah admin di PT dalam grup → Ubah. Di Bagan akun, tombol ubah di baris akun bisa mengganti Induk (pindah kelompok) dan kode, selama angka kepalanya tetap sama; jurnal lama dan laporan ikut memakai pengelompokan dan kode baru. Kode akun sistem juga boleh diganti; posting otomatis tetap memakai akun yang sama. Akun yang salah dibuat dan belum pernah dipakai bisa dihapus lewat tombol ubah → Hapus akun; yang sudah dipakai cukup dinonaktifkan. Untuk skema kode sendiri, pilih akun posting otomatis di Bagan akun → Akun sistem.',
     topic: 'buku-besar',
   },
   {

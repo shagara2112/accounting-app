@@ -24,7 +24,7 @@ import { useInvalidateCompany } from './invalidate'
 
 export type TradeKind = 'sales' | 'purchase'
 
-type SalesOnly = 'dpp' | 'kind' | 'projectId' | 'progressPct' | 'subtotal' | 'discount' | 'retention' | 'receivable'
+type SalesOnly = 'dpp' | 'vat' | 'kind' | 'projectId' | 'progressPct' | 'subtotal' | 'discount' | 'retention' | 'receivable'
 
 export type Doc = Omit<Invoice, 'customerId' | 'customerName' | 'credited' | SalesOnly> &
   Partial<Pick<Invoice, SalesOnly>> & {
@@ -36,7 +36,17 @@ export type Doc = Omit<Invoice, 'customerId' | 'customerName' | 'credited' | Sal
     opening?: boolean // tagihan saldo awal (pembelian); faktur saldo awal memakai kind
   }
 
-export type DocPayment = { id: string; number: string; date: string; status: string; amount: string; withholding: string; withholdingCode?: string }
+export type DocPayment = {
+  id: string
+  number: string
+  date: string
+  status: string
+  amount: string
+  withholding: string
+  withholdingCode?: string
+  /** PPN dipungut pelanggan pemungut (penjualan). */
+  vatCollected?: string
+}
 
 export type DocNote = { id: string; number: string; date: string; status: 'posted' | 'void'; total: string; applied: string }
 
@@ -56,7 +66,8 @@ export type Settlement = Omit<Receipt, 'customerId' | 'customerName'> & { contac
 export type SettlementDetail = Settlement & {
   allocated: string
   withholding: string
-  allocations: { docId: string; docNumber: string; amount: string; withholdingCode?: string; withholding: string }[]
+  vatCollected: string
+  allocations: { docId: string; docNumber: string; amount: string; withholdingCode?: string; withholding: string; vatCollected: string }[]
   createdBy?: string
   voidedBy?: string
   voidReason?: string
@@ -76,7 +87,8 @@ export type DocInput = {
   version: number
 }
 
-export type AllocationInput = { docId: string; amount: string; withholdingCode: string; withholding: string }
+/** vatCollected: PPN dipungut pelanggan pemungut (hanya penjualan). */
+export type AllocationInput = { docId: string; amount: string; withholdingCode: string; withholding: string; vatCollected: string }
 export type SettlementInput = {
   contactId: string
   date: string
@@ -111,7 +123,16 @@ function toDocDetail(d: InvoiceDetail | BillDetail): DocDetail {
       lines: d.lines.map((l) => ({ ...l, notedNet: l.creditedNet ?? '0' })),
       withholding: '0',
       duplicates: [],
-      payments: d.payments.map((p) => ({ id: p.receiptId, number: p.number, date: p.date, status: p.status, amount: p.amount, withholding: p.withholding, withholdingCode: p.withholdingCode })),
+      payments: d.payments.map((p) => ({
+        id: p.receiptId,
+        number: p.number,
+        date: p.date,
+        status: p.status,
+        amount: p.amount,
+        withholding: p.withholding,
+        withholdingCode: p.withholdingCode,
+        vatCollected: p.vatCollected,
+      })),
       notes: (d.creditNotes ?? []).map((n) => ({ id: n.creditNoteId, number: n.number, date: n.date, status: n.status, total: n.total, applied: n.applied })),
     }
   }
@@ -139,7 +160,15 @@ function toSettlementDetail(s: ReceiptDetail | PaymentDetail): SettlementDetail 
       ...toSettlement(s),
       allocated: s.allocated,
       withholding: s.withholding,
-      allocations: s.allocations.map((a) => ({ docId: a.invoiceId, docNumber: a.invoiceNumber, amount: a.amount, withholdingCode: a.withholdingCode, withholding: a.withholding })),
+      vatCollected: s.vatCollected,
+      allocations: s.allocations.map((a) => ({
+        docId: a.invoiceId,
+        docNumber: a.invoiceNumber,
+        amount: a.amount,
+        withholdingCode: a.withholdingCode,
+        withholding: a.withholding,
+        vatCollected: a.vatCollected,
+      })),
       createdBy: s.createdBy,
       voidedBy: s.voidedBy,
       voidReason: s.voidReason,
@@ -149,7 +178,8 @@ function toSettlementDetail(s: ReceiptDetail | PaymentDetail): SettlementDetail 
     ...toSettlement(s),
     allocated: s.amount,
     withholding: '0',
-    allocations: s.allocations.map((a) => ({ docId: a.billId, docNumber: a.billNumber, amount: a.amount, withholding: '0' })),
+    vatCollected: '0',
+    allocations: s.allocations.map((a) => ({ docId: a.billId, docNumber: a.billNumber, amount: a.amount, withholding: '0', vatCollected: '0' })),
     createdBy: s.createdBy,
     voidedBy: s.voidedBy,
     voidReason: s.voidReason,
@@ -177,7 +207,13 @@ function settlementBody(kind: TradeKind, v: SettlementInput) {
     ? {
         customerId: v.contactId,
         ...common,
-        allocations: v.allocations.map((a) => ({ invoiceId: a.docId, amount: a.amount, withholdingCode: a.withholdingCode, withholding: a.withholding })),
+        allocations: v.allocations.map((a) => ({
+          invoiceId: a.docId,
+          amount: a.amount,
+          withholdingCode: a.withholdingCode,
+          withholding: a.withholding,
+          vatCollected: a.vatCollected,
+        })),
       }
     : { supplierId: v.contactId, ...common, allocations: v.allocations.map((a) => ({ billId: a.docId, amount: a.amount })) }
 }

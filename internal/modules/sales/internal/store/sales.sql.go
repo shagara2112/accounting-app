@@ -73,6 +73,45 @@ func (q *Queries) AgingInvoices(ctx context.Context, arg AgingInvoicesParams) ([
 	return items, nil
 }
 
+const collectedByInvoice = `-- name: CollectedByInvoice :many
+SELECT a.invoice_id, sum(a.vat_collected)::numeric AS collected
+FROM sales.receipt_allocations a
+JOIN sales.receipts r ON r.id = a.receipt_id
+WHERE a.company_id = $1 AND a.invoice_id = ANY($2::uuid[]) AND r.status = 'posted' AND a.vat_collected > 0
+GROUP BY a.invoice_id
+`
+
+type CollectedByInvoiceParams struct {
+	CompanyID uuid.UUID
+	Ids       []uuid.UUID
+}
+
+type CollectedByInvoiceRow struct {
+	InvoiceID uuid.UUID
+	Collected money.Amount
+}
+
+// PPN dipungut pelanggan yang sudah dicatat per faktur (pelunasan yang masih berlaku).
+func (q *Queries) CollectedByInvoice(ctx context.Context, arg CollectedByInvoiceParams) ([]CollectedByInvoiceRow, error) {
+	rows, err := q.db.Query(ctx, collectedByInvoice, arg.CompanyID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CollectedByInvoiceRow
+	for rows.Next() {
+		var i CollectedByInvoiceRow
+		if err := rows.Scan(&i.InvoiceID, &i.Collected); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const creditNoteLines = `-- name: CreditNoteLines :many
 SELECT id, company_id, credit_note_id, line_no, invoice_line_id, description, account_id, product_id, qty, unit_price, discount_pct, discount, net, tax_code, other_dpp, vat, restock FROM sales.credit_note_lines WHERE company_id = $1 AND credit_note_id = $2 ORDER BY line_no
 `
@@ -700,7 +739,7 @@ func (q *Queries) GetDailySaleForUpdate(ctx context.Context, arg GetDailySaleFor
 }
 
 const getInvoice = `-- name: GetInvoice :one
-SELECT i.id, i.company_id, i.number, i.status, i.customer_id, i.invoice_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.total, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, i.kind, i.project_id, i.progress_pct, i.retention, i.receivable, i.branch_id, i.department_id, cu.name AS created_by_name, pu.name AS posted_by_name, vu.name AS voided_by_name
+SELECT i.id, i.company_id, i.number, i.status, i.customer_id, i.invoice_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.total, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, i.kind, i.project_id, i.progress_pct, i.retention, i.receivable, i.branch_id, i.department_id, i.vat_collector, i.vat_account_id, cu.name AS created_by_name, pu.name AS posted_by_name, vu.name AS voided_by_name
 FROM sales.invoices i
 LEFT JOIN platform.users cu ON cu.id = i.created_by
 LEFT JOIN platform.users pu ON pu.id = i.posted_by
@@ -744,6 +783,8 @@ type GetInvoiceRow struct {
 	Receivable     *money.Amount
 	BranchID       *uuid.UUID
 	DepartmentID   *uuid.UUID
+	VatCollector   string
+	VatAccountID   *uuid.UUID
 	CreatedByName  *string
 	PostedByName   *string
 	VoidedByName   *string
@@ -783,6 +824,8 @@ func (q *Queries) GetInvoice(ctx context.Context, arg GetInvoiceParams) (GetInvo
 		&i.Receivable,
 		&i.BranchID,
 		&i.DepartmentID,
+		&i.VatCollector,
+		&i.VatAccountID,
 		&i.CreatedByName,
 		&i.PostedByName,
 		&i.VoidedByName,
@@ -791,7 +834,7 @@ func (q *Queries) GetInvoice(ctx context.Context, arg GetInvoiceParams) (GetInvo
 }
 
 const getInvoiceForUpdate = `-- name: GetInvoiceForUpdate :one
-SELECT id, company_id, number, status, customer_id, invoice_date, due_date, memo, subtotal, discount, dpp, other_dpp, vat, total, journal_entry_id, created_at, created_by, posted_at, posted_by, voided_at, voided_by, void_reason, version, kind, project_id, progress_pct, retention, receivable, branch_id, department_id FROM sales.invoices WHERE company_id = $1 AND id = $2 FOR UPDATE
+SELECT id, company_id, number, status, customer_id, invoice_date, due_date, memo, subtotal, discount, dpp, other_dpp, vat, total, journal_entry_id, created_at, created_by, posted_at, posted_by, voided_at, voided_by, void_reason, version, kind, project_id, progress_pct, retention, receivable, branch_id, department_id, vat_collector, vat_account_id FROM sales.invoices WHERE company_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetInvoiceForUpdateParams struct {
@@ -833,12 +876,14 @@ func (q *Queries) GetInvoiceForUpdate(ctx context.Context, arg GetInvoiceForUpda
 		&i.Receivable,
 		&i.BranchID,
 		&i.DepartmentID,
+		&i.VatCollector,
+		&i.VatAccountID,
 	)
 	return i, err
 }
 
 const getReceipt = `-- name: GetReceipt :one
-SELECT r.id, r.company_id, r.number, r.customer_id, r.receipt_date, r.cash_account_id, r.amount, r.memo, r.status, r.journal_entry_id, r.created_at, r.created_by, r.voided_at, r.voided_by, r.void_reason, r.kind, r.advance, r.from_advance, u.name AS created_by_name, vu.name AS voided_by_name
+SELECT r.id, r.company_id, r.number, r.customer_id, r.receipt_date, r.cash_account_id, r.amount, r.memo, r.status, r.journal_entry_id, r.created_at, r.created_by, r.voided_at, r.voided_by, r.void_reason, r.kind, r.advance, r.from_advance, r.vat_collected, u.name AS created_by_name, vu.name AS voided_by_name
 FROM sales.receipts r
 LEFT JOIN platform.users u ON u.id = r.created_by
 LEFT JOIN platform.users vu ON vu.id = r.voided_by
@@ -869,6 +914,7 @@ type GetReceiptRow struct {
 	Kind           string
 	Advance        money.Amount
 	FromAdvance    money.Amount
+	VatCollected   money.Amount
 	CreatedByName  *string
 	VoidedByName   *string
 }
@@ -895,6 +941,7 @@ func (q *Queries) GetReceipt(ctx context.Context, arg GetReceiptParams) (GetRece
 		&i.Kind,
 		&i.Advance,
 		&i.FromAdvance,
+		&i.VatCollected,
 		&i.CreatedByName,
 		&i.VoidedByName,
 	)
@@ -902,7 +949,7 @@ func (q *Queries) GetReceipt(ctx context.Context, arg GetReceiptParams) (GetRece
 }
 
 const getReceiptForUpdate = `-- name: GetReceiptForUpdate :one
-SELECT id, company_id, number, customer_id, receipt_date, cash_account_id, amount, memo, status, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason, kind, advance, from_advance FROM sales.receipts WHERE company_id = $1 AND id = $2 FOR UPDATE
+SELECT id, company_id, number, customer_id, receipt_date, cash_account_id, amount, memo, status, journal_entry_id, created_at, created_by, voided_at, voided_by, void_reason, kind, advance, from_advance, vat_collected FROM sales.receipts WHERE company_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetReceiptForUpdateParams struct {
@@ -932,13 +979,14 @@ func (q *Queries) GetReceiptForUpdate(ctx context.Context, arg GetReceiptForUpda
 		&i.Kind,
 		&i.Advance,
 		&i.FromAdvance,
+		&i.VatCollected,
 	)
 	return i, err
 }
 
 const insertAllocation = `-- name: InsertAllocation :exec
-INSERT INTO sales.receipt_allocations (id, company_id, receipt_id, invoice_id, amount, withholding_code, withholding)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO sales.receipt_allocations (id, company_id, receipt_id, invoice_id, amount, withholding_code, withholding, vat_collected)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type InsertAllocationParams struct {
@@ -949,6 +997,7 @@ type InsertAllocationParams struct {
 	Amount          money.Amount
 	WithholdingCode *string
 	Withholding     money.Amount
+	VatCollected    money.Amount
 }
 
 func (q *Queries) InsertAllocation(ctx context.Context, arg InsertAllocationParams) error {
@@ -960,6 +1009,7 @@ func (q *Queries) InsertAllocation(ctx context.Context, arg InsertAllocationPara
 		arg.Amount,
 		arg.WithholdingCode,
 		arg.Withholding,
+		arg.VatCollected,
 	)
 	return err
 }
@@ -1280,8 +1330,8 @@ const insertReceipt = `-- name: InsertReceipt :exec
 
 INSERT INTO sales.receipts
   (id, company_id, number, customer_id, receipt_date, cash_account_id, amount, memo, journal_entry_id, created_by,
-   kind, advance, from_advance)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+   kind, advance, from_advance, vat_collected)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 `
 
 type InsertReceiptParams struct {
@@ -1298,6 +1348,7 @@ type InsertReceiptParams struct {
 	Kind           string
 	Advance        money.Amount
 	FromAdvance    money.Amount
+	VatCollected   money.Amount
 }
 
 // Pelunasan -------------------------------------------------------------------------
@@ -1316,6 +1367,7 @@ func (q *Queries) InsertReceipt(ctx context.Context, arg InsertReceiptParams) er
 		arg.Kind,
 		arg.Advance,
 		arg.FromAdvance,
+		arg.VatCollected,
 	)
 	return err
 }
@@ -1415,7 +1467,7 @@ func (q *Queries) InvoiceLines(ctx context.Context, arg InvoiceLinesParams) ([]S
 }
 
 const invoiceReceipts = `-- name: InvoiceReceipts :many
-SELECT r.id, r.number, r.receipt_date, r.status, a.amount, a.withholding, a.withholding_code
+SELECT r.id, r.number, r.receipt_date, r.status, a.amount, a.withholding, a.withholding_code, a.vat_collected
 FROM sales.receipt_allocations a
 JOIN sales.receipts r ON r.id = a.receipt_id
 WHERE a.company_id = $1 AND a.invoice_id = $2
@@ -1435,6 +1487,7 @@ type InvoiceReceiptsRow struct {
 	Amount          money.Amount
 	Withholding     money.Amount
 	WithholdingCode *string
+	VatCollected    money.Amount
 }
 
 func (q *Queries) InvoiceReceipts(ctx context.Context, arg InvoiceReceiptsParams) ([]InvoiceReceiptsRow, error) {
@@ -1454,6 +1507,7 @@ func (q *Queries) InvoiceReceipts(ctx context.Context, arg InvoiceReceiptsParams
 			&i.Amount,
 			&i.Withholding,
 			&i.WithholdingCode,
+			&i.VatCollected,
 		); err != nil {
 			return nil, err
 		}
@@ -1618,10 +1672,11 @@ func (q *Queries) ListDailySales(ctx context.Context, arg ListDailySalesParams) 
 }
 
 const listInvoices = `-- name: ListInvoices :many
-SELECT i.id, i.company_id, i.number, i.status, i.customer_id, i.invoice_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.total, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, i.kind, i.project_id, i.progress_pct, i.retention, i.receivable, i.branch_id, i.department_id, coalesce(p.paid, 0)::numeric AS paid, coalesce(c.credited, 0)::numeric AS credited
+SELECT i.id, i.company_id, i.number, i.status, i.customer_id, i.invoice_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.total, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, i.kind, i.project_id, i.progress_pct, i.retention, i.receivable, i.branch_id, i.department_id, i.vat_collector, i.vat_account_id, coalesce(p.paid, 0)::numeric AS paid, coalesce(c.credited, 0)::numeric AS credited,
+       coalesce(p.vat_collected, 0)::numeric AS vat_collected_total
 FROM sales.invoices i
 LEFT JOIN LATERAL (
-  SELECT sum(a.amount) AS paid
+  SELECT sum(a.amount) AS paid, sum(a.vat_collected) AS vat_collected
   FROM sales.receipt_allocations a
   JOIN sales.receipts r ON r.id = a.receipt_id
   WHERE a.invoice_id = i.id AND r.status = 'posted'
@@ -1655,38 +1710,41 @@ type ListInvoicesParams struct {
 }
 
 type ListInvoicesRow struct {
-	ID             uuid.UUID
-	CompanyID      uuid.UUID
-	Number         *string
-	Status         string
-	CustomerID     uuid.UUID
-	InvoiceDate    civil.Date
-	DueDate        civil.Date
-	Memo           string
-	Subtotal       money.Amount
-	Discount       money.Amount
-	Dpp            money.Amount
-	OtherDpp       money.Amount
-	Vat            money.Amount
-	Total          money.Amount
-	JournalEntryID *uuid.UUID
-	CreatedAt      time.Time
-	CreatedBy      *uuid.UUID
-	PostedAt       *time.Time
-	PostedBy       *uuid.UUID
-	VoidedAt       *time.Time
-	VoidedBy       *uuid.UUID
-	VoidReason     *string
-	Version        int32
-	Kind           string
-	ProjectID      *uuid.UUID
-	ProgressPct    *money.Amount
-	Retention      money.Amount
-	Receivable     *money.Amount
-	BranchID       *uuid.UUID
-	DepartmentID   *uuid.UUID
-	Paid           money.Amount
-	Credited       money.Amount
+	ID                uuid.UUID
+	CompanyID         uuid.UUID
+	Number            *string
+	Status            string
+	CustomerID        uuid.UUID
+	InvoiceDate       civil.Date
+	DueDate           civil.Date
+	Memo              string
+	Subtotal          money.Amount
+	Discount          money.Amount
+	Dpp               money.Amount
+	OtherDpp          money.Amount
+	Vat               money.Amount
+	Total             money.Amount
+	JournalEntryID    *uuid.UUID
+	CreatedAt         time.Time
+	CreatedBy         *uuid.UUID
+	PostedAt          *time.Time
+	PostedBy          *uuid.UUID
+	VoidedAt          *time.Time
+	VoidedBy          *uuid.UUID
+	VoidReason        *string
+	Version           int32
+	Kind              string
+	ProjectID         *uuid.UUID
+	ProgressPct       *money.Amount
+	Retention         money.Amount
+	Receivable        *money.Amount
+	BranchID          *uuid.UUID
+	DepartmentID      *uuid.UUID
+	VatCollector      string
+	VatAccountID      *uuid.UUID
+	Paid              money.Amount
+	Credited          money.Amount
+	VatCollectedTotal money.Amount
 }
 
 // state: draft, open (diposting, belum lunas), paid, atau void. Nota kredit ikut mengurangi sisa.
@@ -1739,8 +1797,11 @@ func (q *Queries) ListInvoices(ctx context.Context, arg ListInvoicesParams) ([]L
 			&i.Receivable,
 			&i.BranchID,
 			&i.DepartmentID,
+			&i.VatCollector,
+			&i.VatAccountID,
 			&i.Paid,
 			&i.Credited,
+			&i.VatCollectedTotal,
 		); err != nil {
 			return nil, err
 		}
@@ -1753,7 +1814,7 @@ func (q *Queries) ListInvoices(ctx context.Context, arg ListInvoicesParams) ([]L
 }
 
 const listReceipts = `-- name: ListReceipts :many
-SELECT r.id, r.company_id, r.number, r.customer_id, r.receipt_date, r.cash_account_id, r.amount, r.memo, r.status, r.journal_entry_id, r.created_at, r.created_by, r.voided_at, r.voided_by, r.void_reason, r.kind, r.advance, r.from_advance FROM sales.receipts r
+SELECT r.id, r.company_id, r.number, r.customer_id, r.receipt_date, r.cash_account_id, r.amount, r.memo, r.status, r.journal_entry_id, r.created_at, r.created_by, r.voided_at, r.voided_by, r.void_reason, r.kind, r.advance, r.from_advance, r.vat_collected FROM sales.receipts r
 WHERE r.company_id = $1 AND r.receipt_date >= $2 AND r.receipt_date <= $3
   AND ($4::uuid IS NULL OR r.customer_id = $4::uuid)
   AND (coalesce(cardinality($5::uuid[]), 0) = 0 OR EXISTS (
@@ -1805,6 +1866,7 @@ func (q *Queries) ListReceipts(ctx context.Context, arg ListReceiptsParams) ([]S
 			&i.Kind,
 			&i.Advance,
 			&i.FromAdvance,
+			&i.VatCollected,
 		); err != nil {
 			return nil, err
 		}
@@ -1827,7 +1889,7 @@ func (q *Queries) LockAdvance(ctx context.Context, lockKey int64) error {
 }
 
 const lockInvoices = `-- name: LockInvoices :many
-SELECT id, company_id, number, status, customer_id, invoice_date, due_date, memo, subtotal, discount, dpp, other_dpp, vat, total, journal_entry_id, created_at, created_by, posted_at, posted_by, voided_at, voided_by, void_reason, version, kind, project_id, progress_pct, retention, receivable, branch_id, department_id FROM sales.invoices
+SELECT id, company_id, number, status, customer_id, invoice_date, due_date, memo, subtotal, discount, dpp, other_dpp, vat, total, journal_entry_id, created_at, created_by, posted_at, posted_by, voided_at, voided_by, void_reason, version, kind, project_id, progress_pct, retention, receivable, branch_id, department_id, vat_collector, vat_account_id FROM sales.invoices
 WHERE company_id = $1 AND id = ANY($2::uuid[])
 ORDER BY id
 FOR UPDATE
@@ -1878,6 +1940,8 @@ func (q *Queries) LockInvoices(ctx context.Context, arg LockInvoicesParams) ([]S
 			&i.Receivable,
 			&i.BranchID,
 			&i.DepartmentID,
+			&i.VatCollector,
+			&i.VatAccountID,
 		); err != nil {
 			return nil, err
 		}
@@ -1943,25 +2007,30 @@ func (q *Queries) MarkDailySaleVoid(ctx context.Context, arg MarkDailySaleVoidPa
 
 const markInvoicePosted = `-- name: MarkInvoicePosted :execrows
 UPDATE sales.invoices
-SET status = 'posted', number = $3, journal_entry_id = $4, posted_at = now(), posted_by = $5, version = version + 1
-WHERE company_id = $1 AND id = $2 AND status = 'draft'
+SET status = 'posted', number = $1, journal_entry_id = $2, posted_at = now(), posted_by = $3,
+    vat_collector = $4, vat_account_id = $5, version = version + 1
+WHERE company_id = $6 AND id = $7 AND status = 'draft'
 `
 
 type MarkInvoicePostedParams struct {
-	CompanyID      uuid.UUID
-	ID             uuid.UUID
 	Number         *string
 	JournalEntryID *uuid.UUID
 	PostedBy       *uuid.UUID
+	VatCollector   string
+	VatAccountID   *uuid.UUID
+	CompanyID      uuid.UUID
+	ID             uuid.UUID
 }
 
 func (q *Queries) MarkInvoicePosted(ctx context.Context, arg MarkInvoicePostedParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markInvoicePosted,
-		arg.CompanyID,
-		arg.ID,
 		arg.Number,
 		arg.JournalEntryID,
 		arg.PostedBy,
+		arg.VatCollector,
+		arg.VatAccountID,
+		arg.CompanyID,
+		arg.ID,
 	)
 	if err != nil {
 		return 0, err
@@ -2022,10 +2091,11 @@ func (q *Queries) MarkReceiptVoid(ctx context.Context, arg MarkReceiptVoidParams
 }
 
 const openInvoices = `-- name: OpenInvoices :many
-SELECT i.id, i.company_id, i.number, i.status, i.customer_id, i.invoice_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.total, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, i.kind, i.project_id, i.progress_pct, i.retention, i.receivable, i.branch_id, i.department_id, coalesce(p.paid, 0)::numeric AS paid, coalesce(c.credited, 0)::numeric AS credited
+SELECT i.id, i.company_id, i.number, i.status, i.customer_id, i.invoice_date, i.due_date, i.memo, i.subtotal, i.discount, i.dpp, i.other_dpp, i.vat, i.total, i.journal_entry_id, i.created_at, i.created_by, i.posted_at, i.posted_by, i.voided_at, i.voided_by, i.void_reason, i.version, i.kind, i.project_id, i.progress_pct, i.retention, i.receivable, i.branch_id, i.department_id, i.vat_collector, i.vat_account_id, coalesce(p.paid, 0)::numeric AS paid, coalesce(c.credited, 0)::numeric AS credited,
+       coalesce(p.vat_collected, 0)::numeric AS vat_collected_total
 FROM sales.invoices i
 LEFT JOIN LATERAL (
-  SELECT sum(a.amount) AS paid
+  SELECT sum(a.amount) AS paid, sum(a.vat_collected) AS vat_collected
   FROM sales.receipt_allocations a
   JOIN sales.receipts r ON r.id = a.receipt_id
   WHERE a.invoice_id = i.id AND r.status = 'posted'
@@ -2047,38 +2117,41 @@ type OpenInvoicesParams struct {
 }
 
 type OpenInvoicesRow struct {
-	ID             uuid.UUID
-	CompanyID      uuid.UUID
-	Number         *string
-	Status         string
-	CustomerID     uuid.UUID
-	InvoiceDate    civil.Date
-	DueDate        civil.Date
-	Memo           string
-	Subtotal       money.Amount
-	Discount       money.Amount
-	Dpp            money.Amount
-	OtherDpp       money.Amount
-	Vat            money.Amount
-	Total          money.Amount
-	JournalEntryID *uuid.UUID
-	CreatedAt      time.Time
-	CreatedBy      *uuid.UUID
-	PostedAt       *time.Time
-	PostedBy       *uuid.UUID
-	VoidedAt       *time.Time
-	VoidedBy       *uuid.UUID
-	VoidReason     *string
-	Version        int32
-	Kind           string
-	ProjectID      *uuid.UUID
-	ProgressPct    *money.Amount
-	Retention      money.Amount
-	Receivable     *money.Amount
-	BranchID       *uuid.UUID
-	DepartmentID   *uuid.UUID
-	Paid           money.Amount
-	Credited       money.Amount
+	ID                uuid.UUID
+	CompanyID         uuid.UUID
+	Number            *string
+	Status            string
+	CustomerID        uuid.UUID
+	InvoiceDate       civil.Date
+	DueDate           civil.Date
+	Memo              string
+	Subtotal          money.Amount
+	Discount          money.Amount
+	Dpp               money.Amount
+	OtherDpp          money.Amount
+	Vat               money.Amount
+	Total             money.Amount
+	JournalEntryID    *uuid.UUID
+	CreatedAt         time.Time
+	CreatedBy         *uuid.UUID
+	PostedAt          *time.Time
+	PostedBy          *uuid.UUID
+	VoidedAt          *time.Time
+	VoidedBy          *uuid.UUID
+	VoidReason        *string
+	Version           int32
+	Kind              string
+	ProjectID         *uuid.UUID
+	ProgressPct       *money.Amount
+	Retention         money.Amount
+	Receivable        *money.Amount
+	BranchID          *uuid.UUID
+	DepartmentID      *uuid.UUID
+	VatCollector      string
+	VatAccountID      *uuid.UUID
+	Paid              money.Amount
+	Credited          money.Amount
+	VatCollectedTotal money.Amount
 }
 
 func (q *Queries) OpenInvoices(ctx context.Context, arg OpenInvoicesParams) ([]OpenInvoicesRow, error) {
@@ -2121,8 +2194,11 @@ func (q *Queries) OpenInvoices(ctx context.Context, arg OpenInvoicesParams) ([]O
 			&i.Receivable,
 			&i.BranchID,
 			&i.DepartmentID,
+			&i.VatCollector,
+			&i.VatAccountID,
 			&i.Paid,
 			&i.Credited,
+			&i.VatCollectedTotal,
 		); err != nil {
 			return nil, err
 		}
@@ -2181,7 +2257,7 @@ func (q *Queries) PaidByInvoice(ctx context.Context, arg PaidByInvoiceParams) ([
 }
 
 const receiptAllocations = `-- name: ReceiptAllocations :many
-SELECT a.id, a.company_id, a.receipt_id, a.invoice_id, a.amount, a.withholding_code, a.withholding, i.number AS invoice_number, i.receivable AS invoice_total
+SELECT a.id, a.company_id, a.receipt_id, a.invoice_id, a.amount, a.withholding_code, a.withholding, a.vat_collected, i.number AS invoice_number, i.receivable AS invoice_total
 FROM sales.receipt_allocations a
 JOIN sales.invoices i ON i.id = a.invoice_id
 WHERE a.company_id = $1 AND a.receipt_id = $2
@@ -2201,6 +2277,7 @@ type ReceiptAllocationsRow struct {
 	Amount          money.Amount
 	WithholdingCode *string
 	Withholding     money.Amount
+	VatCollected    money.Amount
 	InvoiceNumber   *string
 	InvoiceTotal    *money.Amount
 }
@@ -2222,6 +2299,7 @@ func (q *Queries) ReceiptAllocations(ctx context.Context, arg ReceiptAllocations
 			&i.Amount,
 			&i.WithholdingCode,
 			&i.Withholding,
+			&i.VatCollected,
 			&i.InvoiceNumber,
 			&i.InvoiceTotal,
 		); err != nil {
@@ -2471,45 +2549,60 @@ func (q *Queries) UpdateDraftInvoice(ctx context.Context, arg UpdateDraftInvoice
 const vATByMonth = `-- name: VATByMonth :many
 
 SELECT x.month::date AS month, count(*) AS invoices,
-       coalesce(sum(x.dpp), 0)::numeric AS dpp, coalesce(sum(x.vat), 0)::numeric AS vat
+       coalesce(sum(x.dpp), 0)::numeric AS dpp, coalesce(sum(x.vat), 0)::numeric AS vat,
+       coalesce(sum(x.vat) FILTER (WHERE x.collected), 0)::numeric AS collected
 FROM (
-  SELECT date_trunc('month', i.invoice_date) AS month, i.dpp, i.vat
+  SELECT date_trunc('month', i.invoice_date) AS month, i.dpp, i.vat,
+         (i.id = ANY(coalesce($1::uuid[], '{}')) OR (i.vat_collector <> '' AND NOT i.id = ANY(coalesce($2::uuid[], '{}')))) AS collected
   FROM sales.invoices i
-  WHERE i.company_id = $1 AND i.status = 'posted' AND i.vat > 0
-    AND i.invoice_date >= $2 AND i.invoice_date < $3
+  WHERE i.company_id = $3 AND i.status = 'posted' AND i.vat > 0
+    AND i.invoice_date >= $4 AND i.invoice_date < $5
   UNION ALL
-  SELECT date_trunc('month', n.note_date), -n.dpp, -n.vat
+  SELECT date_trunc('month', n.note_date), -n.dpp, -n.vat,
+         coalesce(ni.id = ANY(coalesce($1::uuid[], '{}')) OR (ni.vat_collector <> '' AND NOT ni.id = ANY(coalesce($2::uuid[], '{}'))), false)
   FROM sales.credit_notes n
-  WHERE n.company_id = $1 AND n.status = 'posted' AND n.vat > 0
-    AND n.note_date >= $2 AND n.note_date < $3
+  LEFT JOIN sales.invoices ni ON ni.id = n.invoice_id
+  WHERE n.company_id = $3 AND n.status = 'posted' AND n.vat > 0
+    AND n.note_date >= $4 AND n.note_date < $5
   UNION ALL
-  SELECT date_trunc('month', d.sale_date), d.dpp, d.vat
+  SELECT date_trunc('month', d.sale_date), d.dpp, d.vat, false
   FROM sales.daily_sales d
-  WHERE d.company_id = $1 AND d.status = 'posted' AND d.vat > 0
-    AND d.sale_date >= $2 AND d.sale_date < $3
+  WHERE d.company_id = $3 AND d.status = 'posted' AND d.vat > 0
+    AND d.sale_date >= $4 AND d.sale_date < $5
 ) x
 GROUP BY 1
 ORDER BY 1
 `
 
 type VATByMonthParams struct {
-	CompanyID uuid.UUID
-	FromDate  civil.Date
-	ToDate    civil.Date
+	CollectedIds    []uuid.UUID
+	NotCollectedIds []uuid.UUID
+	CompanyID       uuid.UUID
+	FromDate        civil.Date
+	ToDate          civil.Date
 }
 
 type VATByMonthRow struct {
-	Month    civil.Date
-	Invoices int64
-	Dpp      money.Amount
-	Vat      money.Amount
+	Month     civil.Date
+	Invoices  int64
+	Dpp       money.Amount
+	Vat       money.Amount
+	Collected money.Amount
 }
 
 // Pajak ---------------------------------------------------------------------------
 // PPN keluaran per masa dari faktur yang diposting (TAX-06), dikurangi PPN retur penjualan
-// (nota kredit) di masa returnya.
+// (nota kredit) di masa returnya. collected: bagian yang dipungut pelanggan pemungut (kode
+// transaksi 02/03): faktur yang pelanggannya pemungut saat diposting, kecuali kodenya diubah
+// staf pajak (@not_collected_ids), ditambah faktur yang kodenya diubah ke 02/03 (@collected_ids).
 func (q *Queries) VATByMonth(ctx context.Context, arg VATByMonthParams) ([]VATByMonthRow, error) {
-	rows, err := q.db.Query(ctx, vATByMonth, arg.CompanyID, arg.FromDate, arg.ToDate)
+	rows, err := q.db.Query(ctx, vATByMonth,
+		arg.CollectedIds,
+		arg.NotCollectedIds,
+		arg.CompanyID,
+		arg.FromDate,
+		arg.ToDate,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2522,6 +2615,7 @@ func (q *Queries) VATByMonth(ctx context.Context, arg VATByMonthParams) ([]VATBy
 			&i.Invoices,
 			&i.Dpp,
 			&i.Vat,
+			&i.Collected,
 		); err != nil {
 			return nil, err
 		}

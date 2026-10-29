@@ -11,6 +11,7 @@ const (
 	ContactCreate = "core.contact.create"
 	ContactEdit   = "core.contact.edit" // ubah dan nonaktifkan kontak
 	ReportView    = "report.view"
+	BudgetManage  = "report.budget.manage" // susun, ubah, dan aktifkan anggaran (BUD-01)
 	DataExport    = "data.export"
 
 	LedgerView       = "ledger.view"
@@ -54,6 +55,12 @@ const (
 	ConsolView = "consol.view"
 	ConsolRun  = "consol.run"
 
+	// Panjar unit: kepala unit mengajukan kebutuhan unitnya, finance menyetujui atau menolak.
+	PanjarView    = "panjar.view"        // lihat semua pengajuan, bukan hanya milik sendiri
+	PanjarCreate  = "panjar.create"      // ajukan panjar untuk departemen (unit)
+	PanjarApprove = "panjar.approve"     // setujui, tolak, dan tandai sudah dibayar
+	PanjarUnits   = "panjar.unit.manage" // tetapkan unit yang dikelola setiap kepala unit
+
 	ApprovalManage = "approval.manage"
 	AuditView      = "platform.audit.view"
 	UserManage     = "platform.user.manage"
@@ -62,7 +69,7 @@ const (
 
 // All berisi seluruh izin di katalog.
 var All = []string{
-	CompanyView, CompanyEdit, ContactView, ContactCreate, ContactEdit, ReportView, DataExport,
+	CompanyView, CompanyEdit, ContactView, ContactCreate, ContactEdit, ReportView, BudgetManage, DataExport,
 	LedgerView, AccountCreate, AccountEdit, JournalCreate, JournalEdit, JournalVoid, AdjustmentCreate, AdjustmentPost, PeriodManage,
 	SalesView, SalesCreate, SalesVoid,
 	PurchaseView, PurchaseCreate, PurchaseVoid,
@@ -72,21 +79,24 @@ var All = []string{
 	AssetView, AssetCreate, AssetVoid,
 	TaxView, TaxCreate, TaxExport,
 	ConsolView, ConsolRun,
+	PanjarView, PanjarCreate, PanjarApprove, PanjarUnits,
 	ApprovalManage, AuditView, UserManage, SystemManage,
 }
 
 var (
 	viewAll = []string{
 		CompanyView, ContactView, ReportView, LedgerView, SalesView, PurchaseView, CashView,
-		InventoryView, ProjectView, AssetView, TaxView, ConsolView,
+		InventoryView, ProjectView, AssetView, TaxView, ConsolView, PanjarView,
 	}
 	createAll = []string{
 		ContactCreate, AccountCreate, JournalCreate, JournalEdit, AdjustmentCreate, AdjustmentPost, SalesCreate, PurchaseCreate,
-		CashCreate, InventoryCreate, ProjectCreate, AssetCreate, TaxCreate, ConsolRun,
+		CashCreate, InventoryCreate, ProjectCreate, AssetCreate, TaxCreate, ConsolRun, PanjarCreate,
 	}
+	// finance memutuskan pengajuan panjar unit: Pemilik, Manager, dan Staf akuntansi.
+	finance = []string{PanjarApprove}
 	// changeAll = "ubah, hapus, atau void transaksi" di matriks: hanya Pemilik dan Manager.
 	changeAll = []string{CompanyEdit, ContactEdit, AccountEdit, JournalVoid, SalesVoid, PurchaseVoid, CashVoid, InventoryVoid, ProjectVoid, AssetVoid}
-	control   = []string{ApprovalManage, PeriodManage, AuditView}
+	control   = []string{ApprovalManage, PeriodManage, AuditView, BudgetManage, PanjarUnits}
 	admin     = []string{UserManage, SystemManage}
 )
 
@@ -99,12 +109,15 @@ type BuiltinRole struct {
 
 // Builtin mengikuti matriks izin di TDD (bagian Autentikasi dan otorisasi).
 var Builtin = []BuiltinRole{
-	{Key: "pemilik", Name: "Pemilik", Permissions: join(viewAll, createAll, changeAll, control, admin, []string{TaxExport, DataExport})},
-	{Key: "manager", Name: "Manager", Permissions: join(viewAll, createAll, changeAll, control, admin, []string{TaxExport, DataExport})},
-	{Key: "staf_akuntansi", Name: "Staf akuntansi", Permissions: join(viewAll, createAll, []string{DataExport})},
+	{Key: "pemilik", Name: "Pemilik", Permissions: join(viewAll, createAll, changeAll, control, admin, finance, []string{TaxExport, DataExport})},
+	{Key: "manager", Name: "Manager", Permissions: join(viewAll, createAll, changeAll, control, admin, finance, []string{TaxExport, DataExport})},
+	{Key: "staf_akuntansi", Name: "Staf akuntansi", Permissions: join(viewAll, createAll, finance, []string{DataExport})},
 	{Key: "staf_pajak", Name: "Staf pajak", Permissions: []string{CompanyView, ContactView, TaxView, TaxCreate, TaxExport, DataExport, AssetView}},
 	{Key: "auditor", Name: "Auditor", Permissions: join(viewAll, []string{AuditView, DataExport})},
 	{Key: "admin", Name: "Admin pelanggan", Permissions: join([]string{CompanyView}, admin)},
+	// Kepala unit hanya mengajukan panjar untuk unit yang ditetapkan Manager atau Pemilik dan melihat
+	// pengajuan unit itu.
+	{Key: "kepala_unit", Name: "Kepala unit", Permissions: []string{CompanyView, PanjarCreate}},
 }
 
 func join(lists ...[]string) []string {
@@ -153,8 +166,13 @@ var Catalog = []CatalogGroup{
 	{"Proyek", []CatalogPerm{{ProjectView, "Lihat proyek"}, {ProjectCreate, "Buat proyek, RAB, dan termin"}, {ProjectVoid, "Batalkan proyek"}}},
 	{"Pajak", []CatalogPerm{{TaxView, "Lihat pajak"}, {TaxCreate, "Kelola faktur pajak"}, {TaxExport, "Ekspor XML Coretax dan rekap SPT"}}},
 	{"Laporan", []CatalogPerm{
-		{ReportView, "Lihat laporan keuangan"}, {DataExport, "Ekspor data ke Excel dan CSV"},
+		{ReportView, "Lihat laporan keuangan, anggaran, dan rasio"}, {BudgetManage, "Susun dan ubah anggaran"},
+		{DataExport, "Ekspor data ke Excel dan CSV"},
 		{ConsolView, "Lihat konsolidasi grup"}, {ConsolRun, "Atur pemetaan konsolidasi"},
+	}},
+	{"Panjar unit", []CatalogPerm{
+		{PanjarView, "Lihat semua pengajuan panjar"}, {PanjarCreate, "Ajukan panjar unit"},
+		{PanjarApprove, "Setujui, tolak, dan tandai pembayaran panjar"}, {PanjarUnits, "Tetapkan unit yang dikelola kepala unit"},
 	}},
 	{"Kontrol dan admin", []CatalogPerm{
 		{ApprovalManage, "Approval dan aturan approval"}, {AuditView, "Lihat audit trail"},

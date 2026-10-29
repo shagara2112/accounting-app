@@ -13,6 +13,7 @@ import {
   type LineInput,
   type PeriodStatus,
   type Posted,
+  type SystemAccount,
   type Voided,
   type Worksheet,
 } from './api'
@@ -45,8 +46,38 @@ export function useCreateAccount(companyId: string | null) {
 export function useUpdateAccount(companyId: string | null) {
   const invalidate = useInvalidateLedger(companyId)
   return useMutation({
-    mutationFn: ({ id, ...v }: { id: string; code: string; name: string; active: boolean; version: number }) =>
+    mutationFn: ({ id, ...v }: { id: string; code: string; name: string; active: boolean; version: number; parentId?: string }) =>
       api<Account>('PATCH', `/ledger/accounts/${id}`, v),
+    onSuccess: invalidate,
+  })
+}
+
+/** Peran akun sistem yang dibutuhkan hampir semua PT: posting faktur, tagihan, PPN, dan Saldo awal. */
+export const essentialRoles = ['piutang_usaha', 'utang_usaha', 'ppn_keluaran', 'ppn_masukan', 'ekuitas_saldo_awal']
+
+export function useSystemAccounts(companyId: string | null) {
+  return useQuery({
+    queryKey: key(companyId, 'system-accounts'),
+    queryFn: () => api<{ items: SystemAccount[] }>('GET', '/ledger/system-accounts'),
+    enabled: companyId !== null,
+    staleTime: 30_000,
+  })
+}
+
+export function useSetSystemAccount(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({
+    mutationFn: ({ role, accountId }: { role: string; accountId: string }) =>
+      api<{ items: SystemAccount[] }>('PUT', `/ledger/system-accounts/${role}`, { accountId }),
+    onSuccess: invalidate,
+  })
+}
+
+/** Menghapus akun yang salah dibuat dan belum pernah dipakai; yang sudah dipakai ditolak server. */
+export function useDeleteAccount(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({
+    mutationFn: ({ id, version }: { id: string; version: number }) => api<void>('DELETE', `/ledger/accounts/${id}?version=${version}`),
     onSuccess: invalidate,
   })
 }
@@ -161,6 +192,82 @@ export function useUpdateLedgerSettings(companyId: string | null) {
   const invalidate = useInvalidateLedger(companyId)
   return useMutation({
     mutationFn: (fiscalYearStartMonth: number) => api('PUT', '/ledger/settings', { fiscalYearStartMonth }),
+    onSuccess: invalidate,
+  })
+}
+
+/** Urutan pohon bagan akun: setiap induk diikuti anak-anaknya (urut kode), supaya akun yang
+ *  dipindah ke induk lain tampil di bawah induk barunya walau kodenya belum disesuaikan. */
+export function treeOrder(list: Account[]): Account[] {
+  const children = new Map<string, Account[]>()
+  const roots: Account[] = []
+  for (const a of list) {
+    if (!a.parentId) roots.push(a)
+    else children.set(a.parentId, [...(children.get(a.parentId) ?? []), a])
+  }
+  const byCode = (x: Account, y: Account) => x.code.localeCompare(y.code)
+  const out: Account[] = []
+  const walk = (a: Account) => {
+    out.push(a)
+    for (const c of (children.get(a.id) ?? []).sort(byCode)) walk(c)
+  }
+  roots.sort(byCode).forEach(walk)
+  // Akun yang induknya tidak ada di daftar (seharusnya tidak terjadi) tetap ditampilkan.
+  return out.length === list.length ? out : [...out, ...list.filter((a) => !out.includes(a))]
+}
+
+/** Id akun a beserta seluruh turunannya. */
+export function subtreeIds(list: Account[], id: string): Set<string> {
+  const out = new Set([id])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const a of list) {
+      if (a.parentId && out.has(a.parentId) && !out.has(a.id)) {
+        out.add(a.id)
+        grew = true
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Reklas laba (rugi) satu tahun buku ke laba ditahan (GL-10). status: kosong (tanpa pendapatan dan
+ * beban), belum, sudah, atau berubah (buku tahun itu berubah sesudah reklas; perlu diperbarui).
+ */
+export type YearEnd = {
+  fiscalYear: number
+  from: string
+  to: string
+  ended: boolean
+  profit: string
+  status: 'kosong' | 'belum' | 'sudah' | 'berubah'
+  closing?: { id: string; number: string; profit: string; postedAt: string; postedByName?: string }
+  periodStatus: PeriodStatus
+  account?: { id: string; number: string }
+  accountName?: string
+  accountProblem?: string
+}
+
+export function useYearEnd(companyId: string | null, year: number) {
+  return useQuery({
+    queryKey: key(companyId, 'year-end', year),
+    queryFn: () => api<YearEnd>('GET', '/ledger/year-end' + query({ year })),
+    enabled: companyId !== null,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useCloseYear(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({ mutationFn: (year: number) => api<YearEnd>('POST', `/ledger/year-end/${year}/close`), onSuccess: invalidate })
+}
+
+export function useReopenYear(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({
+    mutationFn: ({ year, reason }: { year: number; reason: string }) => api<YearEnd>('POST', `/ledger/year-end/${year}/reopen`, { reason }),
     onSuccess: invalidate,
   })
 }

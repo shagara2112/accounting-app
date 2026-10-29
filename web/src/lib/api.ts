@@ -123,11 +123,31 @@ export type Account = {
   active: boolean
   version: number
   balance: string
-  /** Akun sistem untuk posting otomatis (mis. 1-1401 PPN masukan); kodenya terkunci. */
+  /** Akun sistem untuk posting otomatis, mis. PPN masukan; systemRoles = perannya. Kodenya boleh
+   *  diganti: perannya lalu dikunci ke akun ini. */
   system?: boolean
+  systemRoles?: string[]
 }
 
 export type AccountsResponse = { items: Account[]; classes: AccountClass[]; templates: string[] }
+
+/** Satu peran akun sistem (halaman Akun sistem): akun yang dipakai posting otomatis, mis. piutang usaha. */
+export type SystemAccount = {
+  role: string
+  label: string
+  group: string
+  purpose: string
+  defaultCode?: string
+  /** Kelas akun yang boleh dipilih untuk peran ini. */
+  classes: number[]
+  accountId?: string
+  /** Dipilih pengguna (atau kodenya pernah diganti), bukan ditemukan dari kode bawaan. */
+  chosen: boolean
+  /** Peran yang akunnya dipakai karena peran ini belum dipilih, mis. ppn_keluaran. */
+  fallback?: string
+  /** Kenapa peran ini belum bisa dipakai posting; kosong berarti siap. */
+  problem?: string
+}
 
 export type Kind = 'umum' | 'penyesuaian' | 'pembalik' | 'penutup'
 
@@ -277,6 +297,8 @@ export type Contact = {
   countryCode: string
   /** TIN di negara asal pemasok luar negeri. */
   foreignTin: string
+  /** Pelanggan pemungut PPN (WAPU): '02' instansi pemerintah, '03' pemungut lain (mis. BUMN), '' bukan. */
+  vatCollector: string
   address: string
   email: string
   phone: string
@@ -385,6 +407,7 @@ export type Invoice = DocCommon & {
   customerId: string
   customerName: string
   dpp: string
+  vat: string
   kind: InvoiceKind
   projectId?: string
   progressPct?: string
@@ -395,8 +418,21 @@ export type Invoice = DocCommon & {
   receivable: string
   /** Nota kredit yang mengurangi sisa faktur. */
   credited: string
+  /** Pelanggan pemungut PPN saat faktur diposting ('02'/'03'). */
+  vatCollector?: string
+  /** PPN yang sudah dicatat dipungut pelanggan lewat pelunasan. */
+  vatCollected?: string
 }
-export type InvoicePayment = { receiptId: string; number: string; date: string; status: string; amount: string; withholding: string; withholdingCode?: string }
+export type InvoicePayment = {
+  receiptId: string
+  number: string
+  date: string
+  status: string
+  amount: string
+  withholding: string
+  withholdingCode?: string
+  vatCollected?: string
+}
 export type NoteRef = { number: string; date: string; status: 'posted' | 'void'; total: string; applied: string }
 export type InvoiceDetail = Invoice &
   DocDetailCommon & { payments: InvoicePayment[]; creditNotes: (NoteRef & { creditNoteId: string })[]; creditWarning?: string }
@@ -466,7 +502,9 @@ export type Receipt = SettlementCommon & { customerId: string; customerName: str
 export type ReceiptDetail = Receipt & {
   allocated: string
   withholding: string
-  allocations: { invoiceId: string; invoiceNumber: string; amount: string; withholdingCode?: string; withholding: string }[]
+  /** PPN yang dipungut pelanggan pemungut (tanpa uang masuk). */
+  vatCollected: string
+  allocations: { invoiceId: string; invoiceNumber: string; amount: string; withholdingCode?: string; withholding: string; vatCollected: string }[]
   createdBy?: string
   voidedBy?: string
   voidReason?: string
@@ -563,7 +601,18 @@ export type TaxSettings = { goodsOpt: 'A' | 'B'; goodsCode: string; unitCode: st
 
 export type ExportBatch = { id: string; period: string; format: string; invoiceCount: number; fileName: string; createdAt: string; createdBy?: string }
 
-export type VATMonth = { month: string; invoices: number; output: string; bills: number; input: string; compensated: string; payable: string; overpaid: string }
+export type VATMonth = {
+  month: string
+  invoices: number
+  output: string
+  /** PPN keluaran yang dipungut pelanggan pemungut (kode 02/03); tidak ikut kurang bayar. */
+  collected: string
+  bills: number
+  input: string
+  compensated: string
+  payable: string
+  overpaid: string
+}
 
 export type VATRecap = { year: number; pkp: boolean; months: VATMonth[]; totals: VATMonth }
 

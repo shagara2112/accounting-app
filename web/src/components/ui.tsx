@@ -1,4 +1,4 @@
-import { Children, useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type RefObject, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { Children, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type RefObject, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -11,10 +11,11 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 }
 
 const variants = {
-  primary: 'bg-accent text-on-accent hover:brightness-110 hover:shadow-md disabled:opacity-60',
-  secondary: 'bg-surface text-ink border border-line-2 hover:bg-hover disabled:opacity-60',
+  primary:
+    'bg-accent text-on-accent shadow-[0_1px_2px_rgb(16_24_40/0.14),inset_0_1px_0_rgb(255_255_255/0.14)] hover:-translate-y-px hover:brightness-110 hover:shadow-glow active:translate-y-0 disabled:translate-y-0 disabled:opacity-60 disabled:shadow-none',
+  secondary: 'bg-surface text-ink border border-line-2 shadow-card hover:border-muted/40 hover:bg-hover disabled:opacity-60',
   ghost: 'text-ink-2 hover:bg-hover disabled:opacity-60',
-  danger: 'bg-bad text-white hover:brightness-110 hover:shadow-md disabled:opacity-60',
+  danger: 'bg-bad text-white hover:-translate-y-px hover:brightness-110 hover:shadow-md active:translate-y-0 disabled:translate-y-0 disabled:opacity-60',
 }
 
 export function Button({ variant = 'primary', size = 'md', busy, className = '', children, disabled, ...rest }: ButtonProps) {
@@ -44,18 +45,21 @@ export function Spinner() {
 
 /** Kelas dasar input; dipakai juga oleh input di dalam tabel jurnal. */
 export const inputClass =
-  'min-h-11 w-full rounded-[10px] border bg-surface px-3 text-[15px] text-ink transition-colors duration-150 placeholder:text-muted hover:border-muted disabled:opacity-60'
+  'min-h-11 w-full rounded-[10px] border bg-surface px-3 text-[15px] text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-muted hover:border-muted focus:border-accent focus:shadow-[0_0_0_4px_rgb(51_85_224/0.14)] focus-visible:outline-none disabled:opacity-60'
 
 function fieldBorder(error?: string) {
   return error ? 'border-bad' : 'border-line-2'
 }
 
-function FieldShell({ id, label, hint, error, children }: { id: string; label: string; hint?: ReactNode; error?: string; children: ReactNode }) {
+function FieldShell({ id, label, hint, error, aside, children }: { id: string; label: string; hint?: ReactNode; error?: string; aside?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-ink-2">
-        {label}
-      </label>
+      <div className="flex items-baseline justify-between gap-3">
+        <label htmlFor={id} className="text-sm font-medium text-ink-2">
+          {label}
+        </label>
+        {aside}
+      </div>
       {children}
       {error ? (
         <motion.p
@@ -79,18 +83,53 @@ function FieldShell({ id, label, hint, error, children }: { id: string; label: s
   )
 }
 
-type FieldProps = InputHTMLAttributes<HTMLInputElement> & { label: string; id: string; hint?: ReactNode; error?: string }
+/** aside: isi di kanan label, mis. tautan "Lupa kata sandi?". */
+type FieldProps = InputHTMLAttributes<HTMLInputElement> & { label: string; id: string; hint?: ReactNode; error?: string; aside?: ReactNode }
 
-export function Field({ label, id, hint, error, className = '', ...rest }: FieldProps) {
+/** Input berlabel. type="password" mendapat tombol mata untuk menampilkan isinya. */
+export function Field({ label, id, hint, error, aside, className = '', type, ...rest }: FieldProps) {
+  const [shown, setShown] = useState(false)
+  const secret = type === 'password'
+  const input = (
+    <input
+      id={id}
+      type={secret && shown ? 'text' : type}
+      aria-invalid={error ? true : undefined}
+      aria-describedby={error || hint ? `${id}-msg` : undefined}
+      {...rest}
+      className={`${inputClass} ${fieldBorder(error)} ${secret ? 'pr-12' : ''} ${className}`}
+    />
+  )
   return (
-    <FieldShell id={id} label={label} hint={hint} error={error}>
-      <input
-        id={id}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error || hint ? `${id}-msg` : undefined}
-        {...rest}
-        className={`${inputClass} ${fieldBorder(error)} ${className}`}
-      />
+    <FieldShell id={id} label={label} hint={hint} error={error} aside={aside}>
+      {secret ? (
+        <div className="relative">
+          {input}
+          <button
+            type="button"
+            onClick={() => setShown((v) => !v)}
+            aria-label={shown ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'}
+            aria-pressed={shown}
+            aria-controls={id}
+            title={shown ? 'Sembunyikan' : 'Tampilkan'}
+            disabled={rest.disabled}
+            className="absolute inset-y-0 right-0 flex w-11 cursor-pointer items-center justify-center rounded-r-[10px] text-muted transition-colors duration-150 hover:text-ink disabled:cursor-not-allowed"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              {shown ? (
+                <path d="M17.9 17.9A10 10 0 0 1 12 19c-6.5 0-10-7-10-7a18.5 18.5 0 0 1 5.1-5.9M9.9 4.2A9 9 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2M2 2l20 20" />
+              ) : (
+                <>
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                  <circle cx="12" cy="12" r="3" />
+                </>
+              )}
+            </svg>
+          </button>
+        </div>
+      ) : (
+        input
+      )}
     </FieldShell>
   )
 }
@@ -189,11 +228,11 @@ export function Alert({ tone = 'bad', children, shakeKey }: { tone?: Tone; child
 
 export function Card({ title, subtitle, actions, children, className = '' }: { title?: string; subtitle?: string; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={`flex flex-col gap-3 rounded-[14px] border border-line bg-surface p-5 ${className}`}>
+    <section className={`flex flex-col gap-3 rounded-2xl border border-line bg-surface p-5 shadow-card ${className}`}>
       {(title || actions) && (
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            {title && <h2 className="text-base font-semibold">{title}</h2>}
+            {title && <h2 className="text-base font-semibold tracking-tight">{title}</h2>}
             {subtitle && <p className="mt-1 text-[13px] text-muted">{subtitle}</p>}
           </div>
           {actions}
@@ -209,7 +248,7 @@ export function PageHeader({ title, subtitle, actions, aside }: { title: string;
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-[26px] font-bold tracking-tight">{title}</h1>
+          <h1 className="text-[28px] leading-tight font-bold tracking-[-0.02em]">{title}</h1>
           {aside}
         </div>
         {subtitle && <p className="mt-1.5 max-w-2xl text-sm text-muted">{subtitle}</p>}
@@ -221,14 +260,35 @@ export function PageHeader({ title, subtitle, actions, aside }: { title: string;
 
 export function EmptyState({ title, body, action }: { title: string; body?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center gap-3 px-6 py-14 text-center">
-      <svg width="44" height="44" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="var(--color-line-2)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 4h16v16H4zM4 9h16M9 9v11" />
-      </svg>
-      <p className="text-base font-semibold">{title}</p>
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease }}
+      className="flex flex-col items-center gap-3 px-6 py-14 text-center"
+    >
+      <EmptyArt />
+      <p className="mt-1 text-base font-semibold tracking-tight">{title}</p>
       {body && <p className="max-w-md text-sm text-muted">{body}</p>}
       {action}
-    </div>
+    </motion.div>
+  )
+}
+
+/** Ilustrasi kosong: tumpukan dokumen dengan kaca pembesar. */
+function EmptyArt() {
+  return (
+    <svg width="132" height="96" viewBox="0 0 132 96" aria-hidden="true" fill="none">
+      <ellipse cx="66" cy="88" rx="46" ry="5" fill="var(--color-line)" />
+      <rect x="30" y="16" width="56" height="66" rx="8" fill="var(--color-hover)" stroke="var(--color-line-2)" transform="rotate(-6 58 49)" />
+      <rect x="40" y="10" width="56" height="68" rx="8" fill="var(--color-surface)" stroke="var(--color-line-2)" />
+      <rect x="49" y="21" width="22" height="5" rx="2.5" fill="var(--color-accent)" opacity="0.85" />
+      <rect x="49" y="33" width="38" height="4" rx="2" fill="var(--color-line-2)" />
+      <rect x="49" y="42" width="30" height="4" rx="2" fill="var(--color-line-2)" />
+      <rect x="49" y="51" width="34" height="4" rx="2" fill="var(--color-line-2)" />
+      <circle cx="94" cy="58" r="13" fill="var(--color-surface)" stroke="var(--color-accent)" strokeWidth="3" />
+      <path d="M103.5 67.5l9 9" stroke="var(--color-accent)" strokeWidth="4" strokeLinecap="round" />
+      <path d="M89 58h10" stroke="var(--color-sky)" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
   )
 }
 
@@ -314,7 +374,7 @@ function DialogPanel({ onClose, title, description, children, footer, width }: O
   useModal(panel, onClose)
   return (
     <motion.div className="fixed inset-0 z-40 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.12 } }} transition={{ duration: 0.2 }}>
-      <div className="absolute inset-0 bg-[#0b0f17]/40" onClick={onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-[#0b1326]/45 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
       <motion.div
         ref={panel}
         role="dialog"
@@ -325,7 +385,7 @@ function DialogPanel({ onClose, title, description, children, footer, width }: O
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.12 } }}
         transition={{ duration: 0.2, ease }}
-        className="relative flex max-h-[calc(100vh-32px)] w-full flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-xl"
+        className="relative flex max-h-[calc(100vh-32px)] w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl"
       >
         <div className="flex flex-col gap-1 px-6 pt-5">
           <h2 id={titleId} className="text-lg font-semibold">
@@ -388,7 +448,7 @@ function DrawerPanel({ onClose, title, description, children, footer }: Omit<Mod
 /** Tabel standar: header lengket, baris 40 px, angka rata kanan diatur per sel. */
 export function TableShell({ children, minWidth = 720 }: { children: ReactNode; minWidth?: number }) {
   return (
-    <div className="overflow-hidden rounded-[14px] border border-line bg-surface">
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm" style={{ minWidth }}>
           {children}

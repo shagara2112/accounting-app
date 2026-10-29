@@ -33,6 +33,7 @@ const (
 	SourceVoid         = "void"          // pembalik karena void
 	SourceAutoReversal = "auto_reversal" // pembalik otomatis jurnal penyesuaian
 	SourceOpening      = "opening"       // saldo awal dari impor neraca saldo (GL-06)
+	SourceClosing      = "closing"       // reklas laba (rugi) akhir tahun buku ke laba ditahan (GL-10)
 )
 
 // Actor adalah pengguna yang melakukan aksi; dicatat di jurnal dan audit trail.
@@ -90,8 +91,10 @@ type Account struct {
 	Active   bool         `json:"active"`
 	Version  int          `json:"version"`
 	Balance  money.Amount `json:"balance"` // menurut sisi saldo normal; akun header = jumlah anaknya
-	// System: akun sistem untuk posting otomatis (lihat roles.go); kodenya tidak bisa diubah.
-	System bool `json:"system,omitempty"`
+	// System: akun sistem untuk posting otomatis (lihat roles.go). SystemRoles = perannya, mis.
+	// "piutang usaha". Kodenya boleh diganti; perannya lalu dikunci ke akun ini.
+	System      bool     `json:"system,omitempty"`
+	SystemRoles []string `json:"systemRoles,omitempty"`
 }
 
 type NewAccount struct {
@@ -103,10 +106,12 @@ type NewAccount struct {
 
 type AccountChange struct {
 	// Code kosong = kode tidak diubah. Kode baru harus berangka kepala sama (koreksi salah ketik).
-	Code    string `json:"code"`
-	Name    string `json:"name"`
-	Active  bool   `json:"active"`
-	Version int    `json:"version"`
+	Code string `json:"code"`
+	// ParentID kosong = induk tidak diubah. Induk baru harus akun header aktif di kelas yang sama.
+	ParentID *uuid.UUID `json:"parentId,omitempty"`
+	Name     string     `json:"name"`
+	Active   bool       `json:"active"`
+	Version  int        `json:"version"`
 }
 
 type Settings struct {
@@ -128,6 +133,34 @@ type FiscalYear struct {
 	Year       int      `json:"year"` // tahun kalender saat tahun buku dimulai
 	StartMonth int      `json:"startMonth"`
 	Periods    []Period `json:"periods"`
+}
+
+// YearEnd adalah status reklas laba (rugi) satu tahun buku ke laba ditahan (GL-10). Reklas
+// berupa jurnal penutup bertanggal akhir tahun buku yang bisa diperbarui atau dibatalkan selama
+// bulan terakhirnya belum dikunci final, supaya revisi sesudah akhir tahun tetap bisa masuk.
+type YearEnd struct {
+	FiscalYear int          `json:"fiscalYear"` // tahun kalender saat tahun buku dimulai
+	From       civil.Date   `json:"from"`
+	To         civil.Date   `json:"to"`
+	Ended      bool         `json:"ended"`  // tahun buku sudah berakhir
+	Profit     money.Amount `json:"profit"` // laba (rugi) bersih menurut buku sekarang
+	// Status: kosong (tidak ada pendapatan dan beban), belum (belum direklas), sudah, atau
+	// berubah (buku tahun itu berubah sesudah reklas; perlu diperbarui).
+	Status       string        `json:"status"`
+	Closing      *ClosingEntry `json:"closing,omitempty"`
+	PeriodStatus string        `json:"periodStatus"` // status bulan terakhir tahun buku
+	// Account adalah akun laba ditahan tujuan reklas; AccountProblem diisi bila belum siap.
+	Account        *Ref   `json:"account,omitempty"`
+	AccountName    string `json:"accountName,omitempty"`
+	AccountProblem string `json:"accountProblem,omitempty"`
+}
+
+// ClosingEntry adalah jurnal reklas yang berlaku untuk satu tahun buku.
+type ClosingEntry struct {
+	Ref
+	Profit       money.Amount `json:"profit"` // laba (rugi) yang direklas jurnal itu
+	PostedAt     time.Time    `json:"postedAt"`
+	PostedByName string       `json:"postedByName,omitempty"`
 }
 
 type EntrySummary struct {
@@ -308,6 +341,8 @@ type Service interface {
 	VoidSource(ctx context.Context, companyID, entryID uuid.UUID, sourceType string, date civil.Date, reason string, actor Actor) (Voided, error)
 	// Revise mengubah jurnal manual yang periodenya belum dikunci; versi lama disimpan di riwayat.
 	Revise(ctx context.Context, companyID, entryID uuid.UUID, in ReviseInput, actor Actor) (Ref, error)
+	// ReviseOpening mengganti isi jurnal saldo awal; hanya dipanggil halaman Saldo awal.
+	ReviseOpening(ctx context.Context, companyID, entryID uuid.UUID, in ReviseInput, actor Actor) (Ref, error)
 	// NextNumber mengambil nomor dokumen tanpa celah, mis. FJ/2026/10/0001 (GL-07).
 	NextNumber(ctx context.Context, companyID uuid.UUID, series string, date civil.Date) (string, error)
 	// NextNumberFor sama dengan NextNumber untuk dokumen bercabang: bila seri diatur bernomor per
@@ -326,6 +361,9 @@ type Service interface {
 	RunDueRecurring(ctx context.Context, today civil.Date) (int, error)
 	// RoleAccount mengembalikan akun sistem, mis. piutang usaha untuk faktur penjualan.
 	RoleAccount(ctx context.Context, companyID uuid.UUID, role Role) (Account, error)
+	// SystemAccounts dan SetSystemAccount: halaman Akun sistem, memilih akun untuk tiap peran.
+	SystemAccounts(ctx context.Context, companyID uuid.UUID) ([]SystemAccount, error)
+	SetSystemAccount(ctx context.Context, companyID uuid.UUID, role Role, accountID uuid.UUID, actor Actor) ([]SystemAccount, error)
 	Entry(ctx context.Context, companyID, entryID uuid.UUID) (EntryDetail, error)
 	Entries(ctx context.Context, companyID uuid.UUID, f EntryFilter) (EntryPage, error)
 	// EntriesBySource mengembalikan jurnal diposting dari satu sumber, mis. saldo awal.
@@ -338,12 +376,20 @@ type Service interface {
 	CheckAccount(ctx context.Context, companyID, accountID uuid.UUID, classes []int) error
 	CreateAccount(ctx context.Context, companyID uuid.UUID, a NewAccount, actor Actor) (Account, error)
 	UpdateAccount(ctx context.Context, companyID, accountID uuid.UUID, c AccountChange, actor Actor) (Account, error)
+	// DeleteAccount menghapus akun yang salah dibuat dan belum pernah dipakai.
+	DeleteAccount(ctx context.Context, companyID, accountID uuid.UUID, version int, actor Actor) error
 	ApplyTemplate(ctx context.Context, companyID uuid.UUID, template string, actor Actor) (int, error)
 
 	Settings(ctx context.Context, companyID uuid.UUID) (Settings, error)
 	SetFiscalYearStart(ctx context.Context, companyID uuid.UUID, month int, actor Actor) error
 	Periods(ctx context.Context, companyID uuid.UUID, year int) (FiscalYear, error)
 	SetPeriodStatus(ctx context.Context, companyID uuid.UUID, month civil.Date, status, reason string, actor Actor) error
+	YearEnd(ctx context.Context, companyID uuid.UUID, year int) (YearEnd, error)
+	// CloseYear mereklas laba (rugi) tahun buku ke laba ditahan, atau memperbarui reklas yang
+	// sudah tidak sesuai dengan buku.
+	CloseYear(ctx context.Context, companyID uuid.UUID, year int, actor Actor) (YearEnd, error)
+	// ReopenYear membatalkan reklas tahun buku, mis. sebelum revisi besar.
+	ReopenYear(ctx context.Context, companyID uuid.UUID, year int, reason string, actor Actor) (YearEnd, error)
 
 	Worksheet(ctx context.Context, companyID uuid.UUID, month civil.Date) (Worksheet, error)
 	AccountLedger(ctx context.Context, companyID, accountID uuid.UUID, from, to civil.Date) (AccountLedger, error)

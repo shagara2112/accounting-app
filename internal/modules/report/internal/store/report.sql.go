@@ -13,6 +13,153 @@ import (
 	"lajur/internal/platform/money"
 )
 
+const cashCounterparts = `-- name: CashCounterparts :many
+SELECT l.account_id, sum(l.credit - l.debit)::numeric AS amount
+FROM ledger.journal_lines l
+WHERE l.company_id = $1 AND l.entry_date >= $2 AND l.entry_date <= $3
+  AND NOT (l.account_id = ANY($4::uuid[]))
+  AND EXISTS (SELECT 1 FROM ledger.journal_lines c
+              WHERE c.company_id = l.company_id AND c.entry_id = l.entry_id AND c.account_id = ANY($4::uuid[]))
+GROUP BY l.account_id
+HAVING sum(l.credit - l.debit) <> 0
+`
+
+type CashCounterpartsParams struct {
+	CompanyID    uuid.UUID
+	FromDate     civil.Date
+	ToDate       civil.Date
+	CashAccounts []uuid.UUID
+}
+
+type CashCounterpartsRow struct {
+	AccountID uuid.UUID
+	Amount    money.Amount
+}
+
+// Arus kas metode langsung: baris akun selain kas pada jurnal yang menyentuh rekening kas/bank.
+// Kredit − debit baris itu = kas yang diterima (positif) atau dibayar (negatif) karena akun itu.
+func (q *Queries) CashCounterparts(ctx context.Context, arg CashCounterpartsParams) ([]CashCounterpartsRow, error) {
+	rows, err := q.db.Query(ctx, cashCounterparts,
+		arg.CompanyID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.CashAccounts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CashCounterpartsRow
+	for rows.Next() {
+		var i CashCounterpartsRow
+		if err := rows.Scan(&i.AccountID, &i.Amount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const closingNet = `-- name: ClosingNet :many
+SELECT l.account_id, sum(l.debit - l.credit)::numeric AS net
+FROM ledger.journal_lines l
+JOIN ledger.journal_entries e ON e.id = l.entry_id
+WHERE l.company_id = $1 AND e.kind = 'penutup' AND l.entry_date >= $2 AND l.entry_date < $3
+GROUP BY l.account_id
+`
+
+type ClosingNetParams struct {
+	CompanyID  uuid.UUID
+	FromDate   civil.Date
+	BeforeDate civil.Date
+}
+
+type ClosingNetRow struct {
+	AccountID uuid.UUID
+	Net       money.Amount
+}
+
+// Jurnal penutup (reklas laba akhir tahun) bertanggal [from_date, before_date) per akun.
+func (q *Queries) ClosingNet(ctx context.Context, arg ClosingNetParams) ([]ClosingNetRow, error) {
+	rows, err := q.db.Query(ctx, closingNet, arg.CompanyID, arg.FromDate, arg.BeforeDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClosingNetRow
+	for rows.Next() {
+		var i ClosingNetRow
+		if err := rows.Scan(&i.AccountID, &i.Net); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const equityMovements = `-- name: EquityMovements :many
+SELECT l.account_id, e.id AS entry_id, e.source_type, sum(l.debit - l.credit)::numeric AS net
+FROM ledger.journal_lines l
+JOIN ledger.journal_entries e ON e.id = l.entry_id
+JOIN ledger.accounts a ON a.company_id = l.company_id AND a.id = l.account_id
+WHERE l.company_id = $1 AND a.class = 3 AND e.kind <> 'penutup'
+  AND l.entry_date >= $2 AND l.entry_date <= $3
+  AND NOT (e.status = 'void' AND EXISTS (
+        SELECT 1 FROM ledger.journal_entries r
+        WHERE r.company_id = e.company_id AND r.reversal_of = e.id AND r.source_type = 'void' AND r.entry_date <= $3))
+  AND NOT (e.source_type = 'void' AND EXISTS (
+        SELECT 1 FROM ledger.journal_entries o
+        WHERE o.company_id = e.company_id AND o.id = e.reversal_of AND o.entry_date >= $2))
+GROUP BY l.account_id, e.id, e.source_type
+HAVING sum(l.debit - l.credit) <> 0
+`
+
+type EquityMovementsParams struct {
+	CompanyID uuid.UUID
+	FromDate  civil.Date
+	ToDate    civil.Date
+}
+
+type EquityMovementsRow struct {
+	AccountID  uuid.UUID
+	EntryID    uuid.UUID
+	SourceType string
+	Net        money.Amount
+}
+
+// Mutasi akun ekuitas (kelas 3) per jurnal dalam rentang, tanpa jurnal penutup. Jurnal void dan
+// pembaliknya yang sama-sama di dalam rentang saling meniadakan, jadi keduanya disembunyikan.
+func (q *Queries) EquityMovements(ctx context.Context, arg EquityMovementsParams) ([]EquityMovementsRow, error) {
+	rows, err := q.db.Query(ctx, equityMovements, arg.CompanyID, arg.FromDate, arg.ToDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EquityMovementsRow
+	for rows.Next() {
+		var i EquityMovementsRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.EntryID,
+			&i.SourceType,
+			&i.Net,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const monthlyResult = `-- name: MonthlyResult :many
 SELECT b.month,
   coalesce(sum(b.credit - b.debit) FILTER (WHERE a.class IN (4, 7)), 0)::numeric AS revenue,

@@ -18,12 +18,14 @@ import (
 	"lajur/internal/ledger"
 	"lajur/internal/modules/admin"
 	"lajur/internal/modules/asset"
+	"lajur/internal/modules/budget"
 	"lajur/internal/modules/cash"
 	"lajur/internal/modules/consol"
 	"lajur/internal/modules/core"
 	"lajur/internal/modules/docs"
 	"lajur/internal/modules/imports"
 	"lajur/internal/modules/inventory"
+	"lajur/internal/modules/panjar"
 	"lajur/internal/modules/project"
 	"lajur/internal/modules/purchase"
 	"lajur/internal/modules/report"
@@ -77,6 +79,8 @@ type Services struct {
 	Coretax   coretax.Service
 	Project   project.Service
 	Asset     asset.Service
+	Budget    budget.Service
+	Panjar    panjar.Service
 	Report    report.Service
 	Consol    consol.Service
 	Imports   imports.Service
@@ -149,6 +153,8 @@ func Modules(pool *pgxpool.Pool) Services {
 	m.Coretax = coretax.New(coretax.Deps{Pool: pool, Core: m.Core, Tax: m.Tax, Sales: m.Sales, Purchase: m.Purchase, Ledger: m.Ledger})
 	m.Project = project.New(project.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Tax: m.Tax, Sales: m.Sales})
 	m.Asset = asset.New(asset.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core})
+	m.Budget = budget.New(budget.Deps{Pool: pool, Ledger: m.Ledger})
+	m.Panjar = panjar.New(panjar.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Budget: m.Budget})
 	m.Report = report.New(report.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Cash: m.Cash, Sales: m.Sales, Purchase: m.Purchase})
 	m.Consol = consol.New(consol.Deps{Pool: pool, Core: m.Core, Ledger: m.Ledger, Sales: m.Sales, Purchase: m.Purchase, Report: m.Report})
 	m.Imports = imports.New(imports.Deps{Pool: pool, Ledger: m.Ledger, Core: m.Core, Inventory: m.Inventory, Sales: m.Sales, Purchase: m.Purchase})
@@ -182,7 +188,7 @@ func New(d Deps) (http.Handler, *api.API) {
 	}
 	authH := &auth.Handlers{
 		Pool: d.Pool, Sessions: d.Sessions, Access: d.Core, MaxFailures: 5, LockFor: 15 * time.Minute,
-		Box: d.Box, MFARequired: d.MFARequired,
+		Box: d.Box, MFARequired: d.MFARequired, Mail: d.Mail,
 	}
 	// Keamanan akun (2FA, kata sandi) tetap bisa diatur walau lisensi berakhir.
 	self := func(method, path string, fn httpx.Handler, duringSetup bool) api.Route {
@@ -191,6 +197,8 @@ func New(d Deps) (http.Handler, *api.API) {
 	for _, rt := range []api.Route{
 		{Method: http.MethodPost, Path: "/api/v1/auth/login", Access: api.Public, License: license.ModeStatus, Handle: authH.Login},
 		{Method: http.MethodPost, Path: "/api/v1/auth/totp", Access: api.Public, License: license.ModeStatus, Handle: authH.LoginTOTP},
+		{Method: http.MethodPost, Path: "/api/v1/auth/password-reset/request", Access: api.Public, License: license.ModeStatus, Handle: authH.ForgotPassword},
+		{Method: http.MethodPost, Path: "/api/v1/auth/password-reset/confirm", Access: api.Public, License: license.ModeStatus, Handle: authH.ResetPassword},
 		self(http.MethodPost, "/api/v1/auth/logout", authH.Logout, true),
 		self(http.MethodGet, "/api/v1/auth/mfa", authH.MFAStatus, true),
 		self(http.MethodPost, "/api/v1/auth/totp/setup", authH.TOTPSetup, true),
@@ -210,7 +218,8 @@ func New(d Deps) (http.Handler, *api.API) {
 	for _, group := range [][]api.Route{
 		ledger.Routes(d.Ledger), tax.Routes(d.Tax), cash.Routes(d.Cash), sales.Routes(d.Sales), purchase.Routes(d.Purchase),
 		coretax.Routes(d.Coretax), inventory.Routes(d.Inventory), project.Routes(d.Project), report.Routes(d.Report),
-		consol.Routes(d.Consol), imports.Routes(d.Imports), asset.Routes(d.Asset),
+		consol.Routes(d.Consol), imports.Routes(d.Imports), asset.Routes(d.Asset), budget.Routes(d.Budget),
+		panjar.Routes(d.Panjar),
 	} {
 		for _, rt := range group {
 			a.Add(markWholeCompany(rt))
@@ -314,10 +323,11 @@ func logRequests(log *slog.Logger) func(http.Handler) http.Handler {
 // memakai dokumen cabangnya dan laporan laba rugi per cabang.
 var wholeCompanyPrefixes = []string{
 	"/api/v1/journals", "/api/v1/adjustments", "/api/v1/ledger/worksheet", "/api/v1/ledger/periods", "/api/v1/ledger/settings",
+	"/api/v1/ledger/year-end",
 	"/api/v1/ledger/recurring", "/api/v1/ledger/number-formats",
 	"/api/v1/tax/", "/api/v1/consol/", "/api/v1/imports", "/api/v1/cash/reconciliations",
 	"/api/v1/inventory/stock", "/api/v1/inventory/card", "/api/v1/inventory/adjustments",
-	"/api/v1/reports/", "/api/v1/assets",
+	"/api/v1/reports/", "/api/v1/assets", "/api/v1/budgets",
 }
 
 func markWholeCompany(rt api.Route) api.Route {

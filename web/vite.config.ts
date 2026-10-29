@@ -8,8 +8,13 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
+    // Server Go menolak permintaan dari origin lain (CSRF); di dev, origin diganti ke server Go.
     proxy: {
-      '/api': 'http://localhost:8080',
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        headers: { origin: 'http://localhost:8080' },
+      },
       '/healthz': 'http://localhost:8080',
     },
   },

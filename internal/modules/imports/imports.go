@@ -71,6 +71,9 @@ type Service interface {
 	Template(ctx context.Context, companyID uuid.UUID, kind string) (export.Table, error)
 	Import(ctx context.Context, companyID uuid.UUID, kind, fileName string, data []byte, o Options, actor audit.Actor) (Result, error)
 	Status(ctx context.Context, companyID uuid.UUID) (Status, error)
+	// Opening dan SaveOpening melayani halaman Saldo awal: saldo per akun diketik di layar.
+	Opening(ctx context.Context, companyID uuid.UUID) (OpeningState, error)
+	SaveOpening(ctx context.Context, companyID uuid.UUID, in OpeningInput, actor audit.Actor) (OpeningState, error)
 }
 
 type Deps struct {

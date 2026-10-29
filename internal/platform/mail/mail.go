@@ -87,6 +87,15 @@ func (s *Service) server(ctx context.Context) (Server, error) {
 	return srv, nil
 }
 
+// Ready menyatakan apakah email server sudah diatur dan aktif, mis. untuk kode lupa kata sandi.
+func (s *Service) Ready(ctx context.Context) (bool, error) {
+	_, err := s.server(ctx)
+	if errors.Is(err, ErrDisabled) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 var ErrDisabled = httpx.Conflict("mail.disabled", "Email belum diatur. Isi pengaturan SMTP di Sistem → Email.")
 
 func (s *Service) SaveSettings(ctx context.Context, in Settings) (Settings, error) {

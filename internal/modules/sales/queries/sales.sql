@@ -39,8 +39,9 @@ SELECT * FROM sales.invoice_lines WHERE company_id = $1 AND invoice_id = $2 ORDE
 
 -- name: MarkInvoicePosted :execrows
 UPDATE sales.invoices
-SET status = 'posted', number = $3, journal_entry_id = $4, posted_at = now(), posted_by = $5, version = version + 1
-WHERE company_id = $1 AND id = $2 AND status = 'draft';
+SET status = 'posted', number = @number, journal_entry_id = @journal_entry_id, posted_at = now(), posted_by = @posted_by,
+    vat_collector = @vat_collector, vat_account_id = sqlc.narg(vat_account_id), version = version + 1
+WHERE company_id = @company_id AND id = @id AND status = 'draft';
 
 -- name: MarkInvoiceVoid :execrows
 UPDATE sales.invoices
@@ -52,10 +53,11 @@ DELETE FROM sales.invoices WHERE company_id = $1 AND id = $2 AND status = 'draft
 
 -- name: ListInvoices :many
 -- state: draft, open (diposting, belum lunas), paid, atau void. Nota kredit ikut mengurangi sisa.
-SELECT i.*, coalesce(p.paid, 0)::numeric AS paid, coalesce(c.credited, 0)::numeric AS credited
+SELECT i.*, coalesce(p.paid, 0)::numeric AS paid, coalesce(c.credited, 0)::numeric AS credited,
+       coalesce(p.vat_collected, 0)::numeric AS vat_collected_total
 FROM sales.invoices i
 LEFT JOIN LATERAL (
-  SELECT sum(a.amount) AS paid
+  SELECT sum(a.amount) AS paid, sum(a.vat_collected) AS vat_collected
   FROM sales.receipt_allocations a
   JOIN sales.receipts r ON r.id = a.receipt_id
   WHERE a.invoice_id = i.id AND r.status = 'posted'
@@ -97,11 +99,20 @@ FROM (
 ) x
 GROUP BY x.invoice_id;
 
+-- name: CollectedByInvoice :many
+-- PPN dipungut pelanggan yang sudah dicatat per faktur (pelunasan yang masih berlaku).
+SELECT a.invoice_id, sum(a.vat_collected)::numeric AS collected
+FROM sales.receipt_allocations a
+JOIN sales.receipts r ON r.id = a.receipt_id
+WHERE a.company_id = @company_id AND a.invoice_id = ANY(@ids::uuid[]) AND r.status = 'posted' AND a.vat_collected > 0
+GROUP BY a.invoice_id;
+
 -- name: OpenInvoices :many
-SELECT i.*, coalesce(p.paid, 0)::numeric AS paid, coalesce(c.credited, 0)::numeric AS credited
+SELECT i.*, coalesce(p.paid, 0)::numeric AS paid, coalesce(c.credited, 0)::numeric AS credited,
+       coalesce(p.vat_collected, 0)::numeric AS vat_collected_total
 FROM sales.invoices i
 LEFT JOIN LATERAL (
-  SELECT sum(a.amount) AS paid
+  SELECT sum(a.amount) AS paid, sum(a.vat_collected) AS vat_collected
   FROM sales.receipt_allocations a
   JOIN sales.receipts r ON r.id = a.receipt_id
   WHERE a.invoice_id = i.id AND r.status = 'posted'
@@ -134,8 +145,8 @@ ORDER BY i.due_date, i.number;
 -- name: InsertReceipt :exec
 INSERT INTO sales.receipts
   (id, company_id, number, customer_id, receipt_date, cash_account_id, amount, memo, journal_entry_id, created_by,
-   kind, advance, from_advance)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+   kind, advance, from_advance, vat_collected)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14);
 
 -- name: LockAdvance :exec
 -- Mengunci saldo uang muka satu kontak sampai transaksi selesai (kunci dihitung di Go).
@@ -162,8 +173,8 @@ GROUP BY x.customer_id
 HAVING sum(x.amount) <> 0;
 
 -- name: InsertAllocation :exec
-INSERT INTO sales.receipt_allocations (id, company_id, receipt_id, invoice_id, amount, withholding_code, withholding)
-VALUES ($1, $2, $3, $4, $5, $6, $7);
+INSERT INTO sales.receipt_allocations (id, company_id, receipt_id, invoice_id, amount, withholding_code, withholding, vat_collected)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 
 -- name: GetReceipt :one
 SELECT r.*, u.name AS created_by_name, vu.name AS voided_by_name
@@ -183,7 +194,7 @@ WHERE a.company_id = $1 AND a.receipt_id = $2
 ORDER BY i.number;
 
 -- name: InvoiceReceipts :many
-SELECT r.id, r.number, r.receipt_date, r.status, a.amount, a.withholding, a.withholding_code
+SELECT r.id, r.number, r.receipt_date, r.status, a.amount, a.withholding, a.withholding_code, a.vat_collected
 FROM sales.receipt_allocations a
 JOIN sales.receipts r ON r.id = a.receipt_id
 WHERE a.company_id = $1 AND a.invoice_id = $2
@@ -208,21 +219,27 @@ LIMIT 500;
 
 -- name: VATByMonth :many
 -- PPN keluaran per masa dari faktur yang diposting (TAX-06), dikurangi PPN retur penjualan
--- (nota kredit) di masa returnya.
+-- (nota kredit) di masa returnya. collected: bagian yang dipungut pelanggan pemungut (kode
+-- transaksi 02/03): faktur yang pelanggannya pemungut saat diposting, kecuali kodenya diubah
+-- staf pajak (@not_collected_ids), ditambah faktur yang kodenya diubah ke 02/03 (@collected_ids).
 SELECT x.month::date AS month, count(*) AS invoices,
-       coalesce(sum(x.dpp), 0)::numeric AS dpp, coalesce(sum(x.vat), 0)::numeric AS vat
+       coalesce(sum(x.dpp), 0)::numeric AS dpp, coalesce(sum(x.vat), 0)::numeric AS vat,
+       coalesce(sum(x.vat) FILTER (WHERE x.collected), 0)::numeric AS collected
 FROM (
-  SELECT date_trunc('month', i.invoice_date) AS month, i.dpp, i.vat
+  SELECT date_trunc('month', i.invoice_date) AS month, i.dpp, i.vat,
+         (i.id = ANY(coalesce(@collected_ids::uuid[], '{}')) OR (i.vat_collector <> '' AND NOT i.id = ANY(coalesce(@not_collected_ids::uuid[], '{}')))) AS collected
   FROM sales.invoices i
   WHERE i.company_id = @company_id AND i.status = 'posted' AND i.vat > 0
     AND i.invoice_date >= @from_date AND i.invoice_date < @to_date
   UNION ALL
-  SELECT date_trunc('month', n.note_date), -n.dpp, -n.vat
+  SELECT date_trunc('month', n.note_date), -n.dpp, -n.vat,
+         coalesce(ni.id = ANY(coalesce(@collected_ids::uuid[], '{}')) OR (ni.vat_collector <> '' AND NOT ni.id = ANY(coalesce(@not_collected_ids::uuid[], '{}'))), false)
   FROM sales.credit_notes n
+  LEFT JOIN sales.invoices ni ON ni.id = n.invoice_id
   WHERE n.company_id = @company_id AND n.status = 'posted' AND n.vat > 0
     AND n.note_date >= @from_date AND n.note_date < @to_date
   UNION ALL
-  SELECT date_trunc('month', d.sale_date), d.dpp, d.vat
+  SELECT date_trunc('month', d.sale_date), d.dpp, d.vat, false
   FROM sales.daily_sales d
   WHERE d.company_id = @company_id AND d.status = 'posted' AND d.vat > 0
     AND d.sale_date >= @from_date AND d.sale_date < @to_date

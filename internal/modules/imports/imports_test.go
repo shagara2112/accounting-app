@@ -4,13 +4,15 @@ import (
 	"strings"
 	"testing"
 
+	"lajur/internal/ledger"
 	"lajur/internal/modules/fixture"
 	"lajur/internal/modules/imports"
 	"lajur/internal/modules/sales"
+	"lajur/internal/modules/trade"
 	"lajur/internal/platform/money"
 )
 
-var day, rp = fixture.Day, fixture.Rp
+var day, rp, code = fixture.Day, fixture.Rp, fixture.Code
 
 func run(t *testing.T, e *fixture.Env, kind, csv string, o imports.Options) imports.Result {
 	t.Helper()
@@ -98,6 +100,137 @@ func TestOpeningMigration(t *testing.T) {
 	e.VerifyLedger()
 }
 
+// Halaman Saldo awal: saldo per akun diketik di layar (termasuk pendapatan dan beban sejak awal
+// tahun untuk PT yang mulai di tengah tahun), bisa diubah selama periodenya terbuka, dan pindah
+// bulan mem-void jurnal lama. Akun piutang, utang, dan persediaan tetap diisi per dokumen.
+func TestOpeningForm(t *testing.T) {
+	e := fixture.New(t)
+	st, err := e.Imports.Opening(e.Ctx, e.Company)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.EntryID != nil || len(st.Controlled) < 2 {
+		t.Fatalf("saldo awal kosong = %+v", st)
+	}
+	line := func(code string, debit, credit int64) imports.OpeningLine {
+		return imports.OpeningLine{AccountID: e.Acc[code], Debit: rp(debit), Credit: rp(credit)}
+	}
+	save := func(date string, revision int, lines ...imports.OpeningLine) (imports.OpeningState, error) {
+		return e.Imports.SaveOpening(e.Ctx, e.Company, imports.OpeningInput{Date: day(date), Lines: lines, Revision: revision}, e.Actor)
+	}
+
+	for _, c := range st.Controlled {
+		if (c.Kind == "stok-awal") == c.Manual {
+			t.Fatalf("hanya piutang dan utang usaha yang boleh diketik langsung: %+v", c)
+		}
+		if c.Kind != "stok-awal" {
+			continue
+		}
+		// Persediaan tetap per barang lewat impor (kartu stok dan HPP).
+		_, err = save("2026-09-30", 0, imports.OpeningLine{AccountID: c.AccountID, Debit: rp(1_000_000)}, line("3-1001", 0, 1_000_000))
+		if code(err) != "opening.invalid" || fixture.Fields(err)["lines."+c.AccountID.String()] == "" {
+			t.Fatalf("persediaan seharusnya ditolak: %v", err)
+		}
+	}
+
+	// Mulai Oktober: neraca per 30 September plus pendapatan dan beban Januari–September.
+	// Piutang dan utang usaha boleh diketik langsung, tanpa rincian faktur (revisi klien).
+	st, err = save("2026-09-30", 0,
+		line("1-1111", 250_000_000, 0), line("1-1201", 15_000_000, 0), line("2-1101", 0, 15_000_000),
+		line("3-1001", 0, 200_000_000), line("4-1001", 0, 80_000_000), line("6-2001", 30_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.EntryID == nil || st.Number != "SA/2026/09/0001" || len(st.Lines) != 6 || !st.OpeningEquity.IsZero() {
+		t.Fatalf("saldo awal = %+v", st)
+	}
+	if !e.Net("1-1201", day("2026-09-30")).Equal(rp(15_000_000)) || !e.Net("2-1101", day("2026-09-30")).Equal(rp(-15_000_000)) {
+		t.Fatalf("piutang/utang diketik langsung: %s, %s", e.Net("1-1201", day("2026-09-30")), e.Net("2-1101", day("2026-09-30")))
+	}
+	if !e.Net("4-1001", day("2026-12-31")).Equal(rp(-80_000_000)) {
+		t.Fatalf("pendapatan setahun = %s", e.Net("4-1001", day("2026-12-31")))
+	}
+
+	// Koreksi: bank 260 jt; selisihnya sementara ke ekuitas saldo awal. Versi lama ditolak.
+	if _, err := save("2026-09-30", st.Revision+1, line("1-1111", 260_000_000, 0)); code(err) != "conflict.version" {
+		t.Fatalf("versi basi seharusnya ditolak: %v", err)
+	}
+	st, err = save("2026-09-30", st.Revision,
+		line("1-1111", 260_000_000, 0), line("3-1001", 0, 200_000_000),
+		line("4-1001", 0, 80_000_000), line("6-2001", 30_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Number != "SA/2026/09/0001" || st.Revision != 1 || !st.OpeningEquity.Equal(rp(-10_000_000)) {
+		t.Fatalf("saldo awal sesudah koreksi = %+v", st)
+	}
+	if _, err := e.Ledger.Revise(e.Ctx, e.Company, *st.EntryID, ledger.ReviseInput{Date: day("2026-09-30"), Lines: nil, Revision: st.Revision}, e.Actor); code(err) != "journal.edit_opening" {
+		t.Fatalf("jurnal saldo awal tidak boleh diubah lewat formulir jurnal: %v", err)
+	}
+
+	// Pindah ke 31 Agustus: jurnal September di-void, jurnal baru diposting.
+	old := *st.EntryID
+	st, err = save("2026-08-31", st.Revision, line("1-1111", 200_000_000, 0), line("3-1001", 0, 200_000_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Number != "SA/2026/08/0001" || st.Date.String() != "2026-08-31" || *st.EntryID == old {
+		t.Fatalf("saldo awal pindah bulan = %+v", st)
+	}
+	if prev, _ := e.Ledger.Entry(e.Ctx, e.Company, old); prev.Status != "void" {
+		t.Fatalf("saldo awal lama seharusnya di-void: %s", prev.Status)
+	}
+	if !e.Net("1-1111", day("2026-09-30")).Equal(rp(200_000_000)) || !e.Net("4-1001", day("2026-12-31")).IsZero() {
+		t.Fatalf("saldo sesudah pindah bulan: bank %s, pendapatan %s", e.Net("1-1111", day("2026-09-30")), e.Net("4-1001", day("2026-12-31")))
+	}
+	e.VerifyLedger()
+}
+
+// Skema kode PT sendiri: kode akun sistem (piutang usaha, PPN keluaran) diganti, posting
+// otomatis faktur tetap memakai akun yang sama.
+func TestRecodedSystemAccountsKeepPosting(t *testing.T) {
+	e := fixture.New(t)
+	recode := func(old, code string) {
+		list, err := e.Ledger.Accounts(e.Ctx, e.Company)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range list {
+			if a.Code == old {
+				if _, err := e.Ledger.UpdateAccount(e.Ctx, e.Company, a.ID, ledger.AccountChange{Code: code, Name: a.Name, Active: true, Version: a.Version}, e.Actor); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+		}
+		t.Fatalf("akun %s tidak ada", old)
+	}
+	recode("1-1201", "1-13101")
+	recode("2-1201", "2-12101")
+
+	inv, err := e.Sales.CreateInvoice(e.Ctx, e.Company, sales.InvoiceInput{CustomerID: e.Customer, Date: day("2026-10-05"),
+		Lines: []trade.LineInput{{Description: "Jasa", AccountID: e.Acc["4-1001"], Qty: money.FromInt(1), UnitPrice: rp(10_000_000), TaxCode: "PPN"}}}, e.Actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posted, err := e.Sales.PostInvoice(e.Ctx, e.Company, inv.ID, e.Actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := e.Ledger.Entry(e.Ctx, e.Company, *posted.JournalEntryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codes := map[string]bool{}
+	for _, l := range j.Lines {
+		codes[l.AccountCode] = true
+	}
+	if !codes["1-13101"] || !codes["2-12101"] {
+		t.Fatalf("jurnal faktur memakai akun %v, seharusnya kode baru 1-13101 dan 2-12101", codes)
+	}
+	e.VerifyLedger()
+}
+
 // Impor jurnal: baris dengan tanggal dan nomor bukti sama menjadi satu jurnal; jurnal yang
 // tidak seimbang menandai baris-barisnya dan membatalkan seluruh berkas.
 func TestImportJournals(t *testing.T) {
@@ -142,7 +275,7 @@ func TestImportDailySales(t *testing.T) {
 		!e.Net("5-1001", day("2026-10-31")).Equal(rp(17*12_000)) {
 		t.Fatal("kas toko, piutang QRIS, atau HPP salah")
 	}
-	vat, _ := e.Sales.VATByMonth(e.Ctx, e.Company, day("2026-10-01"), day("2026-11-01"))
+	vat, _ := e.Sales.VATByMonth(e.Ctx, e.Company, day("2026-10-01"), day("2026-11-01"), sales.VATCodeOverrides{})
 	if len(vat) != 1 || !vat[0].VAT.Equal(rp(19_800+8_250)) {
 		t.Fatalf("PPN keluaran Oktober = %+v", vat)
 	}

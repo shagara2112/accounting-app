@@ -77,17 +77,25 @@ type Service interface {
 	// ProfitLossBy memilah laba rugi per cabang/departemen atau satu kolom per cabang (GL-09).
 	ProfitLossBy(ctx context.Context, companyID uuid.UUID, periods []Period, f DimFilter) (Statement, error)
 	CashFlow(ctx context.Context, companyID uuid.UUID, p Period) (CashFlow, error)
+	// CashFlowDirect adalah arus kas metode langsung (RPT-08).
+	CashFlowDirect(ctx context.Context, companyID uuid.UUID, p Period) (CashFlow, error)
+	// EquityChanges adalah laporan perubahan ekuitas (RPT-08).
+	EquityChanges(ctx context.Context, companyID uuid.UUID, p Period) (EquityChanges, error)
 	TrialBalance(ctx context.Context, companyID uuid.UUID, date civil.Date) (TrialBalance, error)
 	Summary(ctx context.Context, companyID uuid.UUID, kind string, p Period) (Summary, error)
 	ContactCard(ctx context.Context, companyID uuid.UUID, side string, contactID uuid.UUID, p Period) (ContactCard, error)
 	Dashboard(ctx context.Context, companyID uuid.UUID, today civil.Date) (Dashboard, error)
 	// CashProjection memproyeksikan saldo kas per minggu dari piutang dan utang jatuh tempo (AP-06).
 	CashProjection(ctx context.Context, companyID uuid.UUID, asOf civil.Date, weeks int) (CashProjection, error)
+	// Ratios menghitung rasio keuangan per akhir bulan untuk `months` bulan s.d. month (RPT-09).
+	Ratios(ctx context.Context, companyID uuid.UUID, month civil.Date, months int) (Ratios, error)
 
 	// Net mengembalikan debit − kredit per akun untuk rentang [from, to]; dipakai konsolidasi.
 	Net(ctx context.Context, companyID uuid.UUID, from, to civil.Date, skipClosing bool) (map[uuid.UUID]money.Amount, error)
 	// FiscalStart adalah tanggal 1 tahun buku PT yang memuat date.
 	FiscalStart(ctx context.Context, companyID uuid.UUID, date civil.Date) (civil.Date, error)
+	// Position mengembalikan saldo posisi per tanggal untuk neraca; lihat position.
+	Position(ctx context.Context, companyID uuid.UUID, date civil.Date) (all, year map[uuid.UUID]money.Amount, err error)
 }
 
 type Deps struct {
@@ -112,6 +120,38 @@ var beginning = civil.New(2000, 1, 1)
 // saldo agregat, sisa hari di awal dan akhir rentang dari baris jurnal.
 func (s *service) Net(ctx context.Context, companyID uuid.UUID, from, to civil.Date, skipClosing bool) (map[uuid.UUID]money.Amount, error) {
 	return s.net(ctx, companyID, from, to, skipClosing)
+}
+
+func (s *service) Position(ctx context.Context, companyID uuid.UUID, date civil.Date) (map[uuid.UUID]money.Amount, map[uuid.UUID]money.Amount, error) {
+	m, err := s.fiscalStartMonth(ctx, companyID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.position(ctx, companyID, fiscalStart(m, date), date)
+}
+
+// position mengembalikan saldo per tanggal date untuk neraca. all = semua mutasi sampai date,
+// termasuk reklas akhir tahun (jurnal penutup) tahun-tahun buku sebelumnya tetapi tanpa reklas
+// tahun buku date sendiri, karena reklas bertanggal hari terakhir tahun buku baru berlaku mulai
+// tahun buku berikutnya; laba tahun itu tetap tampil sebagai laba tahun berjalan per akhir tahun.
+// year = mutasi tahun buku date (mulai fs) tanpa jurnal penutup.
+func (s *service) position(ctx context.Context, companyID uuid.UUID, fs, date civil.Date) (map[uuid.UUID]money.Amount, map[uuid.UUID]money.Amount, error) {
+	before, err := s.net(ctx, companyID, beginning, fs.AddDays(-1), false)
+	if err != nil {
+		return nil, nil, err
+	}
+	year, err := s.net(ctx, companyID, fs, date, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	all := make(map[uuid.UUID]money.Amount, len(before)+len(year))
+	for id, v := range before {
+		all[id] = v
+	}
+	for id, v := range year {
+		all[id] = all[id].Add(v)
+	}
+	return all, year, nil
 }
 
 func (s *service) FiscalStart(ctx context.Context, companyID uuid.UUID, date civil.Date) (civil.Date, error) {

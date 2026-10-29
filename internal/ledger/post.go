@@ -100,7 +100,7 @@ func (l *ledger) check(ctx context.Context, q *store.Queries, e entry) (money.Am
 	if err != nil {
 		return money.Amount{}, err
 	}
-	if err := checkAccounts(ctx, q, e.CompanyID, e.Lines); err != nil {
+	if err := checkAccounts(ctx, q, e.CompanyID, e.Lines, e.Kind == Closing); err != nil {
 		return money.Amount{}, err
 	}
 	if err := l.checkProjects(ctx, e); err != nil {
@@ -181,7 +181,8 @@ func validate(d EntryDraft) (money.Amount, error) {
 	if len(d.Lines) < 2 {
 		return money.Amount{}, httpx.Unprocessable("journal.too_few_lines", "Jurnal minimal punya dua baris: satu debit dan satu kredit.")
 	}
-	if len(d.Lines) > maxLines {
+	// Jurnal penutup dibuat mesin: satu baris per akun laba rugi, berapa pun jumlahnya.
+	if len(d.Lines) > maxLines && d.Kind != Closing {
 		return money.Amount{}, httpx.Unprocessable("journal.too_many_lines", fmt.Sprintf("Jurnal maksimal %d baris.", maxLines))
 	}
 
@@ -214,7 +215,9 @@ func validate(d EntryDraft) (money.Amount, error) {
 }
 
 // checkAccounts memastikan setiap akun ada di PT ini, akun detail, dan aktif.
-func checkAccounts(ctx context.Context, q *store.Queries, companyID uuid.UUID, lines []LineDraft) error {
+// checkAccounts memastikan akun ada, akun detail, dan aktif. Jurnal penutup boleh memakai akun
+// nonaktif, karena saldo akun yang sudah dinonaktifkan pun harus ikut direklas.
+func checkAccounts(ctx context.Context, q *store.Queries, companyID uuid.UUID, lines []LineDraft, allowInactive bool) error {
 	ids := make([]uuid.UUID, 0, len(lines))
 	seen := map[uuid.UUID]bool{}
 	for _, ln := range lines {
@@ -240,7 +243,7 @@ func checkAccounts(ctx context.Context, q *store.Queries, companyID uuid.UUID, l
 			fields[key] = "Akun tidak ditemukan di PT ini."
 		case !a.Postable:
 			fields[key] = fmt.Sprintf("%s %s adalah akun header; pilih akun detail di bawahnya.", a.Code, a.Name)
-		case !a.Active:
+		case !a.Active && !allowInactive:
 			fields[key] = fmt.Sprintf("Akun %s %s nonaktif.", a.Code, a.Name)
 		}
 	}
@@ -283,7 +286,7 @@ func checkPeriod(ctx context.Context, q *store.Queries, companyID uuid.UUID, mon
 	switch {
 	case status == "open":
 		return nil
-	case status == "adjusting" && kind == Adjustment:
+	case status == "adjusting" && (kind == Adjustment || kind == Closing):
 		return nil
 	case status == "adjusting":
 		return httpx.Unprocessable("period.adjusting", fmt.Sprintf(

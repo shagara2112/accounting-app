@@ -24,13 +24,15 @@ import (
 	"lajur/internal/platform/money"
 )
 
-// VATMonth adalah satu masa PPN: keluaran dikurangi masukan dan kompensasi lebih bayar masa
-// sebelumnya. Hasil positif = kurang bayar (disetor); negatif = lebih bayar (dikompensasikan
-// ke masa berikutnya).
+// VATMonth adalah satu masa PPN: keluaran dikurangi PPN yang dipungut pelanggan pemungut
+// (kode 02/03, disetor oleh pelanggan), masukan, dan kompensasi lebih bayar masa sebelumnya.
+// Hasil positif = kurang bayar (disetor); negatif = lebih bayar (dikompensasikan ke masa
+// berikutnya).
 type VATMonth struct {
 	Month       string       `json:"month"`
 	Invoices    int64        `json:"invoices"`
 	Output      money.Amount `json:"output"`
+	Collected   money.Amount `json:"collected"` // dipungut pelanggan pemungut (02/03)
 	Bills       int64        `json:"bills"`
 	Input       money.Amount `json:"input"`
 	Compensated money.Amount `json:"compensated"`
@@ -56,7 +58,11 @@ func (s *service) VATRecap(ctx context.Context, companyID uuid.UUID, year int) (
 		return VATRecap{}, err
 	}
 	since, end := civil.New(2000, 1, 1), civil.New(year+1, 1, 1)
-	out, err := s.Sales.VATByMonth(ctx, companyID, since, end)
+	codes, err := s.trxCodeOverrides(ctx, companyID)
+	if err != nil {
+		return VATRecap{}, err
+	}
+	out, err := s.Sales.VATByMonth(ctx, companyID, since, end, codes)
 	if err != nil {
 		return VATRecap{}, err
 	}
@@ -71,7 +77,7 @@ func (s *service) VATRecap(ctx context.Context, companyID uuid.UUID, year int) (
 	}
 	for _, r := range out {
 		m := get(r.Month.MonthKey())
-		m.Invoices, m.Output = r.Documents, r.VAT
+		m.Invoices, m.Output, m.Collected = r.Documents, r.VAT, r.Collected
 	}
 	// PT non-PKP tidak bisa mengkreditkan PPN masukan.
 	if company.PKP {
@@ -93,7 +99,7 @@ func (s *service) VATRecap(ctx context.Context, companyID uuid.UUID, year int) (
 	for _, k := range keys {
 		m := months[k]
 		m.Compensated = carry
-		net := m.Output.Sub(m.Input).Sub(carry)
+		net := m.Output.Sub(m.Collected).Sub(m.Input).Sub(carry)
 		if net.Sign() >= 0 {
 			m.Payable, carry = net, money.Amount{}
 		} else {
@@ -105,6 +111,7 @@ func (s *service) VATRecap(ctx context.Context, companyID uuid.UUID, year int) (
 			t.Invoices += m.Invoices
 			t.Bills += m.Bills
 			t.Output, t.Input, t.Payable = t.Output.Add(m.Output), t.Input.Add(m.Input), t.Payable.Add(m.Payable)
+			t.Collected = t.Collected.Add(m.Collected)
 		}
 	}
 	if n := len(recap.Months); n > 0 {
@@ -113,6 +120,27 @@ func (s *service) VATRecap(ctx context.Context, companyID uuid.UUID, year int) (
 	}
 	return recap, nil
 }
+
+// trxCodeOverrides mengelompokkan faktur yang kode transaksinya sudah ditetapkan di modul pajak:
+// 02/03 dipungut pelanggan pemungut, kode lain tidak.
+func (s *service) trxCodeOverrides(ctx context.Context, companyID uuid.UUID) (sales.VATCodeOverrides, error) {
+	rows, err := s.q(ctx).OutputTrxCodes(ctx, companyID)
+	if err != nil {
+		return sales.VATCodeOverrides{}, err
+	}
+	var out sales.VATCodeOverrides
+	for _, r := range rows {
+		if collectedCode(r.TrxCode) {
+			out.Collected = append(out.Collected, r.InvoiceID)
+		} else {
+			out.NotCollected = append(out.NotCollected, r.InvoiceID)
+		}
+	}
+	return out, nil
+}
+
+// collectedCode: kode transaksi penyerahan kepada pemungut PPN, yang PPN-nya disetor pemungut.
+func collectedCode(code string) bool { return code == "02" || code == "03" }
 
 // inputByMonth menjumlahkan PPN masukan per masa pengkreditannya (TAX-07): tagihan yang tidak
 // dikreditkan dilewati beserta nota debitnya, dan nota debit mengurangi PPN masukan pada masa

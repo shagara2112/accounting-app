@@ -50,6 +50,9 @@ type Contact struct {
 	// Lawan transaksi luar negeri (PPh 26, TAX-08): kode negara ISO alfa-3 dan TIN di negaranya.
 	CountryCode string `json:"countryCode"`
 	ForeignTIN  string `json:"foreignTin"`
+	// VATCollector: pelanggan pemungut PPN (WAPU) dengan kode transaksi fakturnya, "02" instansi
+	// pemerintah atau "03" pemungut lain (mis. BUMN); kosong bila bukan pemungut.
+	VATCollector string `json:"vatCollector"`
 }
 
 // Foreign menandai kontak luar negeri (bukan Indonesia).
@@ -81,6 +84,7 @@ type ContactInput struct {
 	BillingContact string        `json:"billingContact"`
 	CountryCode    string        `json:"countryCode"` // kosong = IDN
 	ForeignTIN     string        `json:"foreignTin"`
+	VATCollector   string        `json:"vatCollector"` // "", "02", atau "03"
 }
 
 type ContactFilter struct {
@@ -158,6 +162,12 @@ func (in *ContactInput) validate() error {
 	case in.PKP:
 		f["pkp"] = "Kontak luar negeri tidak bisa berstatus PKP."
 	}
+	switch {
+	case !in.IsCustomer:
+		in.VATCollector = ""
+	case in.VATCollector != "" && in.VATCollector != "02" && in.VATCollector != "03":
+		f["vatCollector"] = "Pilih bukan pemungut, 02 (instansi pemerintah), atau 03 (pemungut lain)."
+	}
 	if len(f) > 0 {
 		return httpx.Unprocessable("contact.invalid", firstOf(f)).WithFields(f)
 	}
@@ -195,7 +205,7 @@ func toContact(r store.CoreContact) Contact {
 		BankName: r.BankName, BankAccount: r.BankAccount, Active: r.Active, Version: int(r.Version),
 		LinkedCompanyID: r.LinkedCompanyID, ICExpenseAccountID: r.IcExpenseAccountID, ICRevenueAccountID: r.IcRevenueAccountID,
 		ICCashAccountID: r.IcCashAccountID, CreditLimit: r.CreditLimit, BillingContact: r.BillingContact,
-		CountryCode: r.CountryCode, ForeignTIN: r.ForeignTin,
+		CountryCode: r.CountryCode, ForeignTIN: r.ForeignTin, VATCollector: r.VatCollector,
 	}
 }
 
@@ -350,6 +360,7 @@ func (s *service) CreateContact(ctx context.Context, companyID uuid.UUID, in Con
 			CreatedBy: actor.UserRef(), LinkedCompanyID: in.LinkedCompanyID, IcExpenseAccountID: in.ICExpenseAccountID,
 			IcRevenueAccountID: in.ICRevenueAccountID, CreditLimit: in.CreditLimit, BillingContact: in.BillingContact,
 			IcCashAccountID: in.ICCashAccountID, CountryCode: in.CountryCode, ForeignTin: in.ForeignTIN,
+			VatCollector: in.VATCollector,
 		})
 		if err != nil {
 			return cashAccountErr(err)
@@ -388,6 +399,7 @@ func (s *service) UpdateContact(ctx context.Context, companyID, id uuid.UUID, in
 			Active: in.Active, LinkedCompanyID: in.LinkedCompanyID, IcExpenseAccountID: in.ICExpenseAccountID,
 			IcRevenueAccountID: in.ICRevenueAccountID, CreditLimit: in.CreditLimit, BillingContact: in.BillingContact,
 			IcCashAccountID: in.ICCashAccountID, CountryCode: in.CountryCode, ForeignTin: in.ForeignTIN,
+			VatCollector: in.VATCollector,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.Conflict("conflict.version", "Kontak ini baru saja diubah orang lain. Muat ulang lalu coba lagi.")

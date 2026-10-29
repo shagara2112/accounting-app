@@ -298,7 +298,7 @@ func (s *service) CreateDailySale(ctx context.Context, companyID uuid.UUID, in D
 			drafts[i].Credit = drafts[i].Credit.Add(l.net)
 		}
 		if vat.Sign() > 0 {
-			acc, err := s.Ledger.RoleAccount(ctx, companyID, ledger.OutputVAT)
+			acc, err := s.Ledger.RoleAccount(ctx, companyID, ledger.OutputVATRetail)
 			if err != nil {
 				return err
 			}

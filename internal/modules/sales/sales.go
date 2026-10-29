@@ -97,6 +97,10 @@ type Invoice struct {
 	Credited     money.Amount  `json:"credited"` // nota kredit yang mengurangi sisa faktur
 	Outstanding  money.Amount  `json:"outstanding"`
 	DaysOverdue  int           `json:"daysOverdue"`
+	// VATCollector: pelanggan pemungut PPN saat faktur diposting ("02"/"03"); VATCollected: PPN
+	// yang sudah dicatat dipungut pelanggan lewat pelunasan.
+	VATCollector string       `json:"vatCollector,omitempty"`
+	VATCollected money.Amount `json:"vatCollected"`
 }
 
 type InvoiceLine struct {
@@ -116,6 +120,7 @@ type InvoicePayment struct {
 	Amount          money.Amount `json:"amount"`
 	Withholding     money.Amount `json:"withholding"`
 	WithholdingCode *string      `json:"withholdingCode,omitempty"`
+	VATCollected    money.Amount `json:"vatCollected"`
 }
 
 type InvoiceDetail struct {
@@ -181,7 +186,7 @@ type Service interface {
 	Aging(ctx context.Context, companyID uuid.UUID, asOf civil.Date) (trade.Aging, error)
 
 	// VATByMonth dan Withheld adalah data pendukung modul pajak (TAX-06, TAX-09).
-	VATByMonth(ctx context.Context, companyID uuid.UUID, from, to civil.Date) ([]trade.MonthVAT, error)
+	VATByMonth(ctx context.Context, companyID uuid.UUID, from, to civil.Date, codes VATCodeOverrides) ([]trade.MonthVAT, error)
 	Withheld(ctx context.Context, companyID uuid.UUID, from, to civil.Date) ([]Withheld, error)
 
 	// Data pendukung modul laporan (RPT-04, RPT-05).
@@ -231,6 +236,7 @@ type prepared struct {
 	lines    []trade.Line
 	totals   trade.Totals
 	products map[uuid.UUID]inventory.Product
+	customer core.Contact
 }
 
 // prepare memeriksa isi faktur dan menghitung baris serta totalnya.
@@ -344,7 +350,7 @@ func (s *service) prepare(ctx context.Context, companyID uuid.UUID, in *InvoiceI
 	if len(af) > 0 {
 		return prepared{}, httpx.Unprocessable("invoice.invalid", trade.FirstMessage(af)).WithFields(af)
 	}
-	return prepared{lines: lines, totals: totals, products: products}, nil
+	return prepared{lines: lines, totals: totals, products: products, customer: customer}, nil
 }
 
 // allowedAccounts membatasi akun baris faktur uang muka dan retensi ke akun sistemnya;
@@ -547,6 +553,19 @@ func (s *service) DeleteInvoice(ctx context.Context, companyID, id uuid.UUID, ac
 	})
 }
 
+// outputVATRole memilih akun PPN keluaran menurut jenis faktur pajaknya: pelanggan pemungut
+// (kode 02/03), DPP nilai lain (kode 04), atau selain itu PPN keluaran. Peran yang tidak dipilih
+// di Akun sistem memakai akun PPN keluaran.
+func outputVATRole(collector string, t trade.Totals) ledger.Role {
+	switch {
+	case collector != "":
+		return ledger.OutputVATCollected
+	case !t.OtherDPP.Equal(t.DPP):
+		return ledger.OutputVATOtherDPP
+	}
+	return ledger.OutputVAT
+}
+
 // storedInput menyusun ulang input faktur dari draf yang tersimpan.
 func storedInput(inv store.SalesInvoice, stored []store.SalesInvoiceLine) InvoiceInput {
 	in := InvoiceInput{
@@ -626,11 +645,13 @@ func (s *service) PostInvoice(ctx context.Context, companyID, id uuid.UUID, acto
 			}
 		}
 		drafts = append(drafts, creditsByAccount(p.lines, in.Kind == KindProgress, project)...)
+		var vatAccount *uuid.UUID
 		if t.VAT.Sign() > 0 {
-			vat, err := s.Ledger.RoleAccount(ctx, companyID, ledger.OutputVAT)
+			vat, err := s.Ledger.RoleAccount(ctx, companyID, outputVATRole(p.customer.VATCollector, t))
 			if err != nil {
 				return err
 			}
+			vatAccount = &vat.ID
 			drafts = append(drafts, ledger.LineDraft{AccountID: vat.ID, Credit: t.VAT, Memo: "PPN keluaran " + number, ProjectID: project})
 		}
 		withDimensions(drafts, in.BranchID, in.DepartmentID)
@@ -667,6 +688,7 @@ func (s *service) PostInvoice(ctx context.Context, companyID, id uuid.UUID, acto
 		}
 		if n, err := q.MarkInvoicePosted(ctx, store.MarkInvoicePostedParams{
 			CompanyID: companyID, ID: id, Number: &number, JournalEntryID: &posted.ID, PostedBy: actor.UserRef(),
+			VatCollector: p.customer.VATCollector, VatAccountID: vatAccount,
 		}); err != nil || n != 1 {
 			return errOr(err, "faktur gagal ditandai diposting")
 		}
@@ -873,7 +895,7 @@ func summary(r store.SalesInvoice, paid, credited money.Amount, names map[uuid.U
 		BranchID: r.BranchID, DepartmentID: r.DepartmentID,
 		Date: r.InvoiceDate, DueDate: r.DueDate, Memo: r.Memo, Subtotal: r.Subtotal, Discount: r.Discount,
 		DPP: r.Dpp, OtherDPP: r.OtherDpp, VAT: r.Vat, Total: r.Total, Retention: r.Retention, Receivable: rec, Paid: paid,
-		Credited: credited,
+		Credited: credited, VATCollector: r.VatCollector,
 	}
 	if r.Status == "posted" {
 		inv.Outstanding = rec.Sub(paid).Sub(credited)
@@ -910,6 +932,7 @@ func (s *service) Invoices(ctx context.Context, companyID uuid.UUID, f InvoiceFi
 	out := make([]Invoice, len(rows))
 	for i, r := range rows {
 		out[i] = summary(invoiceOf(r), r.Paid, r.Credited, names)
+		out[i].VATCollected = r.VatCollectedTotal
 	}
 	return out, nil
 }
@@ -930,6 +953,7 @@ func (s *service) OpenInvoices(ctx context.Context, companyID uuid.UUID, custome
 	out := make([]Invoice, len(rows))
 	for i, r := range rows {
 		out[i] = summary(openInvoiceOf(r), r.Paid, r.Credited, names)
+		out[i].VATCollected = r.VatCollectedTotal
 	}
 	return out, nil
 }
@@ -951,15 +975,15 @@ func (s *service) Invoice(ctx context.Context, companyID, id uuid.UUID) (Invoice
 	if err != nil {
 		return InvoiceDetail{}, err
 	}
-	var paid money.Amount
+	var paid, collected money.Amount
 	payments := make([]InvoicePayment, 0, len(pays))
 	for _, p := range pays {
 		if p.Status == "posted" {
-			paid = paid.Add(p.Amount)
+			paid, collected = paid.Add(p.Amount), collected.Add(p.VatCollected)
 		}
 		payments = append(payments, InvoicePayment{
 			ReceiptID: p.ID, Number: p.Number, Date: p.ReceiptDate, Status: p.Status, Amount: p.Amount,
-			Withholding: p.Withholding, WithholdingCode: p.WithholdingCode,
+			Withholding: p.Withholding, WithholdingCode: p.WithholdingCode, VATCollected: p.VatCollected,
 		})
 	}
 	notes, err := q.InvoiceCreditNotes(ctx, store.InvoiceCreditNotesParams{CompanyID: companyID, InvoiceID: id})
@@ -980,7 +1004,7 @@ func (s *service) Invoice(ctx context.Context, companyID, id uuid.UUID) (Invoice
 			InvoiceDate: r.InvoiceDate, DueDate: r.DueDate, Memo: r.Memo, Subtotal: r.Subtotal, Discount: r.Discount,
 			Dpp: r.Dpp, OtherDpp: r.OtherDpp, Vat: r.Vat, Total: r.Total, Kind: r.Kind, ProjectID: r.ProjectID,
 			ProgressPct: r.ProgressPct, Retention: r.Retention, Receivable: r.Receivable,
-			BranchID: r.BranchID, DepartmentID: r.DepartmentID,
+			BranchID: r.BranchID, DepartmentID: r.DepartmentID, VatCollector: r.VatCollector, VatAccountID: r.VatAccountID,
 		}, paid, credited, names),
 		Totals: trade.Totals{
 			Subtotal: r.Subtotal, Discount: r.Discount, DPP: r.Dpp, OtherDPP: r.OtherDpp, VAT: r.Vat, Total: r.Total,
@@ -989,6 +1013,7 @@ func (s *service) Invoice(ctx context.Context, companyID, id uuid.UUID) (Invoice
 		PostedBy: r.PostedByName, PostedAt: r.PostedAt, VoidedBy: r.VoidedByName, VoidedAt: r.VoidedAt,
 		VoidReason: r.VoidReason, Version: int(r.Version),
 	}
+	out.VATCollected = collected
 	lines, err := q.InvoiceLines(ctx, store.InvoiceLinesParams{CompanyID: companyID, InvoiceID: id})
 	if err != nil {
 		return InvoiceDetail{}, err
@@ -1037,7 +1062,7 @@ func invoiceOf(r store.ListInvoicesRow) store.SalesInvoice {
 		InvoiceDate: r.InvoiceDate, DueDate: r.DueDate, Memo: r.Memo, Subtotal: r.Subtotal, Discount: r.Discount,
 		Dpp: r.Dpp, OtherDpp: r.OtherDpp, Vat: r.Vat, Total: r.Total, Kind: r.Kind, ProjectID: r.ProjectID,
 		ProgressPct: r.ProgressPct, Retention: r.Retention, Receivable: r.Receivable,
-		BranchID: r.BranchID, DepartmentID: r.DepartmentID,
+		BranchID: r.BranchID, DepartmentID: r.DepartmentID, VatCollector: r.VatCollector, VatAccountID: r.VatAccountID,
 	}
 }
 
@@ -1047,7 +1072,7 @@ func openInvoiceOf(r store.OpenInvoicesRow) store.SalesInvoice {
 		InvoiceDate: r.InvoiceDate, DueDate: r.DueDate, Memo: r.Memo, Subtotal: r.Subtotal, Discount: r.Discount,
 		Dpp: r.Dpp, OtherDpp: r.OtherDpp, Vat: r.Vat, Total: r.Total, Kind: r.Kind, ProjectID: r.ProjectID,
 		ProgressPct: r.ProgressPct, Retention: r.Retention, Receivable: r.Receivable,
-		BranchID: r.BranchID, DepartmentID: r.DepartmentID,
+		BranchID: r.BranchID, DepartmentID: r.DepartmentID, VatCollector: r.VatCollector, VatAccountID: r.VatAccountID,
 	}
 }
 
@@ -1113,14 +1138,23 @@ type Withheld struct {
 	Amount        money.Amount `json:"amount"`
 }
 
-func (s *service) VATByMonth(ctx context.Context, companyID uuid.UUID, from, to civil.Date) ([]trade.MonthVAT, error) {
-	rows, err := s.q(ctx).VATByMonth(ctx, store.VATByMonthParams{CompanyID: companyID, FromDate: from, ToDate: to})
+// VATCodeOverrides: faktur yang kode transaksinya diubah staf pajak di modul pajak. Collected
+// berkode 02/03 (dipungut pelanggan pemungut), NotCollected berkode lain; faktur selebihnya
+// dianggap dipungut bila pelanggannya pemungut saat faktur diposting.
+type VATCodeOverrides struct {
+	Collected, NotCollected []uuid.UUID
+}
+
+func (s *service) VATByMonth(ctx context.Context, companyID uuid.UUID, from, to civil.Date, codes VATCodeOverrides) ([]trade.MonthVAT, error) {
+	rows, err := s.q(ctx).VATByMonth(ctx, store.VATByMonthParams{
+		CompanyID: companyID, FromDate: from, ToDate: to, CollectedIds: codes.Collected, NotCollectedIds: codes.NotCollected,
+	})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]trade.MonthVAT, len(rows))
 	for i, r := range rows {
-		out[i] = trade.MonthVAT{Month: r.Month, Documents: r.Invoices, DPP: r.Dpp, VAT: r.Vat}
+		out[i] = trade.MonthVAT{Month: r.Month, Documents: r.Invoices, DPP: r.Dpp, VAT: r.Vat, Collected: r.Collected}
 	}
 	return out, nil
 }

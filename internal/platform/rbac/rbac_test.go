@@ -45,6 +45,19 @@ func TestBuiltinRolesFollowMatrix(t *testing.T) {
 		{"admin", SystemManage, true},
 		{"admin", LedgerView, false},
 		{"admin", DataExport, false},
+		{"staf_akuntansi", PanjarApprove, true},
+		{"manager", PanjarApprove, true},
+		{"auditor", PanjarView, true},
+		{"auditor", PanjarApprove, false},
+		{"kepala_unit", PanjarCreate, true},
+		{"kepala_unit", CompanyView, true},
+		{"kepala_unit", PanjarView, false},
+		{"kepala_unit", PanjarApprove, false},
+		{"kepala_unit", LedgerView, false},
+		{"pemilik", PanjarUnits, true},
+		{"manager", PanjarUnits, true},
+		{"staf_akuntansi", PanjarUnits, false},
+		{"kepala_unit", PanjarUnits, false},
 	}
 	for _, c := range cases {
 		if got := role(t, c.role).Has(c.perm); got != c.want {

@@ -27,6 +27,9 @@ export type Statement = {
 
 export type CashFlow = Statement & { opening: string; netChange: string; closing: string; reconciled: boolean; noCash: boolean }
 
+/** Laporan perubahan ekuitas (RPT-08): satu kolom per akun ekuitas, laba belum direklas, dan jumlah. */
+export type EquityChanges = Statement & { reconciled: boolean }
+
 export type TrialBalance = {
   company: string
   date: string
@@ -85,7 +88,7 @@ export type Dashboard = {
   overdue: Invoice[]
 }
 
-export type ReportName = 'balance-sheet' | 'profit-loss' | 'cash-flow' | 'trial-balance' | 'summary' | 'contact-card'
+export type ReportName = 'balance-sheet' | 'profit-loss' | 'cash-flow' | 'equity-changes' | 'trial-balance' | 'summary' | 'contact-card'
 
 type Params = Record<string, string | undefined>
 
@@ -102,7 +105,9 @@ export const useBalanceSheet = (companyId: string | null, p: { date: string; com
 /** branch/department memfilter dimensi (GL-09); per: 'cabang' memecah kolom per cabang. */
 export const useProfitLoss = (companyId: string | null, p: { from: string; to: string; compareFrom?: string; compareTo?: string; branch?: string; department?: string; per?: string }) =>
   useReport<Statement>('profit-loss', companyId, p)
-export const useCashFlow = (companyId: string | null, p: { from: string; to: string }) => useReport<CashFlow>('cash-flow', companyId, p)
+/** method langsung = arus kas metode langsung (RPT-08); kosong = metode tidak langsung. */
+export const useCashFlow = (companyId: string | null, p: { from: string; to: string; method?: 'langsung' }) => useReport<CashFlow>('cash-flow', companyId, p)
+export const useEquityChanges = (companyId: string | null, p: { from: string; to: string }) => useReport<EquityChanges>('equity-changes', companyId, p)
 export const useTrialBalance = (companyId: string | null, p: { date: string }) => useReport<TrialBalance>('trial-balance', companyId, p)
 export const useSummary = (companyId: string | null, p: { kind: SummaryKind; from: string; to: string }) => useReport<Summary>('summary', companyId, p)
 export const useContactCard = (companyId: string | null, p: { side: string; contact: string; from: string; to: string }) =>

@@ -2,11 +2,13 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"lajur/internal/ledger/internal/store"
 	"lajur/internal/platform/audit"
@@ -34,10 +36,18 @@ func (l *ledger) Accounts(ctx context.Context, companyID uuid.UUID) ([]Account, 
 		return nil, err
 	}
 
+	pinned, err := pinnedRoles(ctx, q, companyID)
+	if err != nil {
+		return nil, err
+	}
+	system := systemRoles(rows, pinned)
 	out := make([]Account, len(rows))
 	index := make(map[uuid.UUID]int, len(rows))
 	for i, r := range rows {
 		out[i] = toAccount(r)
+		if roles := system[r.ID]; len(roles) > 0 {
+			out[i].System, out[i].SystemRoles = true, roleLabels(roles)
+		}
 		index[r.ID] = i
 	}
 	for _, n := range nets {
@@ -193,11 +203,25 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 			}
 		}
 		code := cur.Code
+		var pinned []string
 		if c.Code != "" && c.Code != cur.Code {
 			if err := checkCodeChange(ctx, q, companyID, cur, c.Code); err != nil {
 				return err
 			}
+			// Akun sistem dikunci ke akunnya dulu, supaya posting otomatis tetap memakainya.
+			if pinned, err = pinRoles(ctx, q, companyID, cur.ID, actor); err != nil {
+				return err
+			}
 			code = c.Code
+		}
+		parentID, level := cur.ParentID, cur.Level
+		var parentCode string
+		if c.ParentID != nil && (cur.ParentID == nil || *c.ParentID != *cur.ParentID) {
+			parent, err := checkParentChange(ctx, q, companyID, cur, *c.ParentID)
+			if err != nil {
+				return err
+			}
+			parentID, level, parentCode = c.ParentID, parent.Level+1, parent.Code
 		}
 		if !cur.Active && c.Active && cur.ParentID != nil {
 			parent, err := q.GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: *cur.ParentID})
@@ -212,6 +236,7 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 
 		row, err := q.UpdateAccount(ctx, store.UpdateAccountParams{
 			CompanyID: companyID, ID: accountID, Code: code, Name: c.Name, Active: c.Active, Version: int32(c.Version),
+			ParentID: parentID, Level: level,
 		})
 		if isNoRows(err) {
 			return httpx.Conflict("conflict.version", "Akun ini baru saja diubah orang lain. Muat ulang lalu coba lagi.")
@@ -219,16 +244,117 @@ func (l *ledger) UpdateAccount(ctx context.Context, companyID, accountID uuid.UU
 		if err != nil {
 			return err
 		}
+		if level != cur.Level {
+			if err := shiftSubtree(ctx, q, companyID, row.ID, level); err != nil {
+				return err
+			}
+		}
 		out = toAccount(row)
+		before := map[string]any{"code": cur.Code, "name": cur.Name, "active": cur.Active}
+		after := map[string]any{"code": row.Code, "name": row.Name, "active": row.Active}
+		if parentCode != "" {
+			old := ""
+			if cur.ParentID != nil {
+				if p, err := q.GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: *cur.ParentID}); err == nil {
+					old = p.Code
+				}
+			}
+			before["parent"], after["parent"] = old, parentCode
+		}
+		if len(pinned) > 0 {
+			after["systemRoles"] = pinned
+		}
 		_, err = audit.Write(ctx, db.Conn(ctx, l.pool), audit.Entry{
 			UserID: userRef(actor), CompanyID: &companyID, Action: "ledger.account.update",
 			ObjectType: "account", ObjectID: row.ID.String(), IP: actor.IP,
-			Before: map[string]any{"code": cur.Code, "name": cur.Name, "active": cur.Active},
-			After:  map[string]any{"code": row.Code, "name": row.Name, "active": row.Active},
+			Before: before, After: after,
 		})
 		return err
 	})
 	return out, err
+}
+
+// accountUsers menamai tabel yang memakai akun, untuk pesan saat akun yang masih dipakai
+// hendak dihapus (foreign key menolak penghapusannya).
+var accountUsers = map[string]string{
+	"journal_lines": "jurnal", "balances": "jurnal", "project_balances": "jurnal",
+	"accounts": "rekening kas/bank atau akun di bawahnya", "transaction_lines": "transaksi kas dan bank",
+	"contacts": "kontak PT grup", "invoices": "faktur penjualan", "invoice_lines": "faktur penjualan (termasuk draf)",
+	"bill_lines": "tagihan pembelian (termasuk draf)", "credit_note_lines": "nota kredit", "debit_note_lines": "nota debit",
+	"daily_sale_lines": "penjualan harian", "daily_sale_payments": "penjualan harian",
+	"projects": "proyek", "budget_lines": "anggaran proyek", "products": "produk dan jasa",
+	"movements": "kartu stok", "adjustments": "penyesuaian stok", "account_map": "pemetaan konsolidasi",
+	"recurring_lines": "jurnal berulang", "categories": "kategori aset tetap", "assets": "aset tetap",
+	"disposals": "pelepasan aset tetap", "role_accounts": "Akun sistem",
+}
+
+// DeleteAccount menghapus akun yang salah dibuat dan belum pernah dipakai. Akun kelompok, akun
+// yang masih punya akun di bawahnya, akun sistem, dan akun yang sudah dipakai jurnal atau data
+// lain (rekening kas, produk, aset, draf dokumen, dan seterusnya) ditolak; akun seperti itu
+// cukup dinonaktifkan.
+func (l *ledger) DeleteAccount(ctx context.Context, companyID, accountID uuid.UUID, version int, actor Actor) error {
+	return db.Run(ctx, l.pool, func(ctx context.Context) error {
+		q := l.q(ctx)
+		cur, err := q.GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: accountID})
+		if isNoRows(err) {
+			return httpx.NotFound("account.not_found", "Akun tidak ditemukan.")
+		}
+		if err != nil {
+			return err
+		}
+		label := cur.Code + " " + cur.Name
+		fail := func(msg string) error { return httpx.Unprocessable("account.in_use", msg) }
+		if cur.ParentID == nil {
+			return fail("Akun kelompok tidak bisa dihapus.")
+		}
+		n, err := q.CountChildren(ctx, store.CountChildrenParams{CompanyID: companyID, ParentID: &accountID})
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			return fail(fmt.Sprintf("%s masih punya %d akun di bawahnya. Hapus atau pindahkan akun-akun itu dulu.", label, n))
+		}
+		rows, err := q.ListAccounts(ctx, companyID)
+		if err != nil {
+			return err
+		}
+		pinned, err := pinnedRoles(ctx, q, companyID)
+		if err != nil {
+			return err
+		}
+		if roles := systemRoles(rows, pinned)[accountID]; len(roles) > 0 {
+			return fail(fmt.Sprintf("%s dipakai sebagai akun sistem untuk %s. Pilih akun lain di Bagan akun → Akun sistem dulu, atau nonaktifkan saja.",
+				label, strings.Join(roleLabels(roles), ", ")))
+		}
+		used, err := q.AccountHasLines(ctx, store.AccountHasLinesParams{CompanyID: companyID, AccountID: accountID})
+		if err != nil {
+			return err
+		}
+		if used {
+			return fail(fmt.Sprintf("%s sudah dipakai di jurnal, jadi tidak bisa dihapus. Nonaktifkan saja supaya tidak muncul di pilihan akun.", label))
+		}
+		deleted, err := q.DeleteAccount(ctx, store.DeleteAccountParams{CompanyID: companyID, ID: accountID, Version: int32(version)})
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "23503" {
+			where := accountUsers[pg.TableName]
+			if where == "" {
+				where = "data lain"
+			}
+			return fail(fmt.Sprintf("%s masih dipakai di %s, jadi tidak bisa dihapus. Ganti akunnya di sana dulu, atau nonaktifkan saja.", label, where))
+		}
+		if err != nil {
+			return err
+		}
+		if deleted == 0 {
+			return httpx.Conflict("conflict.version", "Akun ini baru saja diubah orang lain. Muat ulang lalu coba lagi.")
+		}
+		_, err = audit.Write(ctx, db.Conn(ctx, l.pool), audit.Entry{
+			UserID: userRef(actor), CompanyID: &companyID, Action: "ledger.account.delete",
+			ObjectType: "account", ObjectID: accountID.String(), IP: actor.IP,
+			Before: map[string]any{"code": cur.Code, "name": cur.Name, "parentId": cur.ParentID, "postable": cur.Postable},
+		})
+		return err
+	})
 }
 
 // checkCodeChange memeriksa koreksi kode akun cur menjadi code.
@@ -239,8 +365,6 @@ func checkCodeChange(ctx context.Context, q *store.Queries, companyID uuid.UUID,
 	switch class := classOfCode(code); {
 	case len(cur.Code) == 1:
 		return fail("Kode akun kelompok tidak bisa diubah.")
-	case roleCodes[cur.Code]:
-		return fail(fmt.Sprintf("%s %s adalah akun sistem untuk posting otomatis; kodenya tidak bisa diubah.", cur.Code, cur.Name))
 	case class == 0 || len(code) == 1:
 		return fail("Format kode: angka kepala 1–9, lalu tanda hubung dan angka, mis. 1-1101.")
 	case class != int(cur.Class):
@@ -251,6 +375,76 @@ func checkCodeChange(ctx context.Context, q *store.Queries, companyID uuid.UUID,
 		return httpx.Conflict("account.code_taken", msg).WithFields(map[string]string{"code": msg})
 	} else if !isNoRows(err) {
 		return err
+	}
+	return nil
+}
+
+// checkParentChange memeriksa pemindahan cur ke induk parentID: induk harus akun header aktif di
+// PT dan kelas yang sama, bukan cur atau turunannya, dan pohonnya tetap paling dalam MaxLevel.
+func checkParentChange(ctx context.Context, q *store.Queries, companyID uuid.UUID, cur store.LedgerAccount, parentID uuid.UUID) (store.LedgerAccount, error) {
+	fail := func(msg string) (store.LedgerAccount, error) {
+		return store.LedgerAccount{}, httpx.Unprocessable("account.invalid", msg).WithFields(map[string]string{"parentId": msg})
+	}
+	if cur.ParentID == nil {
+		return fail("Akun kelompok (kode satu angka) tidak punya induk dan tidak bisa dipindah.")
+	}
+	parent, err := q.GetAccount(ctx, store.GetAccountParams{CompanyID: companyID, ID: parentID})
+	if isNoRows(err) {
+		return fail("Akun induk tidak ditemukan di PT ini.")
+	}
+	if err != nil {
+		return store.LedgerAccount{}, err
+	}
+	switch {
+	case parent.Postable:
+		return fail(fmt.Sprintf("%s %s adalah akun detail; induk harus akun header.", parent.Code, parent.Name))
+	case !parent.Active:
+		return fail(fmt.Sprintf("Akun induk %s %s nonaktif.", parent.Code, parent.Name))
+	case parent.Class != cur.Class:
+		return fail(fmt.Sprintf("Induk harus berkepala %d (%s); akun tidak bisa dipindah ke kelas lain.", cur.Class, ClassOf(int(cur.Class)).Name))
+	}
+	// Turunan cur dan kedalaman relatifnya, untuk mencegah lingkaran dan pohon yang terlalu dalam.
+	depth := 0
+	level := []uuid.UUID{cur.ID}
+	for d := 0; len(level) > 0; d++ {
+		var next []uuid.UUID
+		for _, id := range level {
+			if id == parent.ID {
+				return fail("Induk tidak boleh akun itu sendiri atau turunannya.")
+			}
+			children, err := q.ChildAccounts(ctx, store.ChildAccountsParams{CompanyID: companyID, ParentID: &id})
+			if err != nil {
+				return store.LedgerAccount{}, err
+			}
+			for _, ch := range children {
+				next = append(next, ch.ID)
+			}
+		}
+		if len(next) > 0 {
+			depth = d + 1
+		}
+		level = next
+	}
+	if int(parent.Level)+1+depth > MaxLevel {
+		return fail(fmt.Sprintf("Bagan akun maksimal %d tingkat; pilih induk yang lebih atas.", MaxLevel))
+	}
+	return parent, nil
+}
+
+// shiftSubtree menyesuaikan level turunan akun id (yang kini berlevel level), dari atas ke bawah
+// supaya setiap baris lolos penjaga basis data (level = level induk + 1).
+func shiftSubtree(ctx context.Context, q *store.Queries, companyID, id uuid.UUID, level int16) error {
+	children, err := q.ChildAccounts(ctx, store.ChildAccountsParams{CompanyID: companyID, ParentID: &id})
+	if err != nil {
+		return err
+	}
+	for _, ch := range children {
+		if err := q.SetAccountLevel(ctx, store.SetAccountLevelParams{CompanyID: companyID, ID: ch.ID, Level: level + 1}); err != nil {
+			return err
+		}
+		if err := shiftSubtree(ctx, q, companyID, ch.ID, level+1); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -303,7 +497,6 @@ func toAccount(r store.LedgerAccount) Account {
 	return Account{
 		ID: r.ID, Code: r.Code, Name: r.Name, Class: int(r.Class), ParentID: r.ParentID,
 		Level: int(r.Level), Postable: r.Postable, Active: r.Active, Version: int(r.Version),
-		System: roleCodes[r.Code],
 	}
 }
 

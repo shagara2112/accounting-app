@@ -257,11 +257,16 @@ func (s *service) CreateCreditNote(ctx context.Context, companyID uuid.UUID, in 
 		project := inv.ProjectID
 		drafts := revenueDebits(lines, project)
 		if t.VAT.Sign() > 0 {
-			acc, err := s.Ledger.RoleAccount(ctx, companyID, ledger.OutputVAT)
-			if err != nil {
-				return err
+			// Retur membalik PPN di akun yang dikredit fakturnya (mis. PPN keluaran dipungut).
+			vatAccount := inv.VatAccountID
+			if vatAccount == nil {
+				acc, err := s.Ledger.RoleAccount(ctx, companyID, ledger.OutputVAT)
+				if err != nil {
+					return err
+				}
+				vatAccount = &acc.ID
 			}
-			drafts = append(drafts, ledger.LineDraft{AccountID: acc.ID, Debit: t.VAT, Memo: "PPN keluaran retur " + noteNumber, ProjectID: project})
+			drafts = append(drafts, ledger.LineDraft{AccountID: *vatAccount, Debit: t.VAT, Memo: "PPN keluaran retur " + noteNumber, ProjectID: project})
 		}
 		if applied.Sign() > 0 {
 			acc, err := s.Ledger.RoleAccount(ctx, companyID, ledger.Receivable)

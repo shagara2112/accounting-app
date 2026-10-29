@@ -82,6 +82,8 @@ export type AdminUser = {
   mfaEnabled: boolean
   mfaRequired: boolean
   lastLoginAt?: string
+  /** Pengguna meminta reset kata sandi dari halaman masuk dan belum selesai. */
+  resetRequestedAt?: string
   createdAt: string
   version: number
   access: UserAccess[]

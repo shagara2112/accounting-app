@@ -109,6 +109,15 @@ func (q *Queries) BumpLoginChallenge(ctx context.Context, idHash []byte) error {
 	return err
 }
 
+const bumpPasswordReset = `-- name: BumpPasswordReset :exec
+UPDATE platform.password_resets SET attempts = attempts + 1 WHERE id = $1
+`
+
+func (q *Queries) BumpPasswordReset(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, bumpPasswordReset, id)
+	return err
+}
+
 const claimIdempotencyKey = `-- name: ClaimIdempotencyKey :one
 INSERT INTO platform.idempotency_keys (user_id, key, request_hash)
 VALUES ($1, $2, $3)
@@ -147,6 +156,22 @@ UPDATE platform.users SET totp_secret = NULL, totp_enabled_at = NULL, totp_last_
 func (q *Queries) ClearTOTP(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, clearTOTP, id)
 	return err
+}
+
+const countRecentPasswordResets = `-- name: CountRecentPasswordResets :one
+SELECT count(*) FROM platform.password_resets WHERE user_id = $1 AND created_at > $2
+`
+
+type CountRecentPasswordResetsParams struct {
+	UserID    uuid.UUID
+	CreatedAt time.Time
+}
+
+func (q *Queries) CountRecentPasswordResets(ctx context.Context, arg CountRecentPasswordResetsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRecentPasswordResets, arg.UserID, arg.CreatedAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countUsers = `-- name: CountUsers :one
@@ -191,7 +216,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 const createUser = `-- name: CreateUser :one
 INSERT INTO platform.users (id, email, name, password_hash)
 VALUES ($1, $2, $3, $4)
-RETURNING id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at
+RETURNING id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at, reset_requested_at
 `
 
 type CreateUserParams struct {
@@ -223,6 +248,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (Platfor
 		&i.TotpEnabledAt,
 		&i.TotpLastStep,
 		&i.LastLoginAt,
+		&i.ResetRequestedAt,
 	)
 	return i, err
 }
@@ -522,7 +548,7 @@ func (q *Queries) GetSession(ctx context.Context, idHash []byte) (GetSessionRow,
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at FROM platform.users WHERE lower(email) = lower($1::text)
+SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at, reset_requested_at FROM platform.users WHERE lower(email) = lower($1::text)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (PlatformUser, error) {
@@ -542,12 +568,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (PlatformUse
 		&i.TotpEnabledAt,
 		&i.TotpLastStep,
 		&i.LastLoginAt,
+		&i.ResetRequestedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at FROM platform.users WHERE id = $1
+SELECT id, email, name, password_hash, active, failed_logins, locked_until, created_at, version, totp_secret, totp_enabled_at, totp_last_step, last_login_at, reset_requested_at FROM platform.users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (PlatformUser, error) {
@@ -567,6 +594,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (PlatformUser, 
 		&i.TotpEnabledAt,
 		&i.TotpLastStep,
 		&i.LastLoginAt,
+		&i.ResetRequestedAt,
 	)
 	return i, err
 }
@@ -671,6 +699,29 @@ func (q *Queries) InsertLoginChallenge(ctx context.Context, arg InsertLoginChall
 		arg.UserID,
 		arg.Ip,
 		arg.ExpiresAt,
+	)
+	return err
+}
+
+const insertPasswordReset = `-- name: InsertPasswordReset :exec
+INSERT INTO platform.password_resets (id, user_id, code_hash, expires_at, created_ip) VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertPasswordResetParams struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	CodeHash  []byte
+	ExpiresAt time.Time
+	CreatedIp string
+}
+
+func (q *Queries) InsertPasswordReset(ctx context.Context, arg InsertPasswordResetParams) error {
+	_, err := q.db.Exec(ctx, insertPasswordReset,
+		arg.ID,
+		arg.UserID,
+		arg.CodeHash,
+		arg.ExpiresAt,
+		arg.CreatedIp,
 	)
 	return err
 }
@@ -801,6 +852,31 @@ func (q *Queries) LastScheduledBackup(ctx context.Context) (PlatformBackup, erro
 	return i, err
 }
 
+const latestPasswordReset = `-- name: LatestPasswordReset :one
+SELECT id, user_id, code_hash, expires_at, attempts, used_at, created_at, created_ip FROM platform.password_resets
+WHERE user_id = $1 AND used_at IS NULL
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE
+`
+
+// Kode terakhir yang belum dipakai; dikunci supaya dua percobaan bersamaan dihitung benar.
+func (q *Queries) LatestPasswordReset(ctx context.Context, userID uuid.UUID) (PlatformPasswordReset, error) {
+	row := q.db.QueryRow(ctx, latestPasswordReset, userID)
+	var i PlatformPasswordReset
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.CodeHash,
+		&i.ExpiresAt,
+		&i.Attempts,
+		&i.UsedAt,
+		&i.CreatedAt,
+		&i.CreatedIp,
+	)
+	return i, err
+}
+
 const listAudit = `-- name: ListAudit :many
 SELECT seq, at, user_id, company_id, action, object_type, object_id, before, after, ip, prev_hash, hash FROM platform.audit_log
 WHERE company_id = $1 OR company_id IS NULL
@@ -899,6 +975,15 @@ UPDATE platform.backups SET pruned = true WHERE id = $1
 
 func (q *Queries) MarkPruned(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markPruned, id)
+	return err
+}
+
+const markResetRequested = `-- name: MarkResetRequested :exec
+UPDATE platform.users SET reset_requested_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkResetRequested(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markResetRequested, id)
 	return err
 }
 
@@ -1091,6 +1176,22 @@ func (q *Queries) SetPassword(ctx context.Context, arg SetPasswordParams) error 
 	return err
 }
 
+const setPasswordFromReset = `-- name: SetPasswordFromReset :exec
+UPDATE platform.users
+SET password_hash = $2, failed_logins = 0, locked_until = NULL, reset_requested_at = NULL, version = version + 1
+WHERE id = $1
+`
+
+type SetPasswordFromResetParams struct {
+	ID           uuid.UUID
+	PasswordHash string
+}
+
+func (q *Queries) SetPasswordFromReset(ctx context.Context, arg SetPasswordFromResetParams) error {
+	_, err := q.db.Exec(ctx, setPasswordFromReset, arg.ID, arg.PasswordHash)
+	return err
+}
+
 const setPendingTOTP = `-- name: SetPendingTOTP :exec
 UPDATE platform.users SET totp_secret = $2, totp_enabled_at = NULL, totp_last_step = 0 WHERE id = $1
 `
@@ -1150,6 +1251,15 @@ func (q *Queries) UpsertBuiltinRole(ctx context.Context, arg UpsertBuiltinRolePa
 		arg.Name,
 		arg.Permissions,
 	)
+	return err
+}
+
+const usePasswordResets = `-- name: UsePasswordResets :exec
+UPDATE platform.password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL
+`
+
+func (q *Queries) UsePasswordResets(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, usePasswordResets, userID)
 	return err
 }
 

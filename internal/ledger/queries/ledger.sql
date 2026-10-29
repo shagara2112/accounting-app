@@ -74,9 +74,16 @@ RETURNING *;
 
 -- name: UpdateAccount :one
 UPDATE ledger.accounts
-SET code = @code, name = @name, active = @active, version = version + 1
+SET code = @code, name = @name, active = @active, parent_id = @parent_id, level = @level, version = version + 1
 WHERE company_id = @company_id AND id = @id AND version = @version
 RETURNING *;
+
+-- name: ChildAccounts :many
+SELECT id, level FROM ledger.accounts WHERE company_id = $1 AND parent_id = $2 ORDER BY code;
+
+-- name: SetAccountLevel :exec
+-- Turunan akun header yang dipindah ke induk lain ikut bergeser levelnya (dari atas ke bawah).
+UPDATE ledger.accounts SET level = @level WHERE company_id = @company_id AND id = @id;
 
 -- name: AccountNetAllTime :one
 SELECT coalesce(sum(debit - credit), 0)::numeric AS net
@@ -176,6 +183,8 @@ FROM ledger.balances b
 JOIN ledger.accounts a ON a.id = b.account_id
 WHERE b.company_id = @company_id AND b.month <= @month
   AND (a.class <= 3 OR b.month >= @fiscal_start)
+  -- Reklas tahun buku ini belum dipakai di neraca lajurnya; reklas tahun-tahun lalu sudah.
+  AND NOT (b.kind = 'penutup' AND b.month >= @fiscal_start)
 GROUP BY a.id, a.code, a.name, a.class
 ORDER BY a.code;
 
@@ -375,3 +384,56 @@ FROM ledger.journal_revisions r
 LEFT JOIN platform.users u ON u.id = r.revised_by
 WHERE r.company_id = $1 AND r.entry_id = $2
 ORDER BY r.revision DESC;
+
+-- name: CountChildren :one
+SELECT count(*) FROM ledger.accounts WHERE company_id = @company_id AND parent_id = @parent_id;
+
+-- name: AccountHasLines :one
+SELECT EXISTS (SELECT 1 FROM ledger.journal_lines WHERE company_id = @company_id AND account_id = @account_id);
+
+-- name: DeleteAccount :execrows
+-- Hanya akun yang belum dipakai; foreign key dari tabel pemakai menolak sisanya (migrasi 00027).
+DELETE FROM ledger.accounts WHERE company_id = @company_id AND id = @id AND version = @version;
+
+-- name: RoleAccountMapping :one
+SELECT account_id FROM ledger.role_accounts WHERE company_id = $1 AND role = $2;
+
+-- name: RoleAccountMappings :many
+SELECT role, account_id FROM ledger.role_accounts WHERE company_id = $1;
+
+-- name: PinRoleAccount :exec
+-- Mengunci peran akun sistem ke akunnya sebelum kodenya diganti; pemetaan yang sudah ada tetap.
+INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
+VALUES (@company_id, @role, @account_id, @pinned_by)
+ON CONFLICT (company_id, role) DO NOTHING;
+
+-- name: SetRoleAccount :exec
+-- Memilih akun untuk satu peran akun sistem dari halaman Akun sistem; pilihan lama diganti.
+INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
+VALUES (@company_id, @role, @account_id, @pinned_by)
+ON CONFLICT (company_id, role) DO UPDATE
+SET account_id = EXCLUDED.account_id, pinned_at = now(), pinned_by = EXCLUDED.pinned_by;
+
+-- name: YearResultByAccount :many
+-- Saldo akun laba rugi selama tahun buku (bulan from_month s.d. to_month), dengan atau tanpa
+-- jurnal penutup. Dengan jurnal penutup, sisa yang tidak nol berarti belum (sepenuhnya) direklas.
+SELECT b.account_id, a.code, sum(b.debit - b.credit)::numeric AS net
+FROM ledger.balances b
+JOIN ledger.accounts a ON a.company_id = b.company_id AND a.id = b.account_id
+WHERE b.company_id = @company_id AND a.class >= 4 AND b.month >= @from_month AND b.month <= @to_month
+  AND (@with_closing::boolean OR b.kind <> 'penutup')
+GROUP BY b.account_id, a.code
+HAVING sum(b.debit - b.credit) <> 0
+ORDER BY a.code;
+
+-- name: ActiveClosing :one
+-- Jurnal reklas akhir tahun buku yang berlaku (belum di-void) bertanggal entry_date.
+SELECT e.id, e.number, e.posted_at, u.name AS posted_by_name,
+  (SELECT coalesce(sum(l.debit - l.credit), 0) FROM ledger.journal_lines l
+   JOIN ledger.accounts a ON a.company_id = l.company_id AND a.id = l.account_id
+   WHERE l.company_id = e.company_id AND l.entry_id = e.id AND a.class >= 4)::numeric AS profit
+FROM ledger.journal_entries e
+LEFT JOIN platform.users u ON u.id = e.posted_by
+WHERE e.company_id = @company_id AND e.source_type = 'closing' AND e.status = 'posted' AND e.entry_date = @entry_date
+ORDER BY e.posted_at DESC
+LIMIT 1;

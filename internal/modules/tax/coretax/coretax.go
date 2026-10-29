@@ -246,8 +246,12 @@ func (s *service) SetSettings(ctx context.Context, companyID uuid.UUID, in Setti
 	return in, err
 }
 
-// defaultTrxCode: 04 bila DPP nilai lain dipakai (PPN 12% non-mewah sejak 2025), selain itu 01.
+// defaultTrxCode: kode pemungut (02/03) bila pelanggannya pemungut PPN saat faktur diposting,
+// 04 bila DPP nilai lain dipakai (PPN 12% non-mewah sejak 2025), selain itu 01.
 func defaultTrxCode(inv sales.Invoice) string {
+	if inv.VATCollector != "" {
+		return inv.VATCollector
+	}
 	if !inv.OtherDPP.Equal(inv.DPP) {
 		return "04"
 	}
