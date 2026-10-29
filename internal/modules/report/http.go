@@ -29,6 +29,7 @@ func Routes(svc Service) []api.Route {
 		view("/api/v1/reports/balance-sheet", h.json(h.balanceSheet)),
 		view("/api/v1/reports/profit-loss", h.json(h.profitLoss)),
 		view("/api/v1/reports/cash-flow", h.json(h.cashFlow)),
+		view("/api/v1/reports/equity-changes", h.json(h.equityChanges)),
 		view("/api/v1/reports/trial-balance", h.json(h.trialBalance)),
 		view("/api/v1/reports/summary", h.json(h.summary)),
 		view("/api/v1/reports/contact-card", h.json(h.contactCard)),
@@ -78,7 +79,7 @@ func (h handlers) export(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Forbidden("report.forbidden", "Anda tidak punya izin melihat laporan.")
 	}
 	fns := map[string]builderFn{
-		"balance-sheet": h.balanceSheet, "profit-loss": h.profitLoss, "cash-flow": h.cashFlow,
+		"balance-sheet": h.balanceSheet, "profit-loss": h.profitLoss, "cash-flow": h.cashFlow, "equity-changes": h.equityChanges,
 		"trial-balance": h.trialBalance, "summary": h.summary, "contact-card": h.contactCard,
 	}
 	fn, ok := fns[chi.URLParam(r, "name")]
@@ -174,8 +175,22 @@ func (h handlers) cashFlow(r *http.Request) (built, error) {
 	if err != nil {
 		return built{}, err
 	}
+	// method=langsung: metode langsung (RPT-08); selain itu metode tidak langsung.
+	if r.URL.Query().Get("method") == "langsung" {
+		cf, err := h.svc.CashFlowDirect(r.Context(), api.CompanyID(r), p)
+		return built{body: cf, table: cf.Statement.Table(periodLabel(p)), file: fmt.Sprintf("arus-kas-langsung-%s_%s", p.From, p.To)}, err
+	}
 	cf, err := h.svc.CashFlow(r.Context(), api.CompanyID(r), p)
 	return built{body: cf, table: cf.Statement.Table(periodLabel(p)), file: fmt.Sprintf("arus-kas-%s_%s", p.From, p.To)}, err
+}
+
+func (h handlers) equityChanges(r *http.Request) (built, error) {
+	p, err := period(r, "from", "to")
+	if err != nil {
+		return built{}, err
+	}
+	ec, err := h.svc.EquityChanges(r.Context(), api.CompanyID(r), p)
+	return built{body: ec, table: ec.Statement.Table(periodLabel(p)), file: fmt.Sprintf("perubahan-ekuitas-%s_%s", p.From, p.To)}, err
 }
 
 func (h handlers) trialBalance(r *http.Request) (built, error) {

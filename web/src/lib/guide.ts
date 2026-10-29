@@ -826,18 +826,27 @@ export const topics: GuideTopic[] = [
     id: 'laporan',
     group: 'Laporan',
     title: 'Laporan keuangan',
-    summary: 'Neraca, laba rugi, arus kas, neraca saldo, ringkasan penjualan/pembelian, dan kartu kontak.',
+    summary: 'Neraca, laba rugi, arus kas (metode langsung dan tidak langsung), perubahan ekuitas, neraca saldo, ringkasan penjualan/pembelian, dan kartu kontak.',
     page: { to: '/laporan', label: 'Laporan keuangan' },
     paths: ['/laporan'],
     visible: allow('report.view'),
-    keywords: ['neraca', 'laba rugi', 'arus kas', 'excel', 'pdf', 'cetak', 'departemen', 'divisi', 'cabang', 'per departemen'],
+    keywords: ['neraca', 'laba rugi', 'arus kas', 'excel', 'pdf', 'cetak', 'departemen', 'divisi', 'cabang', 'per departemen', 'perubahan ekuitas', 'perubahan modal', 'metode langsung', 'rat', 'laporan tahunan'],
     sections: [
       {
         title: 'Membuka laporan',
         steps: [
-          'Buka Laporan keuangan, pilih tab: Neraca, Laba rugi, Arus kas, Neraca saldo, Rasio keuangan, Penjualan dan pembelian, atau Kartu kontak.',
+          'Buka Laporan keuangan, pilih tab: Neraca, Laba rugi, Arus kas, Perubahan ekuitas, Neraca saldo, Rasio keuangan, Penjualan dan pembelian, atau Kartu kontak.',
           'Pilih periode: Bulan ini, Bulan lalu, atau Pilih tanggal.',
           'Laba rugi bisa dipilah per cabang dan departemen (lihat bagian di bawah).',
+        ],
+      },
+      {
+        title: 'Arus kas dan perubahan ekuitas',
+        points: [
+          'Tab Arus kas punya dua metode. Tidak langsung dimulai dari laba bersih lalu menyesuaikan perubahan piutang, utang, dan akun lain. Langsung menampilkan uang masuk dan keluar apa adanya: penerimaan dari pelanggan, pembayaran kepada pemasok dan karyawan, pajak, investasi, dan pendanaan, dengan rincian per akun lawan.',
+          'Metode langsung memilah setiap transaksi kas dan bank menurut akun lawannya; transfer antarrekening tidak dihitung. Total per aktivitas sama dengan metode tidak langsung.',
+          'Tab Perubahan ekuitas menampilkan satu kolom untuk setiap akun ekuitas di bagan akun (mis. modal, simpanan pokok dan wajib, cadangan, laba ditahan) dan baris saldo awal, reklas laba tahun lalu, penambahan, pengurangan, laba periode ini, dan saldo akhir. Saldo akhirnya sama dengan ekuitas di neraca.',
+          'Untuk laporan tahunan atau RAT, pilih Tahun buku berjalan atau Pilih tanggal (mis. 1 Januari s.d. 31 Desember), lalu ekspor ke Excel atau cetak ke PDF.',
         ],
       },
       {

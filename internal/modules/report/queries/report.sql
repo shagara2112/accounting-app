@@ -46,3 +46,41 @@ WHERE l.company_id = @company_id AND l.entry_date >= @from_date AND l.entry_date
   AND (sqlc.narg(department_id)::uuid IS NULL OR l.department_id = sqlc.narg(department_id)::uuid)
   AND (NOT @department_null::boolean OR l.department_id IS NULL)
 GROUP BY 1, 2, 3;
+
+-- name: ClosingNet :many
+-- Jurnal penutup (reklas laba akhir tahun) bertanggal [from_date, before_date) per akun.
+SELECT l.account_id, sum(l.debit - l.credit)::numeric AS net
+FROM ledger.journal_lines l
+JOIN ledger.journal_entries e ON e.id = l.entry_id
+WHERE l.company_id = @company_id AND e.kind = 'penutup' AND l.entry_date >= @from_date AND l.entry_date < @before_date
+GROUP BY l.account_id;
+
+-- name: EquityMovements :many
+-- Mutasi akun ekuitas (kelas 3) per jurnal dalam rentang, tanpa jurnal penutup. Jurnal void dan
+-- pembaliknya yang sama-sama di dalam rentang saling meniadakan, jadi keduanya disembunyikan.
+SELECT l.account_id, e.id AS entry_id, e.source_type, sum(l.debit - l.credit)::numeric AS net
+FROM ledger.journal_lines l
+JOIN ledger.journal_entries e ON e.id = l.entry_id
+JOIN ledger.accounts a ON a.company_id = l.company_id AND a.id = l.account_id
+WHERE l.company_id = @company_id AND a.class = 3 AND e.kind <> 'penutup'
+  AND l.entry_date >= @from_date AND l.entry_date <= @to_date
+  AND NOT (e.status = 'void' AND EXISTS (
+        SELECT 1 FROM ledger.journal_entries r
+        WHERE r.company_id = e.company_id AND r.reversal_of = e.id AND r.source_type = 'void' AND r.entry_date <= @to_date))
+  AND NOT (e.source_type = 'void' AND EXISTS (
+        SELECT 1 FROM ledger.journal_entries o
+        WHERE o.company_id = e.company_id AND o.id = e.reversal_of AND o.entry_date >= @from_date))
+GROUP BY l.account_id, e.id, e.source_type
+HAVING sum(l.debit - l.credit) <> 0;
+
+-- name: CashCounterparts :many
+-- Arus kas metode langsung: baris akun selain kas pada jurnal yang menyentuh rekening kas/bank.
+-- Kredit − debit baris itu = kas yang diterima (positif) atau dibayar (negatif) karena akun itu.
+SELECT l.account_id, sum(l.credit - l.debit)::numeric AS amount
+FROM ledger.journal_lines l
+WHERE l.company_id = @company_id AND l.entry_date >= @from_date AND l.entry_date <= @to_date
+  AND NOT (l.account_id = ANY(@cash_accounts::uuid[]))
+  AND EXISTS (SELECT 1 FROM ledger.journal_lines c
+              WHERE c.company_id = l.company_id AND c.entry_id = l.entry_id AND c.account_id = ANY(@cash_accounts::uuid[]))
+GROUP BY l.account_id
+HAVING sum(l.credit - l.debit) <> 0;

@@ -77,6 +77,10 @@ type Service interface {
 	// ProfitLossBy memilah laba rugi per cabang/departemen atau satu kolom per cabang (GL-09).
 	ProfitLossBy(ctx context.Context, companyID uuid.UUID, periods []Period, f DimFilter) (Statement, error)
 	CashFlow(ctx context.Context, companyID uuid.UUID, p Period) (CashFlow, error)
+	// CashFlowDirect adalah arus kas metode langsung (RPT-08).
+	CashFlowDirect(ctx context.Context, companyID uuid.UUID, p Period) (CashFlow, error)
+	// EquityChanges adalah laporan perubahan ekuitas (RPT-08).
+	EquityChanges(ctx context.Context, companyID uuid.UUID, p Period) (EquityChanges, error)
 	TrialBalance(ctx context.Context, companyID uuid.UUID, date civil.Date) (TrialBalance, error)
 	Summary(ctx context.Context, companyID uuid.UUID, kind string, p Period) (Summary, error)
 	ContactCard(ctx context.Context, companyID uuid.UUID, side string, contactID uuid.UUID, p Period) (ContactCard, error)

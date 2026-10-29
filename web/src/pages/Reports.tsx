@@ -11,6 +11,7 @@ import {
   useBalanceSheet,
   useCashFlow,
   useContactCard,
+  useEquityChanges,
   useProfitLoss,
   useSummary,
   useTrialBalance,
@@ -28,12 +29,13 @@ import { SearchSelect } from '../components/SearchSelect'
 import { useToast } from '../components/Toast'
 import { Alert, Badge, Button, EmptyState, Field, PageHeader, Segmented, SelectField, Skeleton, TableShell, Tabs, td, th } from '../components/ui'
 
-type Tab = 'neraca' | 'laba-rugi' | 'arus-kas' | 'neraca-saldo' | 'rasio' | 'ringkasan' | 'kartu'
+type Tab = 'neraca' | 'laba-rugi' | 'arus-kas' | 'ekuitas' | 'neraca-saldo' | 'rasio' | 'ringkasan' | 'kartu'
 
 const tabs: { value: Tab; label: string }[] = [
   { value: 'neraca', label: 'Neraca' },
   { value: 'laba-rugi', label: 'Laba rugi' },
   { value: 'arus-kas', label: 'Arus kas' },
+  { value: 'ekuitas', label: 'Perubahan ekuitas' },
   { value: 'neraca-saldo', label: 'Neraca saldo' },
   { value: 'rasio', label: 'Rasio keuangan' },
   { value: 'ringkasan', label: 'Penjualan dan pembelian' },
@@ -67,6 +69,7 @@ export function Reports({ me }: { me: Me }) {
       {tab === 'neraca' && <BalanceSheetTab me={me} />}
       {tab === 'laba-rugi' && <ProfitLossTab me={me} />}
       {tab === 'arus-kas' && <CashFlowTab me={me} />}
+      {tab === 'ekuitas' && <EquityTab me={me} />}
       {tab === 'neraca-saldo' && <TrialBalanceTab me={me} />}
       {tab === 'rasio' && <RatiosTab me={me} />}
       {tab === 'ringkasan' && <SummaryTab me={me} />}
@@ -417,19 +420,42 @@ function ProfitLossTab({ me }: { me: Me }) {
 
 function CashFlowTab({ me }: { me: Me }) {
   const fiscal = useFiscalStart(me)
+  const [params, setParams] = useSearchParams()
+  // Metode langsung (RPT-08) memilah kas masuk dan keluar menurut akun lawannya.
+  const direct = params.get('metode') === 'langsung'
   const [preset, setPreset] = useState<Preset>('bulan')
   const [custom, setCustom] = useState<Range>({ from: monthStart(monthOf(todayISO())), to: todayISO() })
   const range = presetRange(preset, fiscal, custom)
-  const report = useCashFlow(me.activeCompanyId, range)
+  const query = direct ? { ...range, method: 'langsung' as const } : range
+  const report = useCashFlow(me.activeCompanyId, query)
   const cf = report.data
+  const setMethod = (v: 'langsung' | 'tidak-langsung') => {
+    const next = new URLSearchParams(params)
+    if (v === 'langsung') next.set('metode', 'langsung')
+    else next.delete('metode')
+    setParams(next, { replace: true })
+  }
   return (
     <ReportFrame
       me={me}
-      title="Laporan arus kas (metode tidak langsung)"
+      title={direct ? 'Laporan arus kas (metode langsung)' : 'Laporan arus kas (metode tidak langsung)'}
       period={rangeText(range)}
       name="cash-flow"
-      params={range}
-      controls={<PeriodPicker preset={preset} onPreset={setPreset} custom={custom} onCustom={setCustom} />}
+      params={query}
+      controls={
+        <div className="flex flex-wrap items-end gap-3">
+          <PeriodPicker preset={preset} onPreset={setPreset} custom={custom} onCustom={setCustom} />
+          <Segmented
+            label="Metode arus kas"
+            value={direct ? 'langsung' : 'tidak-langsung'}
+            onChange={setMethod}
+            options={[
+              { value: 'tidak-langsung', label: 'Tidak langsung' },
+              { value: 'langsung', label: 'Langsung' },
+            ]}
+          />
+        </div>
+      }
     >
       {!cf && <Skeleton className="h-96" />}
       {cf?.noCash && (
@@ -442,11 +468,50 @@ function CashFlowTab({ me }: { me: Me }) {
         </Alert>
       )}
       {cf && !cf.reconciled && <Alert>Arus kas tidak cocok dengan saldo kas. Hubungi dukungan Lajur.</Alert>}
-      {cf && <StatementTable st={cf} />}
+      {cf && (
+        <div className={`transition-opacity duration-150 ${report.isPlaceholderData ? 'opacity-60' : ''}`}>
+          <StatementTable st={cf} />
+        </div>
+      )}
       {cf && (
         <p className="text-[13px] text-muted print:hidden">
-          Dimulai dari laba bersih, lalu setiap perubahan akun neraca selain kas dibalik: aset lancar dan liabilitas jangka pendek masuk aktivitas operasi, aset tidak lancar ke investasi, liabilitas jangka
-          panjang dan ekuitas ke pendanaan. Akun akumulasi penyusutan ditambahkan kembali sebagai pos nonkas.
+          {direct
+            ? 'Setiap transaksi yang menyentuh rekening kas atau bank dipilah menurut akun lawannya: pendapatan dan piutang menjadi penerimaan dari pelanggan; beban, utang usaha, dan akun gaji menjadi pembayaran kepada pemasok dan karyawan; akun PPN dan PPh menjadi pajak; aset tidak lancar ke investasi; liabilitas jangka panjang dan ekuitas ke pendanaan. Transfer antarrekening kas tidak dihitung. Totalnya sama dengan metode tidak langsung.'
+            : 'Dimulai dari laba bersih, lalu setiap perubahan akun neraca selain kas dibalik: aset lancar dan liabilitas jangka pendek masuk aktivitas operasi, aset tidak lancar ke investasi, liabilitas jangka panjang dan ekuitas ke pendanaan. Akun akumulasi penyusutan ditambahkan kembali sebagai pos nonkas.'}
+        </p>
+      )}
+    </ReportFrame>
+  )
+}
+
+/** Laporan perubahan ekuitas (RPT-08): kolom mengikuti akun ekuitas di bagan akun PT. */
+function EquityTab({ me }: { me: Me }) {
+  const fiscal = useFiscalStart(me)
+  const [preset, setPreset] = useState<Preset>('tahun')
+  const [custom, setCustom] = useState<Range>({ from: fiscal(todayISO()), to: todayISO() })
+  const range = presetRange(preset, fiscal, custom)
+  const report = useEquityChanges(me.activeCompanyId, range)
+  const ec = report.data
+  return (
+    <ReportFrame
+      me={me}
+      title="Laporan perubahan ekuitas"
+      period={rangeText(range)}
+      name="equity-changes"
+      params={range}
+      controls={<PeriodPicker preset={preset} onPreset={setPreset} custom={custom} onCustom={setCustom} />}
+    >
+      {!ec && <Skeleton className="h-64" />}
+      {ec && !ec.reconciled && <Alert>Perubahan ekuitas tidak cocok dengan saldo akhirnya. Hubungi dukungan Lajur.</Alert>}
+      {ec && (
+        <div className={`transition-opacity duration-150 ${report.isPlaceholderData ? 'opacity-60' : ''}`}>
+          <StatementTable st={ec} />
+        </div>
+      )}
+      {ec && (
+        <p className="text-[13px] text-muted print:hidden">
+          Satu kolom untuk setiap akun ekuitas di bagan akun (mis. modal, simpanan, cadangan, dan laba ditahan), ditambah laba (rugi) yang belum direklas ke laba ditahan. Penambahan dan pengurangan dihitung dari jurnal
+          ke akun ekuitas; reklas laba akhir tahun memindahkan laba tahun lalu ke laba ditahan. Saldo akhir sama dengan ekuitas di neraca per tanggal yang sama.
         </p>
       )}
     </ReportFrame>
