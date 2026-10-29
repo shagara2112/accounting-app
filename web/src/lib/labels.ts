@@ -31,6 +31,7 @@ const sources: Record<string, string> = {
   'inventory.daily': 'HPP penjualan harian',
   'sales.daily': 'Penjualan harian',
   opening: 'Saldo awal',
+  closing: 'Reklas akhir tahun',
   'inventory.adjustment': 'Dokumen persediaan',
   'asset.depreciation': 'Penyusutan aset',
   'asset.disposal': 'Pelepasan aset',

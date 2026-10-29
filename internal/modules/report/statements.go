@@ -150,11 +150,7 @@ func (s *service) BalanceSheet(ctx context.Context, companyID uuid.UUID, dates [
 	st := Statement{Title: "Laporan posisi keuangan", Company: name}
 	var prior, current []money.Amount
 	for _, d := range dates {
-		all, err := s.net(ctx, companyID, beginning, d, false)
-		if err != nil {
-			return Statement{}, err
-		}
-		year, err := s.net(ctx, companyID, fiscalStart(start, d), d, false)
+		all, year, err := s.position(ctx, companyID, fiscalStart(start, d), d)
 		if err != nil {
 			return Statement{}, err
 		}
@@ -249,11 +245,7 @@ func (s *service) TrialBalance(ctx context.Context, companyID uuid.UUID, date ci
 		return TrialBalance{}, err
 	}
 	fs := fiscalStart(start, date)
-	all, err := s.net(ctx, companyID, beginning, date, false)
-	if err != nil {
-		return TrialBalance{}, err
-	}
-	year, err := s.net(ctx, companyID, fs, date, false)
+	all, year, err := s.position(ctx, companyID, fs, date)
 	if err != nil {
 		return TrialBalance{}, err
 	}

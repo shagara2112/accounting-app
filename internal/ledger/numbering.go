@@ -29,7 +29,7 @@ var Series = []struct{ Code, Label string }{
 	{"HPP", "Jurnal HPP"}, {"PS", "Dokumen persediaan"},
 	{"PNY", "Penyusutan aset tetap"}, {"PAT", "Pelepasan aset tetap"},
 	{"SA", "Saldo awal"}, {"SAP", "Saldo awal piutang"}, {"SAU", "Saldo awal utang"},
-	{"PNJ", "Pengajuan panjar unit"},
+	{"PNJ", "Pengajuan panjar unit"}, {"TB", "Jurnal penutup (reklas laba akhir tahun)"},
 }
 
 const (

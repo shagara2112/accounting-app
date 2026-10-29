@@ -90,6 +90,8 @@ type Service interface {
 	Net(ctx context.Context, companyID uuid.UUID, from, to civil.Date, skipClosing bool) (map[uuid.UUID]money.Amount, error)
 	// FiscalStart adalah tanggal 1 tahun buku PT yang memuat date.
 	FiscalStart(ctx context.Context, companyID uuid.UUID, date civil.Date) (civil.Date, error)
+	// Position mengembalikan saldo posisi per tanggal untuk neraca; lihat position.
+	Position(ctx context.Context, companyID uuid.UUID, date civil.Date) (all, year map[uuid.UUID]money.Amount, err error)
 }
 
 type Deps struct {
@@ -114,6 +116,38 @@ var beginning = civil.New(2000, 1, 1)
 // saldo agregat, sisa hari di awal dan akhir rentang dari baris jurnal.
 func (s *service) Net(ctx context.Context, companyID uuid.UUID, from, to civil.Date, skipClosing bool) (map[uuid.UUID]money.Amount, error) {
 	return s.net(ctx, companyID, from, to, skipClosing)
+}
+
+func (s *service) Position(ctx context.Context, companyID uuid.UUID, date civil.Date) (map[uuid.UUID]money.Amount, map[uuid.UUID]money.Amount, error) {
+	m, err := s.fiscalStartMonth(ctx, companyID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.position(ctx, companyID, fiscalStart(m, date), date)
+}
+
+// position mengembalikan saldo per tanggal date untuk neraca. all = semua mutasi sampai date,
+// termasuk reklas akhir tahun (jurnal penutup) tahun-tahun buku sebelumnya tetapi tanpa reklas
+// tahun buku date sendiri, karena reklas bertanggal hari terakhir tahun buku baru berlaku mulai
+// tahun buku berikutnya; laba tahun itu tetap tampil sebagai laba tahun berjalan per akhir tahun.
+// year = mutasi tahun buku date (mulai fs) tanpa jurnal penutup.
+func (s *service) position(ctx context.Context, companyID uuid.UUID, fs, date civil.Date) (map[uuid.UUID]money.Amount, map[uuid.UUID]money.Amount, error) {
+	before, err := s.net(ctx, companyID, beginning, fs.AddDays(-1), false)
+	if err != nil {
+		return nil, nil, err
+	}
+	year, err := s.net(ctx, companyID, fs, date, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	all := make(map[uuid.UUID]money.Amount, len(before)+len(year))
+	for id, v := range before {
+		all[id] = v
+	}
+	for id, v := range year {
+		all[id] = all[id].Add(v)
+	}
+	return all, year, nil
 }
 
 func (s *service) FiscalStart(ctx context.Context, companyID uuid.UUID, date civil.Date) (civil.Date, error) {

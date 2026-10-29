@@ -687,6 +687,13 @@ services:
 - Izin baru `report.budget.manage` (Pemilik dan Manager) untuk menyusun anggaran; melihat cukup `report.view`. Rute `/api/v1/budgets` termasuk tampilan seluruh PT (pengguna cabang tidak melihatnya).
 - Rasio keuangan (`/api/v1/reports/ratios?month=`) untuk 6 akhir bulan: neraca sejak awal, laba rugi sejak awal tahun buku. Aset lancar = akun kelas 1 berkode `1-1…`, liabilitas jangka pendek = kelas 2 berkode `2-1…`, kas = rekening kas dan bank terdaftar, piutang/utang usaha dari akun sistemnya; DPO memakai beban usaha bila beban pokok nol. Status sehat/waspada/perlu perhatian memakai panduan umum dan hanya untuk bulan terakhir.
 
+## Reklas laba akhir tahun (GL-10, revisi klien)
+
+- Reklas = jurnal penutup (jenis `penutup`, sumber `closing`, seri TB) bertanggal hari terakhir tahun buku: setiap akun laba rugi dengan saldo tahun itu (tanpa jurnal penutup) dibalik, selisihnya ke akun sistem laba ditahan (peran baru `laba_ditahan`, bawaan 3-2001). Akun nonaktif ikut direklas; jumlah baris tidak dibatasi.
+- Tidak mengunci apa pun. Status per tahun buku: `kosong`, `belum`, `sudah`, atau `berubah` (saldo laba rugi tahun itu termasuk jurnal penutup tidak nol lagi, mis. ada jurnal penyesuaian sesudah reklas). Perbarui = void jurnal lama dan posting jurnal baru; batal = void dengan alasan. Pembaliknya selalu bertanggal akhir tahun buku yang sama. Keduanya ditolak bila bulan terakhir tahun buku sudah dikunci final; jurnal penutup boleh masuk ke periode berstatus penyesuaian. Jurnal reklas tidak bisa di-void lewat menu Jurnal.
+- Laporan: laba rugi, arus kas, anggaran, rasio (laba rugi), dasbor, dan neraca lajur tahun itu tidak memakai jurnal penutup tahun itu. Neraca, neraca saldo, dan konsolidasi per tanggal d memakai jurnal penutup tahun-tahun buku sebelum tahun buku d, tetapi tidak jurnal penutup tahun buku d sendiri (`report.position`), sehingga per akhir tahun laba tetap tampil sebagai laba tahun berjalan dan mulai tahun berikutnya sebagai laba ditahan.
+- Route `/api/v1/ledger/year-end` (lihat: `ledger.view`; reklas dan batal: `ledger.period.manage`), termasuk tampilan seluruh PT.
+
 ## Panjar unit (revisi klien)
 
 - Modul `panjar` memiliki skema `panjar` (migrasi 00030): `requests` (seri PNJ, unit = departemen, keperluan, total, status `diajukan` → `disetujui`/`ditolak`/`dibatalkan`, `disetujui` → `dibayar`) dan `lines` (rincian kebutuhan, akun perkiraan opsional, nominal > 0). Constraint menjaga nominal disetujui ≤ total, terisi hanya saat disetujui/dibayar, dan tanggal bayar terisi hanya saat dibayar. Setiap perubahan memakai cek versi.

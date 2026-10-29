@@ -106,15 +106,7 @@ func (s *service) Consolidate(ctx context.Context, userID uuid.UUID, ids []uuid.
 	var prior, current []money.Amount
 	for _, c := range companies {
 		local := report.NewChart(d.accounts[c.ID])
-		all, err := s.Report.Net(ctx, c.ID, civil.New(2000, 1, 1), asOf, false)
-		if err != nil {
-			return Consolidation{}, err
-		}
-		fs, err := s.Report.FiscalStart(ctx, c.ID, asOf)
-		if err != nil {
-			return Consolidation{}, err
-		}
-		year, err := s.Report.Net(ctx, c.ID, fs, asOf, false)
+		all, year, err := s.Report.Position(ctx, c.ID, asOf)
 		if err != nil {
 			return Consolidation{}, err
 		}

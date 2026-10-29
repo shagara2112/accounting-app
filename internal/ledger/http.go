@@ -46,6 +46,9 @@ func Routes(svc Service) []api.Route {
 		read(http.MethodGet, "/api/v1/ledger/worksheet", rbac.LedgerView, h.worksheet),
 		read(http.MethodGet, "/api/v1/ledger/periods", rbac.LedgerView, h.periods),
 		write(http.MethodPost, "/api/v1/ledger/periods/{month}/status", rbac.PeriodManage, h.setPeriodStatus),
+		read(http.MethodGet, "/api/v1/ledger/year-end", rbac.LedgerView, h.yearEnd),
+		write(http.MethodPost, "/api/v1/ledger/year-end/{year}/close", rbac.PeriodManage, h.closeYear),
+		write(http.MethodPost, "/api/v1/ledger/year-end/{year}/reopen", rbac.PeriodManage, h.reopenYear),
 		read(http.MethodGet, "/api/v1/ledger/settings", rbac.LedgerView, h.settings),
 		write(http.MethodPut, "/api/v1/ledger/settings", rbac.PeriodManage, h.updateSettings),
 
@@ -380,6 +383,56 @@ func (h handlers) periods(w http.ResponseWriter, r *http.Request) error {
 		year = y
 	}
 	out, err := h.svc.Periods(r.Context(), company(r), year)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func yearParam(v string) (int, error) {
+	y, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, httpx.BadRequest("request.query", "Tahun tidak valid.")
+	}
+	return y, nil
+}
+
+func (h handlers) yearEnd(w http.ResponseWriter, r *http.Request) error {
+	year, err := yearParam(r.URL.Query().Get("year"))
+	if err != nil {
+		return err
+	}
+	out, err := h.svc.YearEnd(r.Context(), company(r), year)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h handlers) closeYear(w http.ResponseWriter, r *http.Request) error {
+	year, err := yearParam(chi.URLParam(r, "year"))
+	if err != nil {
+		return err
+	}
+	out, err := h.svc.CloseYear(r.Context(), company(r), year, actor(r))
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h handlers) reopenYear(w http.ResponseWriter, r *http.Request) error {
+	year, err := yearParam(chi.URLParam(r, "year"))
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	out, err := h.svc.ReopenYear(r.Context(), company(r), year, req.Reason, actor(r))
 	if err != nil {
 		return err
 	}

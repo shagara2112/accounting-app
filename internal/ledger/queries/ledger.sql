@@ -183,6 +183,8 @@ FROM ledger.balances b
 JOIN ledger.accounts a ON a.id = b.account_id
 WHERE b.company_id = @company_id AND b.month <= @month
   AND (a.class <= 3 OR b.month >= @fiscal_start)
+  -- Reklas tahun buku ini belum dipakai di neraca lajurnya; reklas tahun-tahun lalu sudah.
+  AND NOT (b.kind = 'penutup' AND b.month >= @fiscal_start)
 GROUP BY a.id, a.code, a.name, a.class
 ORDER BY a.code;
 
@@ -411,3 +413,27 @@ INSERT INTO ledger.role_accounts (company_id, role, account_id, pinned_by)
 VALUES (@company_id, @role, @account_id, @pinned_by)
 ON CONFLICT (company_id, role) DO UPDATE
 SET account_id = EXCLUDED.account_id, pinned_at = now(), pinned_by = EXCLUDED.pinned_by;
+
+-- name: YearResultByAccount :many
+-- Saldo akun laba rugi selama tahun buku (bulan from_month s.d. to_month), dengan atau tanpa
+-- jurnal penutup. Dengan jurnal penutup, sisa yang tidak nol berarti belum (sepenuhnya) direklas.
+SELECT b.account_id, a.code, sum(b.debit - b.credit)::numeric AS net
+FROM ledger.balances b
+JOIN ledger.accounts a ON a.company_id = b.company_id AND a.id = b.account_id
+WHERE b.company_id = @company_id AND a.class >= 4 AND b.month >= @from_month AND b.month <= @to_month
+  AND (@with_closing::boolean OR b.kind <> 'penutup')
+GROUP BY b.account_id, a.code
+HAVING sum(b.debit - b.credit) <> 0
+ORDER BY a.code;
+
+-- name: ActiveClosing :one
+-- Jurnal reklas akhir tahun buku yang berlaku (belum di-void) bertanggal entry_date.
+SELECT e.id, e.number, e.posted_at, u.name AS posted_by_name,
+  (SELECT coalesce(sum(l.debit - l.credit), 0) FROM ledger.journal_lines l
+   JOIN ledger.accounts a ON a.company_id = l.company_id AND a.id = l.account_id
+   WHERE l.company_id = e.company_id AND l.entry_id = e.id AND a.class >= 4)::numeric AS profit
+FROM ledger.journal_entries e
+LEFT JOIN platform.users u ON u.id = e.posted_by
+WHERE e.company_id = @company_id AND e.source_type = 'closing' AND e.status = 'posted' AND e.entry_date = @entry_date
+ORDER BY e.posted_at DESC
+LIMIT 1;

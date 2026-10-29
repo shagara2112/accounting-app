@@ -231,3 +231,43 @@ export function subtreeIds(list: Account[], id: string): Set<string> {
   }
   return out
 }
+
+/**
+ * Reklas laba (rugi) satu tahun buku ke laba ditahan (GL-10). status: kosong (tanpa pendapatan dan
+ * beban), belum, sudah, atau berubah (buku tahun itu berubah sesudah reklas; perlu diperbarui).
+ */
+export type YearEnd = {
+  fiscalYear: number
+  from: string
+  to: string
+  ended: boolean
+  profit: string
+  status: 'kosong' | 'belum' | 'sudah' | 'berubah'
+  closing?: { id: string; number: string; profit: string; postedAt: string; postedByName?: string }
+  periodStatus: PeriodStatus
+  account?: { id: string; number: string }
+  accountName?: string
+  accountProblem?: string
+}
+
+export function useYearEnd(companyId: string | null, year: number) {
+  return useQuery({
+    queryKey: key(companyId, 'year-end', year),
+    queryFn: () => api<YearEnd>('GET', '/ledger/year-end' + query({ year })),
+    enabled: companyId !== null,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useCloseYear(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({ mutationFn: (year: number) => api<YearEnd>('POST', `/ledger/year-end/${year}/close`), onSuccess: invalidate })
+}
+
+export function useReopenYear(companyId: string | null) {
+  const invalidate = useInvalidateLedger(companyId)
+  return useMutation({
+    mutationFn: ({ year, reason }: { year: number; reason: string }) => api<YearEnd>('POST', `/ledger/year-end/${year}/reopen`, { reason }),
+    onSuccess: invalidate,
+  })
+}

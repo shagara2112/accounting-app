@@ -323,6 +323,7 @@ func logRequests(log *slog.Logger) func(http.Handler) http.Handler {
 // memakai dokumen cabangnya dan laporan laba rugi per cabang.
 var wholeCompanyPrefixes = []string{
 	"/api/v1/journals", "/api/v1/adjustments", "/api/v1/ledger/worksheet", "/api/v1/ledger/periods", "/api/v1/ledger/settings",
+	"/api/v1/ledger/year-end",
 	"/api/v1/ledger/recurring", "/api/v1/ledger/number-formats",
 	"/api/v1/tax/", "/api/v1/consol/", "/api/v1/imports", "/api/v1/cash/reconciliations",
 	"/api/v1/inventory/stock", "/api/v1/inventory/card", "/api/v1/inventory/adjustments",

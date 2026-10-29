@@ -37,6 +37,7 @@ const (
 	AssetLoss           Role = "rugi_pelepasan_aset"
 	WithholdingPPh26    Role = "utang_pph26"
 	NonCreditableVAT    Role = "beban_ppn_tidak_dikreditkan"
+	RetainedEarnings    Role = "laba_ditahan"
 	// PPN keluaran per jenis faktur; bila tidak dipilih, memakai PPN keluaran.
 	OutputVATCollected Role = "ppn_keluaran_dipungut"
 	OutputVATOtherDPP  Role = "ppn_keluaran_dpp_lain"
@@ -78,6 +79,8 @@ var roles = map[Role]roleInfo{
 	// Penampung saldo awal: bernilai nol setelah semua saldo awal (neraca saldo, piutang,
 	// utang, dan stok per dokumen) selesai diimpor.
 	OpeningEquity: {[]string{"3-3001"}, "ekuitas saldo awal", "Lainnya", "Penampung selisih saldo awal; nol setelah saldo awal lengkap.", ""},
+	// Tujuan reklas laba (rugi) akhir tahun buku (GL-10).
+	RetainedEarnings: {[]string{"3-2001"}, "laba ditahan", "Lainnya", "Tujuan reklas laba (rugi) akhir tahun buku.", ""},
 	// Pelepasan aset tetap (FA-03). PT lama tanpa akun rugi khusus memakai beban lain-lain.
 	AssetGain: {[]string{"7-1003"}, "laba pelepasan aset tetap", "Lainnya", "Laba penjualan aset tetap.", ""},
 	AssetLoss: {[]string{"8-1005", "8-1009"}, "rugi pelepasan aset tetap", "Lainnya", "Rugi penjualan atau penghapusan aset tetap.", ""},
@@ -87,7 +90,7 @@ var roles = map[Role]roleInfo{
 var roleOrder = []Role{
 	Receivable, CustomerAdvance, OutputVAT, OutputVATCollected, OutputVATOtherDPP, OutputVATRetail, PrepaidPPh23, FinalTaxExpense, ProjectAdvance, RetentionReceivable,
 	Payable, SupplierAdvance, InputVAT, NonCreditableVAT, WithholdingPPh23, WithholdingPPhFinal, WithholdingPPh26,
-	OpeningEquity, AssetGain, AssetLoss,
+	OpeningEquity, RetainedEarnings, AssetGain, AssetLoss,
 }
 
 // roleClasses adalah kelas akun yang boleh melayani peran: akun neraca harus sekelas dengan kode

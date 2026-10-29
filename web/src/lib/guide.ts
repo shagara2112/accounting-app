@@ -1015,12 +1015,12 @@ export const topics: GuideTopic[] = [
   {
     id: 'periode',
     group: 'Akuntansi',
-    title: 'Tutup buku bulanan',
-    summary: 'Urutan tutup buku dan status periode: Terbuka, Penyesuaian, Terkunci.',
+    title: 'Tutup buku bulanan dan akhir tahun',
+    summary: 'Urutan tutup buku, status periode (Terbuka, Penyesuaian, Terkunci), dan reklas laba akhir tahun ke laba ditahan.',
     page: { to: '/periode', label: 'Periode dan tutup buku' },
     paths: ['/periode'],
     visible: allow('ledger.view', true),
-    keywords: ['tutup buku', 'closing', 'kunci periode', 'akhir bulan'],
+    keywords: ['tutup buku', 'closing', 'kunci periode', 'akhir bulan', 'akhir tahun', 'tutup tahun', 'reklas', 'reklasifikasi', 'laba ditahan', 'jurnal penutup', 'saldo laba'],
     sections: [
       {
         title: 'Status periode',
@@ -1042,6 +1042,21 @@ export const topics: GuideTopic[] = [
           'Tekan Kunci final.',
         ],
         note: 'Buka kembali hanya bila benar-benar perlu koreksi; tindakan ini tercatat di audit trail.',
+      },
+      {
+        title: 'Reklas laba akhir tahun ke laba ditahan',
+        steps: [
+          'Setelah tahun buku berakhir, tutup bulan terakhirnya untuk transaksi (status Penyesuaian) dan masukkan jurnal penyesuaian akhir tahun.',
+          'Di Periode dan tutup buku, pilih tahun bukunya, lalu tekan Reklas ke laba ditahan. Lajur membuat jurnal penutup bertanggal akhir tahun buku (seri TB) ke akun laba ditahan.',
+          'Bila sesudah itu masih ada revisi (mis. koreksi auditor), masukkan saja jurnalnya. Status reklas menjadi Perlu diperbarui; tekan Perbarui reklas.',
+          'Setelah laporan tahun itu final, kunci final bulan terakhirnya. Reklas ikut final.',
+        ],
+        points: [
+          'Laporan tahun itu tidak berubah: laba rugi tetap utuh dan neraca per akhir tahun tetap menampilkan laba tahun berjalan. Mulai tahun buku berikutnya laba itu tampil sebagai laba ditahan.',
+          'Reklas bisa dibatalkan (dengan alasan) selama bulan terakhir tahun buku belum dikunci final.',
+          'Akun tujuan adalah akun sistem laba ditahan (bawaan 3-2001); bisa diganti di Bagan akun → Akun sistem.',
+        ],
+        note: 'Hanya Pemilik dan Manager yang bisa mereklas, memperbarui, dan membatalkan reklas.',
       },
     ],
   },
@@ -1188,6 +1203,11 @@ export const topics: GuideTopic[] = [
 ]
 
 export const faqs: Faq[] = [
+  {
+    q: 'Sesudah tutup buku akhir tahun, apakah masih bisa revisi?',
+    a: 'Bisa. Reklas laba akhir tahun ke laba ditahan tidak mengunci apa pun. Selama bulan terakhir tahun buku belum dikunci final, jurnal revisi tetap bisa masuk; Lajur lalu menandai reklas Perlu diperbarui dan cukup tekan Perbarui reklas. Reklas juga bisa dibatalkan.',
+    topic: 'periode',
+  },
   {
     q: 'Panjar unit sudah disetujui, apakah uangnya otomatis tercatat keluar?',
     a: 'Tidak. Panjar unit hanya mencatat pengajuan dan persetujuan. Finance tetap mencatat pembayarannya di Kas dan bank atau Pembelian (dengan departemen unitnya), lalu menandai pengajuan sudah dibayar dengan nomor buktinya.',

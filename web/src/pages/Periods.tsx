@@ -1,12 +1,13 @@
-import { useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { useState, type ReactNode } from 'react'
+import { Link, useSearchParams } from 'react-router'
 import { ApiError, type Me, type Period, type PeriodStatus } from '../lib/api'
-import { formatDateTime, monthLabel, monthName, todayISO } from '../lib/dates'
-import { useLedgerSettings, usePeriods, useSetPeriodStatus, useUpdateLedgerSettings } from '../lib/ledger'
+import { formatDate, formatDateTime, monthLabel, monthName, monthOf, todayISO } from '../lib/dates'
+import { useCloseYear, useLedgerSettings, usePeriods, useReopenYear, useSetPeriodStatus, useUpdateLedgerSettings, useYearEnd, type YearEnd } from '../lib/ledger'
+import { formatAmount } from '../lib/money'
 import { periodStatus } from '../lib/labels'
 import { can } from '../lib/session'
 import { useToast } from '../components/Toast'
-import { Alert, Badge, Button, Dialog, SelectField, Skeleton, TableShell, TextAreaField, td, th } from '../components/ui'
+import { Alert, Badge, Button, Card, Dialog, SelectField, Skeleton, TableShell, TextAreaField, td, th, type Tone } from '../components/ui'
 
 const order: PeriodStatus[] = ['open', 'adjusting', 'locked']
 
@@ -160,6 +161,8 @@ export function Periods({ me }: { me: Me }) {
       </div>
       {!manage && <p className="text-sm text-muted">Hanya Pemilik dan Manager yang bisa menutup, mengunci, dan membuka periode.</p>}
 
+      <YearEndCard key={year} me={me} year={year} label={startMonth === 1 ? String(year) : `${year}/${String(year + 1).slice(2)}`} />
+
       <StatusDialog me={me} pending={pending} onClose={() => setPending(null)} />
     </div>
   )
@@ -286,5 +289,145 @@ function YearButton({ label, d, onClick }: { label: string; d: string; onClick: 
         <path d={d} />
       </svg>
     </button>
+  )
+}
+
+const yearStatus: Record<YearEnd['status'], { label: string; tone: Tone }> = {
+  kosong: { label: 'Tidak ada laba rugi', tone: 'neutral' },
+  belum: { label: 'Belum direklas', tone: 'warn' },
+  sudah: { label: 'Sudah direklas', tone: 'good' },
+  berubah: { label: 'Perlu diperbarui', tone: 'bad' },
+}
+
+/**
+ * Reklas laba (rugi) akhir tahun ke laba ditahan (GL-10). Jurnal penutupnya bertanggal akhir tahun
+ * buku dan bisa diperbarui atau dibatalkan selama bulan terakhirnya belum dikunci final.
+ */
+function YearEndCard({ me, year, label }: { me: Me; year: number; label: string }) {
+  const companyId = me.activeCompanyId
+  const ye = useYearEnd(companyId, year)
+  const close = useCloseYear(companyId)
+  const toast = useToast()
+  const manage = can(me, 'ledger.period.manage')
+  const [reopen, setReopen] = useState(false)
+  const y = ye.data
+  const locked = y?.periodStatus === 'locked'
+  const lastMonth = y ? monthLabel(monthOf(y.to)) : ''
+  const blocked = !y ? 'loading' : !y.ended ? `Bisa dilakukan setelah tahun buku berakhir (${formatDate(y.to)}).` : locked ? `Periode ${lastMonth} sudah dikunci final; buka dulu periode itu untuk mengubah reklas.` : ''
+
+  function run() {
+    close.mutate(year, {
+      onSuccess: (r) => toast(`Laba ${label} direklas ke laba ditahan · ${r.closing?.number ?? ''}`),
+      onError: (e) => toast(e.message, 'bad'),
+    })
+  }
+
+  return (
+    <Card
+      title={`Reklas laba akhir tahun ${label}`}
+      subtitle="Memindahkan laba (rugi) tahun buku ke laba ditahan lewat jurnal penutup bertanggal akhir tahun buku. Laporan tahun itu tidak berubah; mulai tahun berikutnya laba itu tampil sebagai laba ditahan. Selama bulan terakhirnya belum dikunci final, revisi tetap bisa masuk dan reklas tinggal diperbarui atau dibatalkan."
+    >
+      {ye.isPending && <Skeleton className="h-16" />}
+      {ye.error && <Alert>{ye.error.message}</Alert>}
+      {y && (
+        <div className={`flex flex-col gap-3 transition-opacity duration-150 ${ye.isPlaceholderData ? 'opacity-60' : ''}`}>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-3">
+              <Info label={`Laba (rugi) ${label}`}>
+                <span className={`num text-base font-semibold ${y.profit.startsWith('-') ? 'text-bad' : ''}`}>Rp {formatAmount(y.profit)}</span>
+              </Info>
+              <Info label="Status">
+                <Badge tone={yearStatus[y.status].tone}>{yearStatus[y.status].label}</Badge>
+              </Info>
+              <Info label="Ke akun">{y.account ? `${y.account.number} ${y.accountName}` : '—'}</Info>
+            </dl>
+            {manage && y.status !== 'kosong' && (
+              <div className="flex flex-wrap gap-2">
+                {y.closing && (
+                  <Button variant="ghost" disabled={locked} onClick={() => setReopen(true)}>
+                    Batalkan reklas
+                  </Button>
+                )}
+                {y.status !== 'sudah' && (
+                  <Button busy={close.isPending} disabled={!!blocked || !!y.accountProblem} onClick={run}>
+                    {y.status === 'berubah' ? 'Perbarui reklas' : 'Reklas ke laba ditahan'}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {y.closing && (
+            <p className="text-[13px] text-muted">
+              Jurnal{' '}
+              <Link to={`/jurnal?bulan=${monthOf(y.to)}&id=${y.closing.id}`} className="num font-semibold text-accent hover:underline">
+                {y.closing.number}
+              </Link>{' '}
+              tanggal {formatDate(y.to)} mereklas Rp {formatAmount(y.closing.profit)}
+              {y.closing.postedByName && ` · oleh ${y.closing.postedByName}`} · {formatDateTime(y.closing.postedAt)}
+            </p>
+          )}
+          {y.status === 'berubah' && y.closing && (
+            <Alert tone="warn">
+              Buku {label} berubah sesudah reklas: laba sekarang Rp {formatAmount(y.profit)}, yang sudah direklas Rp {formatAmount(y.closing.profit)}.
+              {manage ? ' Tekan Perbarui reklas supaya laba ditahan sesuai.' : ' Minta Manager memperbarui reklas.'}
+            </Alert>
+          )}
+          {y.status === 'kosong' && <p className="text-[13px] text-muted">Belum ada pendapatan atau beban di tahun buku ini.</p>}
+          {y.status !== 'kosong' && y.status !== 'sudah' && blocked && blocked !== 'loading' && <p className="text-[13px] text-muted">{blocked}</p>}
+          {y.status === 'sudah' && locked && <p className="text-[13px] text-muted">Periode {lastMonth} sudah dikunci final, jadi reklas ini sudah final.</p>}
+          {y.status !== 'kosong' && y.accountProblem && (
+            <Alert tone="warn">
+              {y.accountProblem}{' '}
+              <Link to="/akun/sistem" className="font-semibold underline">
+                Buka Akun sistem
+              </Link>
+            </Alert>
+          )}
+        </div>
+      )}
+      {reopen && y && <ReopenDialog me={me} year={year} label={label} onClose={() => setReopen(false)} />}
+    </Card>
+  )
+}
+
+function Info({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt className="text-[12.5px] font-medium text-muted">{label}</dt>
+      <dd className="mt-0.5">{children}</dd>
+    </div>
+  )
+}
+
+function ReopenDialog({ me, year, label, onClose }: { me: Me; year: number; label: string; onClose: () => void }) {
+  const reopen = useReopenYear(me.activeCompanyId)
+  const toast = useToast()
+  const [reason, setReason] = useState('')
+  const fields = reopen.error instanceof ApiError ? reopen.error.fields : {}
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Batalkan reklas ${label}?`}
+      description="Jurnal reklas di-void dengan jurnal pembalik di tanggal yang sama. Laba tahun itu kembali tampil sebagai laba tahun lalu yang belum ditutup sampai direklas lagi."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Kembali
+          </Button>
+          <Button
+            variant="danger"
+            busy={reopen.isPending}
+            onClick={() => reopen.mutate({ year, reason }, { onSuccess: () => (toast(`Reklas ${label} dibatalkan`), onClose()) })}
+          >
+            Batalkan reklas
+          </Button>
+        </>
+      }
+    >
+      <TextAreaField id="reopen-reason" label="Alasan" placeholder="mis. Menunggu koreksi auditor" value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} error={fields.reason} data-autofocus />
+      {reopen.error && !fields.reason && <Alert shakeKey={reopen.failureCount}>{reopen.error.message}</Alert>}
+    </Dialog>
   )
 }

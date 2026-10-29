@@ -33,6 +33,7 @@ const (
 	SourceVoid         = "void"          // pembalik karena void
 	SourceAutoReversal = "auto_reversal" // pembalik otomatis jurnal penyesuaian
 	SourceOpening      = "opening"       // saldo awal dari impor neraca saldo (GL-06)
+	SourceClosing      = "closing"       // reklas laba (rugi) akhir tahun buku ke laba ditahan (GL-10)
 )
 
 // Actor adalah pengguna yang melakukan aksi; dicatat di jurnal dan audit trail.
@@ -132,6 +133,34 @@ type FiscalYear struct {
 	Year       int      `json:"year"` // tahun kalender saat tahun buku dimulai
 	StartMonth int      `json:"startMonth"`
 	Periods    []Period `json:"periods"`
+}
+
+// YearEnd adalah status reklas laba (rugi) satu tahun buku ke laba ditahan (GL-10). Reklas
+// berupa jurnal penutup bertanggal akhir tahun buku yang bisa diperbarui atau dibatalkan selama
+// bulan terakhirnya belum dikunci final, supaya revisi sesudah akhir tahun tetap bisa masuk.
+type YearEnd struct {
+	FiscalYear int          `json:"fiscalYear"` // tahun kalender saat tahun buku dimulai
+	From       civil.Date   `json:"from"`
+	To         civil.Date   `json:"to"`
+	Ended      bool         `json:"ended"`  // tahun buku sudah berakhir
+	Profit     money.Amount `json:"profit"` // laba (rugi) bersih menurut buku sekarang
+	// Status: kosong (tidak ada pendapatan dan beban), belum (belum direklas), sudah, atau
+	// berubah (buku tahun itu berubah sesudah reklas; perlu diperbarui).
+	Status       string        `json:"status"`
+	Closing      *ClosingEntry `json:"closing,omitempty"`
+	PeriodStatus string        `json:"periodStatus"` // status bulan terakhir tahun buku
+	// Account adalah akun laba ditahan tujuan reklas; AccountProblem diisi bila belum siap.
+	Account        *Ref   `json:"account,omitempty"`
+	AccountName    string `json:"accountName,omitempty"`
+	AccountProblem string `json:"accountProblem,omitempty"`
+}
+
+// ClosingEntry adalah jurnal reklas yang berlaku untuk satu tahun buku.
+type ClosingEntry struct {
+	Ref
+	Profit       money.Amount `json:"profit"` // laba (rugi) yang direklas jurnal itu
+	PostedAt     time.Time    `json:"postedAt"`
+	PostedByName string       `json:"postedByName,omitempty"`
 }
 
 type EntrySummary struct {
@@ -355,6 +384,12 @@ type Service interface {
 	SetFiscalYearStart(ctx context.Context, companyID uuid.UUID, month int, actor Actor) error
 	Periods(ctx context.Context, companyID uuid.UUID, year int) (FiscalYear, error)
 	SetPeriodStatus(ctx context.Context, companyID uuid.UUID, month civil.Date, status, reason string, actor Actor) error
+	YearEnd(ctx context.Context, companyID uuid.UUID, year int) (YearEnd, error)
+	// CloseYear mereklas laba (rugi) tahun buku ke laba ditahan, atau memperbarui reklas yang
+	// sudah tidak sesuai dengan buku.
+	CloseYear(ctx context.Context, companyID uuid.UUID, year int, actor Actor) (YearEnd, error)
+	// ReopenYear membatalkan reklas tahun buku, mis. sebelum revisi besar.
+	ReopenYear(ctx context.Context, companyID uuid.UUID, year int, reason string, actor Actor) (YearEnd, error)
 
 	Worksheet(ctx context.Context, companyID uuid.UUID, month civil.Date) (Worksheet, error)
 	AccountLedger(ctx context.Context, companyID, accountID uuid.UUID, from, to civil.Date) (AccountLedger, error)

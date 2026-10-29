@@ -260,6 +260,45 @@ func (q *Queries) AccountsByIDs(ctx context.Context, arg AccountsByIDsParams) ([
 	return items, nil
 }
 
+const activeClosing = `-- name: ActiveClosing :one
+SELECT e.id, e.number, e.posted_at, u.name AS posted_by_name,
+  (SELECT coalesce(sum(l.debit - l.credit), 0) FROM ledger.journal_lines l
+   JOIN ledger.accounts a ON a.company_id = l.company_id AND a.id = l.account_id
+   WHERE l.company_id = e.company_id AND l.entry_id = e.id AND a.class >= 4)::numeric AS profit
+FROM ledger.journal_entries e
+LEFT JOIN platform.users u ON u.id = e.posted_by
+WHERE e.company_id = $1 AND e.source_type = 'closing' AND e.status = 'posted' AND e.entry_date = $2
+ORDER BY e.posted_at DESC
+LIMIT 1
+`
+
+type ActiveClosingParams struct {
+	CompanyID uuid.UUID
+	EntryDate civil.Date
+}
+
+type ActiveClosingRow struct {
+	ID           uuid.UUID
+	Number       string
+	PostedAt     time.Time
+	PostedByName *string
+	Profit       money.Amount
+}
+
+// Jurnal reklas akhir tahun buku yang berlaku (belum di-void) bertanggal entry_date.
+func (q *Queries) ActiveClosing(ctx context.Context, arg ActiveClosingParams) (ActiveClosingRow, error) {
+	row := q.db.QueryRow(ctx, activeClosing, arg.CompanyID, arg.EntryDate)
+	var i ActiveClosingRow
+	err := row.Scan(
+		&i.ID,
+		&i.Number,
+		&i.PostedAt,
+		&i.PostedByName,
+		&i.Profit,
+	)
+	return i, err
+}
+
 const advanceRecurring = `-- name: AdvanceRecurring :exec
 UPDATE ledger.recurring_journals
 SET next_date = $1, last_error = NULL, last_run_at = now(), version = version + 1
@@ -2287,6 +2326,8 @@ FROM ledger.balances b
 JOIN ledger.accounts a ON a.id = b.account_id
 WHERE b.company_id = $2 AND b.month <= $1
   AND (a.class <= 3 OR b.month >= $3)
+  -- Reklas tahun buku ini belum dipakai di neraca lajurnya; reklas tahun-tahun lalu sudah.
+  AND NOT (b.kind = 'penutup' AND b.month >= $3)
 GROUP BY a.id, a.code, a.name, a.class
 ORDER BY a.code
 `
@@ -2327,6 +2368,57 @@ func (q *Queries) WorksheetRows(ctx context.Context, arg WorksheetRowsParams) ([
 			&i.AdjDebit,
 			&i.AdjCredit,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const yearResultByAccount = `-- name: YearResultByAccount :many
+SELECT b.account_id, a.code, sum(b.debit - b.credit)::numeric AS net
+FROM ledger.balances b
+JOIN ledger.accounts a ON a.company_id = b.company_id AND a.id = b.account_id
+WHERE b.company_id = $1 AND a.class >= 4 AND b.month >= $2 AND b.month <= $3
+  AND ($4::boolean OR b.kind <> 'penutup')
+GROUP BY b.account_id, a.code
+HAVING sum(b.debit - b.credit) <> 0
+ORDER BY a.code
+`
+
+type YearResultByAccountParams struct {
+	CompanyID   uuid.UUID
+	FromMonth   civil.Date
+	ToMonth     civil.Date
+	WithClosing bool
+}
+
+type YearResultByAccountRow struct {
+	AccountID uuid.UUID
+	Code      string
+	Net       money.Amount
+}
+
+// Saldo akun laba rugi selama tahun buku (bulan from_month s.d. to_month), dengan atau tanpa
+// jurnal penutup. Dengan jurnal penutup, sisa yang tidak nol berarti belum (sepenuhnya) direklas.
+func (q *Queries) YearResultByAccount(ctx context.Context, arg YearResultByAccountParams) ([]YearResultByAccountRow, error) {
+	rows, err := q.db.Query(ctx, yearResultByAccount,
+		arg.CompanyID,
+		arg.FromMonth,
+		arg.ToMonth,
+		arg.WithClosing,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []YearResultByAccountRow
+	for rows.Next() {
+		var i YearResultByAccountRow
+		if err := rows.Scan(&i.AccountID, &i.Code, &i.Net); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
